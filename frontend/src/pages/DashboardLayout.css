@@ -1,0 +1,906 @@
+/* =============================================================
+   DashboardLayout.css
+   Unified stylesheet for DashboardPortal.jsx
+   ALL rules are scoped inside .dashboard-shell-container
+   – nothing escapes this boundary.
+   ============================================================= */
+
+/* ── 1. DESIGN TOKENS ── */
+.dashboard-shell-container {
+  --bg: #111318;
+  --surface: #1a1d24;
+  --surface2: #20242e;
+  --surface3: #252a36;
+  --border: #2a2f3d;
+  --border2: #323849;
+  --text: #e8ecf4;
+  --muted: #7b83a0;
+  --hint: #4a5168;
+  --accent: #4f8ef7;
+  --accent2: #3a7ae8;
+  --accent-bg: rgba(79, 142, 247, 0.1);
+  --green: #34d399;
+  --green-bg: rgba(52, 211, 153, 0.1);
+  --amber: #fbbf24;
+  --amber-bg: rgba(251, 191, 36, 0.1);
+  --red: #f87171;
+  --red-bg: rgba(248, 113, 113, 0.1);
+  --purple: #a78bfa;
+  --purple-bg: rgba(167, 139, 250, 0.1);
+  --teal: #2dd4bf;
+  --teal-bg: rgba(45, 212, 191, 0.1);
+  --orange: #fb923c;
+  --orange-bg: rgba(251, 146, 60, 0.1);
+  --sidebar: 220px;
+  --topbar: 54px;
+  --font: 'DM Sans', sans-serif;
+  --mono: 'DM Mono', monospace;
+  --r: 10px;
+  --r-sm: 6px;
+
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 14px;
+  min-height: 100vh;
+}
+
+.dashboard-shell-container *,
+.dashboard-shell-container *::before,
+.dashboard-shell-container *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+/* ── 2. ROOT LAYOUT ── */
+.dashboard-shell-container .app {
+  display: flex;
+  min-height: 100vh;
+}
+
+/* ── 3. SIDEBAR ── */
+.dashboard-shell-container .sidebar {
+  width: var(--sidebar);
+  background: var(--surface);
+  border-right: 1px solid var(--border);
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  display: flex;
+  flex-direction: column;
+  z-index: 100;
+  overflow-y: auto;
+}
+
+.dashboard-shell-container .sb-logo {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+}
+
+.dashboard-shell-container .sb-logo-img {
+  width: 56px;
+  height: 56px;
+  object-fit: contain;
+}
+
+.dashboard-shell-container .sb-title {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.dashboard-shell-container .sb-sub {
+  font-size: 9px;
+  color: var(--muted);
+  text-align: center;
+}
+
+/* ── 4. SIDEBAR NAV ── */
+.dashboard-shell-container .sb-nav {
+  flex: 1;
+  padding: 8px 0;
+}
+
+.dashboard-shell-container .sb-sec {
+  padding: 14px 18px 5px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--hint);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+}
+
+.dashboard-shell-container .nav-btn {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 8px 18px;
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.12s;
+  position: relative;
+  text-align: left;
+}
+
+.dashboard-shell-container .nav-btn:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+
+.dashboard-shell-container .nav-btn.active {
+  color: var(--accent);
+  background: var(--accent-bg);
+}
+
+.dashboard-shell-container .nav-btn.active::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 3px;
+  bottom: 3px;
+  width: 3px;
+  background: var(--accent);
+  border-radius: 0 2px 2px 0;
+}
+
+.dashboard-shell-container .nav-ico {
+  font-size: 15px;
+  width: 18px;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+/* Nav counter badges (numeric pill on nav items) */
+.dashboard-shell-container .nb {
+  margin-left: auto;
+  padding: 1px 6px;
+  border-radius: 8px;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.dashboard-shell-container .nb-red {
+  background: var(--red-bg);
+  color: var(--red);
+}
+
+.dashboard-shell-container .nb-amber {
+  background: var(--amber-bg);
+  color: var(--amber);
+}
+
+.dashboard-shell-container .nb-green {
+  background: var(--green-bg);
+  color: var(--green);
+}
+
+/* ── 5. SIDEBAR FOOTER ── */
+.dashboard-shell-container .sb-foot {
+  padding: 12px 14px;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.dashboard-shell-container .sb-ava {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--accent), var(--teal));
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: white;
+  flex-shrink: 0;
+}
+
+.dashboard-shell-container .sb-uname {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.dashboard-shell-container .sb-urole {
+  font-size: 10px;
+  color: var(--muted);
+}
+
+.dashboard-shell-container .online-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--green);
+  flex-shrink: 0;
+  margin-left: auto;
+  box-shadow: 0 0 0 2px var(--green-bg);
+  animation: dp-pulse 2s infinite;
+}
+
+@keyframes dp-pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+/* ── 6. MAIN AREA ── */
+.dashboard-shell-container .main {
+  margin-left: var(--sidebar);
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── 7. TOPBAR ── */
+.dashboard-shell-container .topbar {
+  height: var(--topbar);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 22px;
+  gap: 14px;
+  position: sticky;
+  top: 0;
+  z-index: 50;
+}
+
+.dashboard-shell-container .tb-title {
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.dashboard-shell-container .tb-sub {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.dashboard-shell-container .offline-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: var(--amber-bg);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  border-radius: 14px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--amber);
+}
+
+/* Admin role badge in topbar */
+.dashboard-shell-container .role-admin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-bg);
+  border: 1px solid rgba(79, 142, 247, 0.3);
+  color: var(--accent);
+  font-size: 11px;
+  font-weight: 700;
+  padding: 3px 10px;
+  border-radius: 10px;
+  white-space: nowrap;
+}
+
+/* ── 8. CONTENT / SCREENS ── */
+.dashboard-shell-container .content {
+  padding: 22px;
+  flex: 1;
+}
+
+.dashboard-shell-container .screen {
+  display: none;
+  animation: dp-fadein 0.18s ease;
+}
+
+.dashboard-shell-container .screen.active {
+  display: block;
+}
+
+@keyframes dp-fadein {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* ── 9. BUTTONS ── */
+.dashboard-shell-container .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--r-sm);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.12s;
+  text-decoration: none;
+}
+
+.dashboard-shell-container .btn-p {
+  background: var(--accent);
+  color: white;
+}
+
+.dashboard-shell-container .btn-p:hover {
+  background: var(--accent2);
+  transform: translateY(-1px);
+}
+
+.dashboard-shell-container .btn-g {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--border2);
+}
+
+.dashboard-shell-container .btn-g:hover {
+  background: var(--surface2);
+}
+
+.dashboard-shell-container .btn-s {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+}
+
+.dashboard-shell-container .btn-d {
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+}
+
+.dashboard-shell-container .btn-a {
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+}
+
+.dashboard-shell-container .btn-sm {
+  padding: 5px 10px;
+  font-size: 11px;
+}
+
+/* ── 10. STATUS BADGES ── */
+.dashboard-shell-container .badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 3px 8px;
+  border-radius: 12px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.dashboard-shell-container .g  { background: var(--green-bg);  color: var(--green);  }
+.dashboard-shell-container .a  { background: var(--amber-bg);  color: var(--amber);  }
+.dashboard-shell-container .r  { background: var(--red-bg);    color: var(--red);    }
+.dashboard-shell-container .b  { background: var(--accent-bg); color: var(--accent); }
+.dashboard-shell-container .p  { background: var(--purple-bg); color: var(--purple); }
+.dashboard-shell-container .t  { background: var(--teal-bg);   color: var(--teal);   }
+.dashboard-shell-container .gr { background: var(--surface3);  color: var(--muted);  }
+.dashboard-shell-container .o  { background: var(--orange-bg); color: var(--orange); }
+
+/* ── 11. PAGE HEADER ── */
+.dashboard-shell-container .ph {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 20px;
+  gap: 14px;
+}
+
+.dashboard-shell-container .pt {
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: -0.3px;
+}
+
+.dashboard-shell-container .ps {
+  font-size: 12px;
+  color: var(--muted);
+  margin-top: 2px;
+}
+
+/* ── 12. STAT GRID ── */
+.dashboard-shell-container .sg {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 22px;
+}
+
+.dashboard-shell-container .sc {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 16px;
+  transition: border-color 0.15s;
+}
+
+.dashboard-shell-container .sc:hover {
+  border-color: var(--accent);
+}
+
+.dashboard-shell-container .sv {
+  font-size: 26px;
+  font-weight: 800;
+  line-height: 1;
+  margin-top: 4px;
+}
+
+.dashboard-shell-container .sl {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.dashboard-shell-container .si {
+  font-size: 18px;
+  margin-bottom: 4px;
+}
+
+/* ── 13. TABLE WIDGET ── */
+.dashboard-shell-container .tw {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  overflow: hidden;
+  margin-bottom: 20px;
+}
+
+.dashboard-shell-container .tb {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dashboard-shell-container .sb-box {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  flex: 1;
+  max-width: 280px;
+}
+
+.dashboard-shell-container .sb-box input {
+  background: none;
+  border: none;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  flex: 1;
+  outline: none;
+}
+
+.dashboard-shell-container .sb-box input::placeholder {
+  color: var(--hint);
+}
+
+.dashboard-shell-container select.fc,
+.dashboard-shell-container select.sf {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 6px 10px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 12px;
+  outline: none;
+}
+
+.dashboard-shell-container table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dashboard-shell-container thead th {
+  background: var(--surface2);
+  padding: 9px 14px;
+  font-size: 10px;
+  font-weight: 700;
+  text-align: left;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+}
+
+.dashboard-shell-container tbody tr {
+  border-bottom: 1px solid rgba(42, 47, 61, 0.6);
+}
+
+.dashboard-shell-container tbody tr:last-child {
+  border-bottom: none;
+}
+
+.dashboard-shell-container tbody tr:hover {
+  background: var(--surface2);
+}
+
+.dashboard-shell-container td {
+  padding: 10px 14px;
+  font-size: 12px;
+}
+
+/* ── 14. FORM PANELS ── */
+.dashboard-shell-container .fp {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.dashboard-shell-container .fp-t {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dashboard-shell-container .fg {
+  margin-bottom: 14px;
+}
+
+.dashboard-shell-container .fl {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  margin-bottom: 5px;
+  display: block;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.dashboard-shell-container .fc {
+  width: 100%;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 8px 12px;
+  color: var(--text);
+  font-family: var(--font);
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.12s;
+}
+
+.dashboard-shell-container .fc:focus {
+  border-color: var(--accent);
+}
+
+.dashboard-shell-container textarea.fc {
+  resize: vertical;
+  min-height: 80px;
+}
+
+.dashboard-shell-container .fg2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.dashboard-shell-container .fg3 {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 12px;
+}
+
+.dashboard-shell-container .fa {
+  display: flex;
+  gap: 8px;
+  padding-top: 8px;
+}
+
+/* ── 15. NOTICE BANNERS ── */
+.dashboard-shell-container .note {
+  border-radius: var(--r-sm);
+  padding: 10px 12px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.dashboard-shell-container .note-w {
+  background: var(--amber-bg);
+  border: 1px solid rgba(251, 191, 36, 0.3);
+  color: var(--amber);
+}
+
+.dashboard-shell-container .note-s {
+  background: var(--green-bg);
+  border: 1px solid rgba(52, 211, 153, 0.3);
+  color: var(--green);
+}
+
+.dashboard-shell-container .note-i {
+  background: var(--accent-bg);
+  border: 1px solid rgba(79, 142, 247, 0.3);
+  color: var(--accent);
+}
+
+.dashboard-shell-container .note-e {
+  background: var(--red-bg);
+  border: 1px solid rgba(248, 113, 113, 0.3);
+  color: var(--red);
+}
+
+/* ── 16. TWO / THREE COLUMN GRIDS ── */
+.dashboard-shell-container .tc {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  margin-bottom: 20px;
+}
+
+.dashboard-shell-container .thc {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+/* ── 17. CARD ── */
+.dashboard-shell-container .card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+  padding: 16px;
+  margin-bottom: 12px;
+}
+
+.dashboard-shell-container .card:hover {
+  border-color: var(--border2);
+}
+
+.dashboard-shell-container .ct {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+
+.dashboard-shell-container .cm {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* ── 18. ACTIVITY / AUDIT LOG ROWS ── */
+.dashboard-shell-container .al-row {
+  display: flex;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid rgba(42, 47, 61, 0.6);
+  align-items: flex-start;
+}
+
+.dashboard-shell-container .al-row:last-child {
+  border-bottom: none;
+}
+
+.dashboard-shell-container .al-ico {
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  flex-shrink: 0;
+}
+
+/* Staff activity row sub-elements */
+.dashboard-shell-container .al-body { flex: 1; }
+.dashboard-shell-container .al-act  { font-size: 12px; font-weight: 600; }
+.dashboard-shell-container .al-det  { font-size: 11px; color: var(--muted); }
+
+/* Admin audit log sub-elements */
+.dashboard-shell-container .al-a { font-size: 12px; font-weight: 700; }
+.dashboard-shell-container .al-d { font-size: 11px; color: var(--muted); }
+
+.dashboard-shell-container .al-t {
+  font-size: 10px;
+  color: var(--hint);
+  white-space: nowrap;
+  font-family: var(--mono);
+}
+
+/* ── 19. PROGRESS BAR ── */
+.dashboard-shell-container .prog {
+  background: var(--surface3);
+  border-radius: 3px;
+  height: 5px;
+  overflow: hidden;
+}
+
+.dashboard-shell-container .prog-b {
+  height: 100%;
+  border-radius: 3px;
+  background: linear-gradient(90deg, var(--accent), var(--purple));
+}
+
+/* ── 20. CONFLICT RESOLUTION CARD ── */
+.dashboard-shell-container .cf-card {
+  background: var(--surface);
+  border: 1.5px solid rgba(248, 113, 113, 0.4);
+  border-radius: var(--r);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.dashboard-shell-container .cf-hdr {
+  background: var(--red-bg);
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid rgba(248, 113, 113, 0.2);
+}
+
+.dashboard-shell-container .cf-vs {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+}
+
+.dashboard-shell-container .cf-v {
+  padding: 12px 14px;
+}
+
+.dashboard-shell-container .cf-v + .cf-v {
+  border-left: 1px solid var(--border);
+}
+
+.dashboard-shell-container .cf-vl {
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+.dashboard-shell-container .cf-vf {
+  font-size: 11px;
+  margin-bottom: 3px;
+}
+
+.dashboard-shell-container .cf-vf span {
+  color: var(--muted);
+  margin-right: 3px;
+}
+
+.dashboard-shell-container .cf-vf strong {
+  color: var(--amber);
+}
+
+/* ── 21. CERTIFICATE PREVIEW ── */
+.dashboard-shell-container .cert-p {
+  background: white;
+  color: #1a1a2e;
+  border-radius: 8px;
+  padding: 24px 28px;
+  font-family: 'Times New Roman', serif;
+  border: 1px solid var(--border);
+  max-width: 420px;
+}
+
+.dashboard-shell-container .cert-p h2 {
+  text-align: center;
+  font-size: 13px;
+  margin-bottom: 2px;
+  text-transform: uppercase;
+}
+
+.dashboard-shell-container .cert-p h3 {
+  text-align: center;
+  font-size: 11px;
+  color: #555;
+  margin-bottom: 10px;
+}
+
+.dashboard-shell-container .cert-p hr {
+  border: 1px solid #ccc;
+  margin: 8px 0;
+}
+
+.dashboard-shell-container .cert-p p {
+  font-size: 11px;
+  text-align: justify;
+  margin-bottom: 6px;
+  line-height: 1.6;
+}
+
+.dashboard-shell-container .cert-sig {
+  text-align: center;
+  font-size: 11px;
+  margin-top: 20px;
+}
+
+.dashboard-shell-container .cert-sig strong {
+  display: block;
+  margin-top: 16px;
+}
+
+/* ── 22. ANNOUNCEMENTS ── */
+.dashboard-shell-container .ann {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--r);
+  padding: 14px;
+  margin-bottom: 10px;
+}
+
+.dashboard-shell-container .ann.pinned {
+  border-left-color: var(--amber);
+}
+
+/* .ann-cat used by staff, .ann-c used by admin – both supported */
+.dashboard-shell-container .ann-cat,
+.dashboard-shell-container .ann-c {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin-bottom: 4px;
+}
+
+.dashboard-shell-container .ann-t {
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.dashboard-shell-container .ann-b {
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.dashboard-shell-container .ann-f {
+  font-size: 10px;
+  color: var(--hint);
+  margin-top: 8px;
+}
+
+/* ── 23. SCROLLBAR ── */
+.dashboard-shell-container ::-webkit-scrollbar {
+  width: 5px;
+}
+
+.dashboard-shell-container ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dashboard-shell-container ::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
