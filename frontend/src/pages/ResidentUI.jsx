@@ -1,5 +1,6 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
+import PouchDB from 'pouchdb';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
 
@@ -15,8 +16,14 @@ const CERT_FORM_INITIAL = {
   certPurpose: '',
 };
 
+const REMOTE_DB_URL = 'http://admin:capstone2026@localhost:5984/bustrachub_db';
+
 export default function ResidentUI() {
   const navigate = useNavigate();
+  const db = useMemo(() => {
+    if (typeof window === 'undefined') return null;
+    return new PouchDB('bustrac_db');
+  }, []);
 
   // Which "screen" (tab) is currently visible
   const [activeScreen, setActiveScreen] = useState('s-home');
@@ -30,6 +37,11 @@ export default function ResidentUI() {
   const [showCertForm, setShowCertForm] = useState(false);
   const [certForm, setCertForm] = useState(CERT_FORM_INITIAL);
   const [certSuccess, setCertSuccess] = useState(null); // null or { firstName, lastName, certType, refNumber }
+
+  // Local data collections
+  const [myRequests, setMyRequests] = useState([]);
+  const [myFeedbacks, setMyFeedbacks] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
 
   // Announcements filter chips (visual only, mirrors original markup)
   const [announcementFilter, setAnnouncementFilter] = useState('All');
@@ -53,6 +65,73 @@ export default function ResidentUI() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!db) return undefined;
+
+    const refreshCollections = async () => {
+      try {
+        const result = await db.allDocs({ include_docs: true });
+        const docs = result.rows
+          .map((row) => row.doc)
+          .filter(Boolean)
+          .filter(
+            (doc) =>
+              doc.type === 'certificate_request' ||
+              doc.type === 'feedback_submission' ||
+              doc.type === 'announcement'
+          );
+
+        const sortedRequests = docs
+          .filter((doc) => doc.type === 'certificate_request')
+          .sort(
+            (a, b) =>
+              new Date(b.timestamp || b.createdAt || 0).getTime() -
+              new Date(a.timestamp || a.createdAt || 0).getTime()
+          );
+
+        const sortedFeedbacks = docs
+          .filter((doc) => doc.type === 'feedback_submission')
+          .sort(
+            (a, b) =>
+              new Date(b.timestamp || b.createdAt || 0).getTime() -
+              new Date(a.timestamp || a.createdAt || 0).getTime()
+          );
+
+        const sortedAnnouncements = docs
+          .filter((doc) => doc.type === 'announcement')
+          .sort(
+            (a, b) =>
+              new Date(b.timestamp || b.createdAt || 0).getTime() -
+              new Date(a.timestamp || a.createdAt || 0).getTime()
+          );
+
+        setMyRequests(sortedRequests);
+        setMyFeedbacks(sortedFeedbacks);
+        setAnnouncements(sortedAnnouncements);
+      } catch (error) {
+        console.error('Unable to load offline data', error);
+      }
+    };
+
+    refreshCollections();
+
+    const changes = db.changes({ live: true, include_docs: true });
+    changes.on('change', () => {
+      refreshCollections();
+    });
+    changes.on('error', (error) => {
+      console.error('PouchDB changes error', error);
+    });
+
+    const remoteDb = new PouchDB(REMOTE_DB_URL);
+    const sync = db.sync(remoteDb, { live: true, retry: true });
+
+    return () => {
+      changes.cancel();
+      sync.cancel();
+    };
+  }, [db]);
+
   const goToTab = useCallback((screenId) => {
     setActiveScreen(screenId);
     window.scrollTo(0, 0);
@@ -69,7 +148,7 @@ export default function ResidentUI() {
   };
 
   const submitCert = useCallback(
-    (event) => {
+    async (event) => {
       event.preventDefault();
 
       const {
@@ -132,7 +211,11 @@ export default function ResidentUI() {
         return;
       }
 
-      // Store certificate request data
+      if (!db) {
+        alert('Local database is unavailable.');
+        return;
+      }
+
       const certRequest = {
         firstName: trimmedFirstName,
         lastName: trimmedLastName,
@@ -150,22 +233,35 @@ export default function ResidentUI() {
 
       const refNumber = 'CERT-' + Date.now().toString().slice(-6);
 
-      setShowCertForm(false);
-      setCertSuccess({
-        firstName: trimmedFirstName,
-        lastName: trimmedLastName,
-        certType,
-        refNumber,
-      });
-      setCertForm(CERT_FORM_INITIAL);
+      try {
+        await db.post({
+          ...certRequest,
+          type: 'certificate_request',
+          timestamp: new Date().toISOString(),
+          status: 'Pending',
+          step: 1,
+        });
 
-      setTimeout(() => setCertSuccess(null), 5000);
+        setShowCertForm(false);
+        setCertSuccess({
+          firstName: trimmedFirstName,
+          lastName: trimmedLastName,
+          certType,
+          refNumber,
+        });
+        setCertForm(CERT_FORM_INITIAL);
+
+        setTimeout(() => setCertSuccess(null), 5000);
+      } catch (error) {
+        console.error('Unable to save certificate request', error);
+        alert('Unable to save your request offline right now.');
+      }
     },
-    [certForm]
+    [certForm, db]
   );
 
   const submitFeedback = useCallback(
-    (event) => {
+    async (event) => {
       event.preventDefault();
 
       if (!feedbackSubject.trim() || !feedbackMessage.trim()) {
@@ -173,13 +269,44 @@ export default function ResidentUI() {
         return;
       }
 
-      alert('Thank you! Your ' + feedbackType.toLowerCase() + ' has been submitted successfully.');
-      setFeedbackSubject('');
-      setFeedbackMessage('');
-      setFeedbackType('Complaint');
-      goToTab('s-home');
+      if (!db) {
+        alert('Local database is unavailable.');
+        return;
+      }
+
+      try {
+        await db.post({
+          type: 'feedback_submission',
+          feedbackType,
+          subject: feedbackSubject.trim(),
+          message: feedbackMessage.trim(),
+          status: 'Pending',
+          timestamp: new Date().toISOString(),
+        });
+
+        alert('Thank you! Your ' + feedbackType.toLowerCase() + ' has been submitted successfully.');
+        setFeedbackSubject('');
+        setFeedbackMessage('');
+        setFeedbackType('Complaint');
+        goToTab('s-home');
+      } catch (error) {
+        console.error('Unable to save feedback', error);
+        alert('Unable to save your feedback offline right now.');
+      }
     },
-    [feedbackSubject, feedbackMessage, feedbackType, goToTab]
+    [feedbackSubject, feedbackMessage, feedbackType, goToTab, db]
+  );
+
+  const navItems = [
+    { id: 's-home', label: 'Home', icon: 'Home', badge: null, badgeColor: 'var(--red)' },
+    { id: 's-certificates', label: 'Certificates', icon: 'Certificates', badge: myRequests.length > 0 ? myRequests.length : null, badgeColor: 'var(--red)' },
+    { id: 's-announcements', label: 'News', icon: 'News', badge: announcements.length > 0 ? announcements.length : null, badgeColor: 'var(--red)' },
+    { id: 's-feedback', label: 'Feedback', icon: 'Feedback', badge: myFeedbacks.length > 0 ? myFeedbacks.length : null, badgeColor: 'var(--red)' },
+  ];
+
+  const pendingRequestCount = myRequests.filter((request) => request.status === 'Pending').length;
+  const filteredAnnouncements = announcements.filter(
+    (announcement) => announcementFilter === 'All' || announcement.category === announcementFilter
   );
 
   return (
@@ -197,32 +324,30 @@ export default function ResidentUI() {
 
           {/* TAB NAV */}
           <nav className="bottom-nav">
-            <button
-              className={`bnav-item${activeScreen === 's-home' ? ' active' : ''}`}
-              onClick={() => goToTab('s-home')}
-            >
-              <span className="icon">Home</span>Home
-            </button>
-            <button
-              className={`bnav-item${activeScreen === 's-certificates' ? ' active' : ''}`}
-              onClick={() => goToTab('s-certificates')}
-            >
-              <span className="icon">Certificates</span>Certificates
-              <span className="bnav-badge">1</span>
-            </button>
-            <button
-              className={`bnav-item${activeScreen === 's-announcements' ? ' active' : ''}`}
-              onClick={() => goToTab('s-announcements')}
-            >
-              <span className="icon">News</span>News
-              <span className="bnav-badge" style={{ background: 'var(--green)' }}>3</span>
-            </button>
-            <button
-              className={`bnav-item${activeScreen === 's-feedback' ? ' active' : ''}`}
-              onClick={() => goToTab('s-feedback')}
-            >
-              <span className="icon">Feedback</span>Feedback
-            </button>
+            {navItems.map((item) => {
+              const isActive = activeScreen === item.id;
+
+              return (
+                <button
+                  key={item.id}
+                  className={`bnav-item${isActive ? ' active' : ''}`}
+                  onClick={() => goToTab(item.id)}
+                  aria-current={isActive ? 'page' : undefined}
+                >
+                  <span className="icon">{item.icon}</span>
+                  {item.label}
+                  {item.badge ? (
+                    <span
+                      className={`bnav-badge${isActive ? ' active' : ''}`}
+                      style={{ background: isActive ? 'var(--primary)' : item.badgeColor }}
+                    >
+                      {item.badge}
+                    </span>
+                  ) : null}
+                  <span className={`nav-selection-dot${isActive ? ' active' : ''}`} />
+                </button>
+              );
+            })}
           </nav>
         </nav>
 
@@ -247,41 +372,41 @@ export default function ResidentUI() {
 
             <div className="stat-row">
               <div className="stat-card">
-                <div className="stat-val" style={{ color: 'var(--primary)' }}>2</div>
+                <div className="stat-val" style={{ color: 'var(--primary)' }}>{myRequests.length}</div>
                 <div className="stat-lbl">My Certificates</div>
               </div>
               <div className="stat-card">
-                <div className="stat-val" style={{ color: 'var(--green)' }}>1</div>
+                <div className="stat-val" style={{ color: 'var(--green)' }}>{pendingRequestCount}</div>
                 <div className="stat-lbl">Pending Request</div>
               </div>
               <div className="stat-card">
-                <div className="stat-val" style={{ color: 'var(--amber)' }}>3</div>
+                <div className="stat-val" style={{ color: 'var(--amber)' }}>{announcements.length}</div>
                 <div className="stat-lbl">Announcements</div>
               </div>
               <div className="stat-card">
-                <div className="stat-val" style={{ color: 'var(--purple)' }}>1</div>
+                <div className="stat-val" style={{ color: 'var(--purple)' }}>{myFeedbacks.length}</div>
                 <div className="stat-lbl">My Feedbacks</div>
               </div>
             </div>
 
             <div className="card">
               <div className="card-title" style={{ marginBottom: '14px' }}>📌 Latest Announcements</div>
-              <div className="list-item">
-                <div className="list-icon" style={{ background: '#FFFBEB' }}>📢</div>
-                <div className="list-body">
-                  <div className="list-title">Free Medical Mission — April 15</div>
-                  <div className="list-sub">Health · Posted Apr 5</div>
+              {announcements.length ? (
+                announcements.slice(0, 3).map((announcement) => (
+                  <div className="list-item" key={announcement._id}>
+                    <div className="list-icon" style={{ background: announcement.category === 'Health' ? '#FFFBEB' : announcement.category === 'Governance' ? '#EEF2FF' : '#F3F4F6' }}>📢</div>
+                    <div className="list-body">
+                      <div className="list-title">{announcement.title}</div>
+                      <div className="list-sub">{announcement.category || 'General'} · Posted {announcement.author ? `by ${announcement.author}` : 'recently'}</div>
+                    </div>
+                    <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')}>View</button>
+                  </div>
+                ))
+              ) : (
+                <div className="notice notice-info" style={{ marginTop: '8px' }}>
+                  No announcements have been synced yet.
                 </div>
-                <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')}>View</button>
-              </div>
-              <div className="list-item">
-                <div className="list-icon" style={{ background: '#EEF2FF' }}>🏛️</div>
-                <div className="list-body">
-                  <div className="list-title">Barangay Assembly — April 20</div>
-                  <div className="list-sub">Governance · Posted Apr 4</div>
-                </div>
-                <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')}>View</button>
-              </div>
+              )}
             </div>
 
             <div className="card">
@@ -454,69 +579,48 @@ export default function ResidentUI() {
               My Requests
             </div>
 
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <div>
-                  <div className="card-title">Barangay Clearance</div>
-                  <div className="card-meta">CERT-2024-089 · For employment purposes</div>
-                </div>
-                <span className="badge b-amber">⏳ Pending</span>
-              </div>
-              <div className="steps">
-                <div className="step done">
-                  <div className="step-circle">✓</div>
-                  <div className="step-label">Submitted</div>
-                  <div className="step-line" />
-                </div>
-                <div className="step active">
-                  <div className="step-circle">2</div>
-                  <div className="step-label">Review</div>
-                  <div className="step-line" />
-                </div>
-                <div className="step pending">
-                  <div className="step-circle">3</div>
-                  <div className="step-label">Approved</div>
-                  <div className="step-line" />
-                </div>
-                <div className="step pending">
-                  <div className="step-circle">4</div>
-                  <div className="step-label">Issued</div>
-                </div>
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Submitted Apr 7 · Awaiting Barangay Captain approval</div>
-            </div>
+            {myRequests.length ? (
+              myRequests.map((request) => {
+                const stepCount = request.step || 1;
+                const statusLabel = request.status || 'Pending';
+                const badgeClass = statusLabel === 'Pending' ? 'badge b-amber' : 'badge b-green';
+                const refNumber = request.refNumber || `CERT-${(request._id || '').slice(-6).toUpperCase()}`;
+                const submittedDate = request.timestamp
+                  ? new Date(request.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                  : 'Recently added';
 
-            <div className="card">
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                <div>
-                  <div className="card-title">Certificate of Residency</div>
-                  <div className="card-meta">CERT-2024-081 · For school enrollment</div>
-                </div>
-                <span className="badge b-green">✓ Issued</span>
-              </div>
-              <div className="steps">
-                <div className="step done">
-                  <div className="step-circle">✓</div>
-                  <div className="step-label">Submitted</div>
-                  <div className="step-line" />
-                </div>
-                <div className="step done">
-                  <div className="step-circle">✓</div>
-                  <div className="step-label">Review</div>
-                  <div className="step-line" />
-                </div>
-                <div className="step done">
-                  <div className="step-circle">✓</div>
-                  <div className="step-label">Approved</div>
-                  <div className="step-line" />
-                </div>
-                <div className="step done">
-                  <div className="step-circle">✓</div>
-                  <div className="step-label">Issued</div>
-                </div>
-              </div>
-              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Issued Mar 15 · Cert No. BRG-CERT-0245</div>
-            </div>
+                return (
+                  <div className="card" key={request._id}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <div>
+                        <div className="card-title">{request.certType}</div>
+                        <div className="card-meta">{refNumber} · {request.certPurpose || 'No purpose provided'}</div>
+                      </div>
+                      <span className={badgeClass}>{statusLabel === 'Pending' ? '⏳ Pending' : '✓ Issued'}</span>
+                    </div>
+                    <div className="steps">
+                      {['Submitted', 'Review', 'Approved', 'Issued'].map((label, index) => {
+                        const value = index + 1;
+                        const isDone = stepCount > value;
+                        const isActive = stepCount === value;
+                        return (
+                          <div key={label} className={`step${isDone ? ' done' : isActive ? ' active' : ' pending'}`}>
+                            <div className="step-circle">{isDone ? '✓' : value}</div>
+                            <div className="step-label">{label}</div>
+                            {index < 3 && <div className="step-line" />}
+                          </div>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                      Submitted {submittedDate} · {statusLabel === 'Pending' ? 'Awaiting Barangay Captain approval' : 'Request completed'}
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div className="notice notice-info">No certificate requests have been saved locally yet.</div>
+            )}
           </div>
 
           {/* ANNOUNCEMENTS */}
@@ -538,40 +642,34 @@ export default function ResidentUI() {
               ))}
             </div>
 
-            <div className="ann-card pinned">
-              <div className="ann-cat" style={{ color: 'var(--amber)' }}>📌 Pinned · Health</div>
-              <div className="ann-title">Free Medical Mission — April 15, 2024</div>
-              <div className="ann-body">
-                The DOH-Bicol Region will conduct a FREE medical mission at the Barangay Bustrac covered
-                court on April 15, 2024, from 8:00 AM to 4:00 PM. Services include free consultation, blood
-                pressure monitoring, blood sugar screening, and medicine dispensing. Open to all residents of
-                Barangay Bustrac. Please bring your barangay clearance or any valid ID.
-              </div>
-              <div className="ann-footer">📅 Posted by Cortero, Mark · April 5, 2024</div>
-            </div>
-
-            <div className="ann-card">
-              <div className="ann-cat" style={{ color: 'var(--primary)' }}>🏛️ Governance</div>
-              <div className="ann-title">Quarterly Barangay Assembly — April 20, 2024</div>
-              <div className="ann-body">
-                All residents of Barangay Bustrac are cordially invited to attend the 2nd Quarterly Barangay
-                Assembly on April 20, 2024, at 8:00 AM at the Barangay Bustrac Covered Court. Topics to be
-                discussed include the barangay budget update, peace and order situation, and upcoming
-                infrastructure projects. Attendance is highly encouraged.
-              </div>
-              <div className="ann-footer">📅 Posted by Napagal, Jay · April 4, 2024</div>
-            </div>
-
-            <div className="ann-card">
-              <div className="ann-cat" style={{ color: 'var(--red)' }}>🚨 Security</div>
-              <div className="ann-title">Community Watch Reminder — Be Vigilant</div>
-              <div className="ann-body">
-                The barangay office reminds all residents to secure their homes and report any suspicious
-                activities to the barangay hall or the nearest PNP station. The Barangay Bustrac Community
-                Watch team conducts nightly patrols from 9 PM to 5 AM. Report emergencies to 09XXXXXXXXX.
-              </div>
-              <div className="ann-footer">📅 Posted by Admin · April 2, 2024</div>
-            </div>
+            {filteredAnnouncements.length ? (
+              filteredAnnouncements.map((announcement) => (
+                <div key={announcement._id} className={`ann-card${announcement.pinned ? ' pinned' : ''}`}>
+                  <div
+                    className="ann-cat"
+                    style={{
+                      color: announcement.category === 'Health'
+                        ? 'var(--amber)'
+                        : announcement.category === 'Governance'
+                          ? 'var(--primary)'
+                          : announcement.category === 'Security'
+                            ? 'var(--red)'
+                            : 'var(--purple)',
+                    }}
+                  >
+                    {announcement.pinned ? '📌 Pinned · ' : ''}
+                    {announcement.category || 'General'}
+                  </div>
+                  <div className="ann-title">{announcement.title}</div>
+                  <div className="ann-body">{announcement.body}</div>
+                  <div className="ann-footer">
+                    📅 Posted by {announcement.author || 'Barangay Office'} · {announcement.date || 'Recently posted'}
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="notice notice-info">No announcements match the selected filter.</div>
+            )}
           </div>
 
           {/* FEEDBACK */}
@@ -639,22 +737,32 @@ export default function ResidentUI() {
               My Submissions
             </div>
             <div className="card">
-              <div className="list-item">
-                <div className="list-icon" style={{ background: 'var(--red-bg)' }}>🗑️</div>
-                <div className="list-body">
-                  <div className="list-title">Garbage not collected in Purok 3</div>
-                  <div className="list-sub">Complaint · Submitted Apr 7</div>
-                </div>
-                <span className="badge b-amber">Pending</span>
-              </div>
-              <div className="list-item">
-                <div className="list-icon" style={{ background: 'var(--green-bg)' }}>💡</div>
-                <div className="list-body">
-                  <div className="list-title">More streetlights near the park</div>
-                  <div className="list-sub">Suggestion · Submitted Mar 20</div>
-                </div>
-                <span className="badge b-green">Resolved</span>
-              </div>
+              {myFeedbacks.length ? (
+                myFeedbacks.map((feedback) => (
+                  <div className="list-item" key={feedback._id}>
+                    <div
+                      className="list-icon"
+                      style={{
+                        background:
+                          feedback.feedbackType === 'Suggestion'
+                            ? 'var(--green-bg)'
+                            : feedback.feedbackType === 'Inquiry'
+                              ? 'var(--purple-bg)'
+                              : 'var(--red-bg)',
+                      }}
+                    >
+                      {feedback.feedbackType === 'Suggestion' ? '💡' : feedback.feedbackType === 'Inquiry' ? '❓' : '🗑️'}
+                    </div>
+                    <div className="list-body">
+                      <div className="list-title">{feedback.subject}</div>
+                      <div className="list-sub">{feedback.feedbackType} · Submitted {feedback.timestamp ? new Date(feedback.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'recently'}</div>
+                    </div>
+                    <span className={`badge ${feedback.status === 'Pending' ? 'b-amber' : 'b-green'}`}>{feedback.status || 'Pending'}</span>
+                  </div>
+                ))
+              ) : (
+                <div className="notice notice-info">No feedback submissions have been synced yet.</div>
+              )}
             </div>
           </div>
 

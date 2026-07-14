@@ -3,12 +3,6 @@ import { useNavigate } from 'react-router-dom';
 import logo from '../assets/logo.png';
 import './LogIn.css';
 
-// Credentials for each role — mapped to React Router paths instead of raw .html files
-const credentials = {
-  staff: { username: 'mgcortero', password: 'password', path: '/staff' },
-  admin: { username: 'jmacabangon', password: 'password', path: '/admin' },
-};
-
 export default function LogIn() {
   const navigate = useNavigate();
 
@@ -19,37 +13,47 @@ export default function LogIn() {
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
 
-  const handleLogin = useCallback(
-    (event) => {
+    const handleLogin = useCallback(
+    async (event) => {
       event.preventDefault();
+      setShowError(false);
 
       const trimmedUsername = username.trim();
-      let authenticatedRole = null;
-      let authenticatedPath = null;
 
-      // Check credentials against all roles
-      for (const [role, cred] of Object.entries(credentials)) {
-        if (trimmedUsername === cred.username && password === cred.password) {
-          authenticatedRole = role;
-          authenticatedPath = cred.path;
-          break;
+      try {
+        const response = await fetch('http://localhost:5000/api/login', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({
+            username: trimmedUsername,
+            password: password,
+          }),
+        });
+
+        const data = await response.json();
+
+        if (response.ok && data.success) {
+          // Store actual verified session data from the server
+          sessionStorage.setItem('bustrac_role', data.role);
+          sessionStorage.setItem('bustrac_user', data.user);
+          sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
+          // Redirect to appropriate portal using server-provided path
+          navigate(data.redirectPath);
+        } else {
+          // Captures 401 Unauthorized or 400 Bad Requests
+          setShowError(true);
         }
-      }
-
-      if (authenticatedRole) {
-        // Store session data
-        sessionStorage.setItem('bustrac_role', authenticatedRole);
-        sessionStorage.setItem('bustrac_user', trimmedUsername);
-        sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
-
-        // Redirect to appropriate portal via React Router
-        navigate(authenticatedPath);
-      } else {
+      } catch (error) {
+        console.error('Backend connection failed:', error);
         setShowError(true);
       }
     },
     [username, password, navigate]
   );
+
 
   // Clear error message whenever the user edits either field
   const handleUsernameChange = (event) => {
