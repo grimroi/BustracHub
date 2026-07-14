@@ -1,26 +1,65 @@
 const express = require('express');
 const cors = require('cors');
+// 1. Import Nano (CouchDB Driver)
+const nano = require('nano');
 
 const app = express();
-const PORT = 5000; // Running on port 5000 so it doesn't fight React (5173)
+const PORT = 5000;
 
 // Middlewares
-app.use(cors());          // Allows your frontend to securely fetch data from this server
-app.use(express.json());  // Lets your server read JSON form data sent by the user
+app.use(cors());          
+app.use(express.json());  
 
-// Mock Credentials database matching your exact stack specifications
-const VALID_CREDENTIALS = {
-  staff: { username: 'mgcortero', password: 'password', role: 'staff', path: '/staff' },
-  admin: { username: 'jmacabangon', password: 'password', role: 'admin', path: '/admin' }
-};
+// 2. Configure CouchDB Connection String
+const COUCHDB_URL = 'http://admin:capstone2026@localhost:5984';
+const couch = nano(COUCHDB_URL);
+const DB_NAME = 'bustrachub_db';
+let db;
 
-// 1. Basic Health Check Route
-app.get('/api/status', (req, res) => {
-  res.json({ status: "online", message: "BustracHub Backend Server is active!" });
-});
+// 3. Connect and Initialize Database
+async function initDB() {
+  try {
+    const dbList = await couch.db.list();
+    if (!dbList.includes(DB_NAME)) {
+      await couch.db.create(DB_NAME);
+      console.log(`📦 Created missing database: "${DB_NAME}"`);
+      
+      // Inject our initial demo credentials into the database
+      const targetDb = couch.use(DB_NAME);
+      const demoUsers = [
+        {
+          _id: 'user_mgcortero',
+          type: 'user',
+          username: 'mgcortero',
+          password: 'password', // In production, this must be hashed (e.g., bcrypt)
+          role: 'staff',
+          path: '/staff'
+        },
+        {
+          _id: 'user_jmacabangon',
+          type: 'user',
+          username: 'jmacabangon',
+          password: 'password',
+          role: 'admin',
+          path: '/admin'
+        }
+      ];
+      
+      // Bulk insert demo profiles
+      await targetDb.bulk({ docs: demoUsers });
+      console.log('👥 Injected default Staff and Admin accounts into CouchDB.');
+    } else {
+      console.log(`📦 Connected to existing CouchDB database: "${DB_NAME}"`);
+    }
+    db = couch.use(DB_NAME);
+  } catch (error) {
+    console.error('❌ CouchDB Connection Failed! Make sure CouchDB is running.', error);
+  }
+}
+initDB();
 
-// 2. Secure Login Verification Route
-app.post('/api/login', (req, res) => {
+// 4. Refactored Dynamic Database Login Route
+app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
 
   if (!username || !password) {
@@ -28,26 +67,40 @@ app.post('/api/login', (req, res) => {
   }
 
   const trimmedUser = username.trim();
-  let matchedUser = null;
 
-  // Search accounts array for a match
-  for (const account of Object.values(VALID_CREDENTIALS)) {
-    if (account.username === trimmedUser && account.password === password) {
-      matchedUser = account;
-      break;
+  try {
+    // Query CouchDB using Mango Query syntax to find matching credentials
+    const query = {
+      selector: {
+        type: 'user',
+        username: trimmedUser,
+        password: password
+      },
+      limit: 1
+    };
+
+    const result = await db.find(query);
+
+    if (result.docs.length > 0) {
+      const matchedUser = result.docs[0];
+      return res.json({
+        success: true,
+        role: matchedUser.role,
+        redirectPath: matchedUser.path,
+        user: matchedUser.username
+      });
+    } else {
+      return res.status(401).json({ success: false, message: "Invalid username or password." });
     }
+  } catch (error) {
+    console.error('Database query error:', error);
+    return res.status(500).json({ success: false, message: "Internal server database error." });
   }
+});
 
-  if (matchedUser) {
-    return res.json({
-      success: true,
-      role: matchedUser.role,
-      redirectPath: matchedUser.path,
-      user: matchedUser.username
-    });
-  } else {
-    return res.status(401).json({ success: false, message: "Invalid username or password." });
-  }
+// Basic Health Check Route
+app.get('/api/status', (req, res) => {
+  res.json({ status: "online", message: "BustracHub Backend Server is active!" });
 });
 
 // Fire up the listener
