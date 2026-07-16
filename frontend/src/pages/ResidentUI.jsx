@@ -304,7 +304,11 @@ export default function ResidentUI() {
     { id: 's-feedback', label: 'Feedback', icon: 'Feedback', badge: myFeedbacks.length > 0 ? myFeedbacks.length : null, badgeColor: 'var(--red)' },
   ];
 
-  const pendingRequestCount = myRequests.filter((request) => request.status === 'Pending').length;
+  const pendingRequestCount = myRequests.filter((request) => {
+    const statusLabel = request.status || 'Pending';
+    const stepValue = Number(request.step || 1);
+    return statusLabel === 'Pending' && stepValue < 4;
+  }).length;
   const filteredAnnouncements = announcements.filter(
     (announcement) => announcementFilter === 'All' || announcement.category === announcementFilter
   );
@@ -581,9 +585,10 @@ export default function ResidentUI() {
 
             {myRequests.length ? (
               myRequests.map((request) => {
-                const stepCount = request.step || 1;
+                const stepCount = Number(request.step || 1);
                 const statusLabel = request.status || 'Pending';
-                const badgeClass = statusLabel === 'Pending' ? 'badge b-amber' : 'badge b-green';
+                const isIssued = statusLabel === 'Issued' || stepCount >= 4;
+                const badgeClass = isIssued ? 'badge b-green' : 'badge b-amber';
                 const refNumber = request.refNumber || `CERT-${(request._id || '').slice(-6).toUpperCase()}`;
                 const submittedDate = request.timestamp
                   ? new Date(request.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
@@ -596,7 +601,7 @@ export default function ResidentUI() {
                         <div className="card-title">{request.certType}</div>
                         <div className="card-meta">{refNumber} · {request.certPurpose || 'No purpose provided'}</div>
                       </div>
-                      <span className={badgeClass}>{statusLabel === 'Pending' ? '⏳ Pending' : '✓ Issued'}</span>
+                      <span className={badgeClass}>{isIssued ? '✓ Issued' : '⏳ Pending'}</span>
                     </div>
                     <div className="steps">
                       {['Submitted', 'Review', 'Approved', 'Issued'].map((label, index) => {
@@ -613,7 +618,7 @@ export default function ResidentUI() {
                       })}
                     </div>
                     <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                      Submitted {submittedDate} · {statusLabel === 'Pending' ? 'Awaiting Barangay Captain approval' : 'Request completed'}
+                      Submitted {submittedDate} · {isIssued ? 'Request completed' : 'Awaiting Barangay Captain approval'}
                     </div>
                   </div>
                 );

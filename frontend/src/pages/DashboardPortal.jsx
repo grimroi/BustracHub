@@ -1,7 +1,11 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import PouchDB from 'pouchdb';
 import logo from '../assets/logo.png';
+import CertificateLifecycle from './CertificateLifecycle';
 import './DashboardLayout.css';
+
+const db = new PouchDB('bustrac_db');
 
 // ─────────────────────────────────────────────
 // CONSTANTS
@@ -12,7 +16,7 @@ const SCREEN_META = {
   residents:        ['Manage Residents',          'Resident Registry Module'],
   'add-resident':   ['Add New Resident',          'Resident Registry'],
   households:       ['Manage Households',         'Resident Registry'],
-  'cert-req':       ['Certificate Request',       'Certificate Issuance Module'],
+  'cert-req':       ['Request & Approval',        'Certificate Issuance Module'],
   'cert-approve':   ['Certificate Approval',      'Certificate Issuance Module'],
   'cert-print':     ['Issuance & Print',          'Certificate Issuance Module'],
   programs:         ['Distribution Programs',     'Aid Distribution Module'],
@@ -103,9 +107,8 @@ export default function DashboardPortal({ role = 'staff' }) {
   // ── Navigation State ──
   const [screen,  setScreen]  = useState('dashboard');
   const [offline, setOffline] = useState(false);
-
-  // ── Staff: Certificate Request Form ──
-  const [certForm, setCertForm] = useState({ resident: '', certType: '', purpose: '' });
+  const [issuedCertificates, setIssuedCertificates] = useState([]);
+  const [selectedCertificate, setSelectedCertificate] = useState(null);
 
   // ── Staff: Blotter Case / Summons State ──
   const [staffCase, setStaffCase] = useState({
@@ -155,28 +158,6 @@ export default function DashboardPortal({ role = 'staff' }) {
   const nav           = (id) => setScreen(id);
   const logout        = ()  => navigate('/login');
   const toggleOffline = ()  => setOffline((prev) => !prev);
-
-  // ─────────────────────────────────────────────
-  // HANDLERS — STAFF CERTIFICATE
-  // ─────────────────────────────────────────────
-  const submitStaffCert = (e) => {
-    e.preventDefault();
-    const { resident, certType, purpose } = certForm;
-    if (!resident || !certType || !purpose.trim()) {
-      alert('Please fill in all required fields.');
-      return;
-    }
-    alert(
-      'Certificate request submitted for ' +
-        resident +
-        '.\nType: ' +
-        certType +
-        '\nPurpose: ' +
-        purpose
-    );
-    setCertForm({ resident: '', certType: '', purpose: '' });
-    nav('cert-req');
-  };
 
   // ─────────────────────────────────────────────
   // HANDLERS — STAFF BLOTTER / SUMMONS
@@ -315,6 +296,72 @@ export default function DashboardPortal({ role = 'staff' }) {
     setBeneficiaryList([]);
   };
 
+  useEffect(() => {
+    const loadIssuedCertificates = async () => {
+      try {
+        const result = await db.allDocs({ include_docs: true, attachments: false });
+        const docs = result.rows
+          .map((row) => row.doc)
+          .filter((doc) => doc && doc.type === 'certificate_request' && Number(doc.step) === 4);
+
+        setIssuedCertificates(docs);
+        if (!selectedCertificate && docs.length > 0) {
+          setSelectedCertificate(docs[0]);
+        }
+      } catch (error) {
+        console.error('Unable to load issued certificates', error);
+      }
+    };
+
+    const changes = db.changes({ live: true, include_docs: true });
+    changes.on('change', (change) => {
+      if (!change.doc || change.doc.type !== 'certificate_request') {
+        return;
+      }
+
+      setIssuedCertificates((prev) => {
+        const next = prev.filter((item) => item._id !== change.id);
+        if (Number(change.doc.step) !== 4) {
+          return next;
+        }
+
+        if (!prev.some((item) => item._id === change.id)) {
+          return [change.doc, ...next];
+        }
+
+        return next.map((item) => (item._id === change.id ? change.doc : item));
+      });
+    });
+
+    loadIssuedCertificates();
+
+    return () => changes.cancel();
+  }, [selectedCertificate]);
+
+  const handlePrintRelease = async (selectedDoc) => {
+    try {
+      const latestDoc = await db.get(selectedDoc._id);
+      const updatedDoc = {
+        ...latestDoc,
+        step: 4,
+        status: 'Issued',
+        date_issued: new Date().toLocaleDateString(),
+      };
+
+      await db.put(updatedDoc);
+
+      setIssuedCertificates((prev) =>
+        prev.map((item) => (item._id === updatedDoc._id ? updatedDoc : item))
+      );
+      setSelectedCertificate((prev) =>
+        prev && prev._id === updatedDoc._id ? updatedDoc : prev
+      );
+    } catch (err) {
+      console.error('Failed to release and issue document instantly:', err);
+      alert('Database synchronization lag error.');
+    }
+  };
+
   // ─────────────────────────────────────────────
   // TOPBAR TITLE
   // ─────────────────────────────────────────────
@@ -389,14 +436,8 @@ export default function DashboardPortal({ role = 'staff' }) {
               className={`nav-btn${screen === 'cert-req' ? ' active' : ''}`}
               onClick={() => nav('cert-req')}
             >
-              <span className="nav-ico">📝</span>Certificate Request
+              <span className="nav-ico">📝</span>Request &amp; Approval
               <span className="nb nb-amber">3</span>
-            </button>
-            <button
-              className={`nav-btn${screen === 'cert-approve' ? ' active' : ''}`}
-              onClick={() => nav('cert-approve')}
-            >
-              <span className="nav-ico">✅</span>Cert. Approval
             </button>
             <button
               className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`}
@@ -1065,139 +1106,7 @@ export default function DashboardPortal({ role = 'staff' }) {
                 ════════════════════════════════════════ */}
             {screen === 'cert-req' && (
               <div className="screen active">
-                <div className="ph">
-                  <div>
-                    <div className="pt">Certificate Request</div>
-                    <div className="ps">Submit or view certificate requests</div>
-                  </div>
-                </div>
-                <div className="tc">
-                  <div className="fp">
-                    <div className="fp-t">📝 New Request</div>
-                    <form onSubmit={role === 'staff' ? submitStaffCert : (e) => e.preventDefault()}>
-                      <div className="fg">
-                        <label className="fl">Resident</label>
-                        <select
-                          className="fc" required
-                          value={role === 'staff' ? certForm.resident : undefined}
-                          onChange={role === 'staff' ? (e) => setCertForm({ ...certForm, resident: e.target.value }) : undefined}
-                        >
-                          <option value="">-- Select Resident --</option>
-                          <option>Santos, Maria D. (RES-0001)</option>
-                          <option>Reyes, Juan B. (RES-0002)</option>
-                        </select>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Certificate Type</label>
-                        <select
-                          className="fc" required
-                          value={role === 'staff' ? certForm.certType : undefined}
-                          onChange={role === 'staff' ? (e) => setCertForm({ ...certForm, certType: e.target.value }) : undefined}
-                        >
-                          <option value="">-- Select Type --</option>
-                          <option>Barangay Clearance</option>
-                          <option>Certificate of Indigency</option>
-                          <option>Certificate of Residency</option>
-                        </select>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Purpose</label>
-                        <textarea
-                          className="fc" placeholder="State the purpose of this certificate..."
-                          required
-                          value={role === 'staff' ? certForm.purpose : undefined}
-                          onChange={role === 'staff' ? (e) => setCertForm({ ...certForm, purpose: e.target.value }) : undefined}
-                        />
-                      </div>
-                      <div className="fa">
-                        <button type="submit" className="btn btn-p">Submit Request</button>
-                      </div>
-                    </form>
-                  </div>
-                  <div>
-                    <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
-                      Pending
-                    </div>
-                    <div className="tw">
-                      <table>
-                        <thead>
-                          <tr><th>Cert #</th><th>Resident</th><th>Type</th><th>Status</th></tr>
-                        </thead>
-                        <tbody>
-                          <tr>
-                            <td style={mono10}>CERT-2024-089</td><td>Santos, Maria</td>
-                            <td><span className="badge b">Clearance</span></td>
-                            <td><span className="badge a">Pending</span></td>
-                          </tr>
-                          <tr>
-                            <td style={mono10}>CERT-2024-090</td><td>Cruz, Ramon</td>
-                            <td><span className="badge a">Indigency</span></td>
-                            <td><span className="badge a">Pending</span></td>
-                          </tr>
-                          <tr>
-                            <td style={mono10}>CERT-2024-088</td><td>Lim, Ana</td>
-                            <td><span className="badge t">Residency</span></td>
-                            <td><span className="badge g">Approved</span></td>
-                          </tr>
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ════════════════════════════════════════
-                SCREEN: CERTIFICATE APPROVAL
-                ════════════════════════════════════════ */}
-            {screen === 'cert-approve' && (
-              <div className="screen active">
-                <div className="ph">
-                  <div>
-                    <div className="pt">Certificate Approval</div>
-                    <div className="ps">Review and approve pending requests</div>
-                  </div>
-                </div>
-                <div className="tw">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Cert #</th><th>Resident</th><th>Type</th>
-                        <th>Purpose</th><th>Date</th><th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      <tr>
-                        <td style={mono10}>CERT-2024-089</td>
-                        <td>
-                          <strong>Santos, Maria D.</strong><br />
-                          <span style={{ fontSize: '10px', color: 'var(--muted)' }}>RES-0001 · Purok 3</span>
-                        </td>
-                        <td><span className="badge b">Clearance</span></td>
-                        <td style={{ fontSize: '11px', maxWidth: '160px' }}>For employment at DOLE-Camarines Sur</td>
-                        <td style={{ fontSize: '10px', color: 'var(--muted)' }}>Apr 7</td>
-                        <td>
-                          <button className="btn btn-s btn-sm">✓ Approve</button>{' '}
-                          <button className="btn btn-d btn-sm">✗ Reject</button>
-                        </td>
-                      </tr>
-                      <tr>
-                        <td style={mono10}>CERT-2024-090</td>
-                        <td>
-                          <strong>Cruz, Ramon P.</strong><br />
-                          <span style={{ fontSize: '10px', color: 'var(--muted)' }}>RES-0044 · Purok 2</span>
-                        </td>
-                        <td><span className="badge a">Indigency</span></td>
-                        <td style={{ fontSize: '11px', maxWidth: '160px' }}>For Philhealth application</td>
-                        <td style={{ fontSize: '10px', color: 'var(--muted)' }}>Apr 7</td>
-                        <td>
-                          <button className="btn btn-s btn-sm">✓ Approve</button>{' '}
-                          <button className="btn btn-d btn-sm">✗ Reject</button>
-                        </td>
-                      </tr>
-                    </tbody>
-                  </table>
-                </div>
+                <CertificateLifecycle />
               </div>
             )}
 
@@ -1220,18 +1129,54 @@ export default function DashboardPortal({ role = 'staff' }) {
                           <tr><th>Cert #</th><th>Resident</th><th>Type</th><th>Status</th><th></th></tr>
                         </thead>
                         <tbody>
-                          <tr>
-                            <td style={mono10}>CERT-2024-088</td><td>Lim, Ana G.</td>
-                            <td><span className="badge t">Residency</span></td>
-                            <td><span className="badge g">Approved</span></td>
-                            <td><button className="btn btn-p btn-sm">🖨️ Print</button></td>
-                          </tr>
-                          <tr>
-                            <td style={mono10}>CERT-2024-085</td><td>Dela Rosa, Ben</td>
-                            <td><span className="badge b">Clearance</span></td>
-                            <td><span className="badge gr">Issued</span></td>
-                            <td><button className="btn btn-g btn-sm">Reprint</button></td>
-                          </tr>
+                          {issuedCertificates.length === 0 ? (
+                            <tr>
+                              <td colSpan="5" style={{ textAlign: 'center', color: 'var(--muted)' }}>
+                                No issued certificates available yet.
+                              </td>
+                            </tr>
+                          ) : (
+                            issuedCertificates.map((req) => {
+                              const residentName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
+                              const certificateType = req.certificateType || req.certType || 'Certificate';
+                              const status = req.status || 'Approved';
+                              const isIssued = status === 'Issued';
+
+                              return (
+                                <tr
+                                  key={req._id}
+                                  onClick={() => setSelectedCertificate(req)}
+                                  style={{ cursor: 'pointer' }}
+                                >
+                                  <td style={mono10}>{req._id}</td>
+                                  <td>{residentName || 'Unnamed Resident'}</td>
+                                  <td><span className="badge t">{certificateType}</span></td>
+                                  <td>
+                                    <span className={isIssued ? 'badge gr' : 'badge g'}>
+                                      {isIssued ? 'Issued' : 'Approved'}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    {isIssued ? (
+                                      <button className="btn btn-g btn-sm" onClick={() => setSelectedCertificate(req)}>
+                                        Reprint
+                                      </button>
+                                    ) : (
+                                      <button
+                                        className="btn btn-p btn-sm"
+                                        onClick={(event) => {
+                                          event.stopPropagation();
+                                          handlePrintRelease(req);
+                                        }}
+                                      >
+                                        🖨️ Print
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -1242,20 +1187,24 @@ export default function DashboardPortal({ role = 'staff' }) {
                       <h2>Barangay Bustrac</h2>
                       <h3>Municipality of Camarines Sur</h3>
                       <hr />
-                      <h2 style={{ marginTop: '8px' }}>BARANGAY CLEARANCE</h2>
+                      <h2 style={{ marginTop: '8px' }}>
+                        {((selectedCertificate?.certificateType || selectedCertificate?.certType || 'CERTIFICATE').toString()).toUpperCase()}
+                      </h2>
                       <hr />
                       <p style={{ marginTop: '10px' }}>
-                        This is to certify that <strong>ANA GRACE LIM</strong>, of legal age, a{' '}
-                        <em>bona fide</em> resident of Purok 2, Barangay Bustrac, has been found to be of{' '}
+                        This is to certify that{' '}
+                        <strong>{`${selectedCertificate?.firstName || ''} ${selectedCertificate?.lastName || ''}`.trim().toUpperCase() || 'RESIDENT NAME'}</strong>,
+                        of legal age, a <em>bona fide</em> resident of Purok 2, Barangay Bustrac, has been found to be of{' '}
                         <strong>good moral character</strong> and has no derogatory record on file as of this date.
                       </p>
                       <p>
                         This certification is issued upon the request of the above-named person for{' '}
-                        <strong>employment purposes</strong> and for whatever legal purpose it may serve.
+                        <strong>{selectedCertificate?.purpose || selectedCertificate?.certPurpose || 'the stated purpose'}</strong>{' '}
+                        and for whatever legal purpose it may serve.
                       </p>
                       <div className="cert-sig">
-                        Issued at Barangay Bustrac, April 7, 2024<br />
-                        Cert. No.: <strong>CERT-2024-088</strong>
+                        Issued at Barangay Bustrac, {selectedCertificate?.updatedAt || selectedCertificate?.createdAt || 'Date Unavailable'}<br />
+                        Cert. No.: <strong>{selectedCertificate?._id || '—'}</strong>
                         <strong>Hon. Barangay Captain</strong>
                         <div>Barangay Captain, Barangay Bustrac</div>
                       </div>
