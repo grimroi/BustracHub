@@ -35,7 +35,7 @@ export default function CertificateLifecycle() {
       const requests = result.rows
         .map((row) => row.doc)
         .filter((doc) => doc && doc.type === 'certificate_request')
-        .filter((doc) => Number(doc.step) !== 4)
+        .filter((doc) => Number(doc.step) !== 5)
         .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
 
       setAllRequests(requests);
@@ -66,7 +66,7 @@ export default function CertificateLifecycle() {
           return [change.doc, ...next];
         }
 
-        return next.map((item) => (item._id === change.id ? change.doc : item));
+        return prev.map((item) => (item._id === change.id ? change.doc : item));
       });
     });
 
@@ -86,17 +86,30 @@ export default function CertificateLifecycle() {
     };
   }, [loadRequests]);
 
-  const updateRequest = useCallback(async (request, nextStep) => {
-    try {
-      await db.put({
-        ...request,
-        step: nextStep,
-        updatedAt: formatStamp(),
-      });
-    } catch (error) {
-      console.error('Unable to update certificate request', error);
-    }
-  }, []);
+const updateRequest = useCallback(async (request, nextStep) => {
+  try {
+    // Create the updated request object
+    const updatedRequest = {
+      ...request,
+      step: nextStep,
+      updatedAt: formatStamp(),
+    };
+
+    // If the request reaches Step 4 (Issued),
+    // change its status to 'Approved' and add it to issuedCertificates
+    if (nextStep === 4) {
+  updatedRequest.status = 'Approved';
+}
+
+    if (nextStep === 5) {
+          updatedRequest.status = 'Issued';
+        }
+
+    await db.put(updatedRequest);
+  } catch (error) {
+    console.error('Unable to update certificate request', error);
+  }
+}, []);
 
   const handleRemarksSubmit = useCallback(async (request) => {
     const remarks = remarksById[request._id] ?? request.remarks ?? '';
@@ -113,30 +126,50 @@ export default function CertificateLifecycle() {
   }, [remarksById]);
 
   const handleCreateRequest = async (event) => {
-    event.preventDefault();
-    if (!requestForm.firstName.trim() || !requestForm.lastName.trim() || !requestForm.certificateType || !requestForm.purpose.trim()) {
-      return;
-    }
+  event.preventDefault();
+  if (!requestForm.firstName.trim() || !requestForm.lastName.trim() || !requestForm.certificateType || !requestForm.purpose.trim()) {
+    return; 
+  }
 
-    try {
-      await db.post({
-        type: 'certificate_request',
-        firstName: requestForm.firstName.trim(),
-        lastName: requestForm.lastName.trim(),
-        certificateType: requestForm.certificateType,
-        purpose: requestForm.purpose.trim(),
-        status: 'Pending',
-        step: 1,
-        createdAt: new Date().toISOString(),
-        updatedAt: formatStamp(),
-      });
+  try {
+    // 1. Gagawa ng malinis na payload object
+    const generatedId = `CERT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
-      setRequestForm(INITIAL_FORM);
-      setShowModal(false);
-    } catch (error) {
-      console.error('Unable to save certificate request', error);
-    }
-  };
+    const newRequestPayload = {
+      _id: generatedId, // Para tugma sa primary key rendering ng CouchDB at localStorage
+      type: 'certificate_request',
+      firstName: requestForm.firstName.trim(),
+      lastName: requestForm.lastName.trim(),
+      certificateType: requestForm.certificateType,
+      purpose: requestForm.purpose.trim(),
+      status: 'Pending', // 💡 PRO-TIP: Gawin mo na itong 'Approved' agad para lumitaw sa Issuance List! Kung 'Pending', dapat may Admin Approval phase muna kayo.
+      step: 1,
+      purok: requestForm.purok || 'Purok 1',
+      createdAt: new Date().toISOString().split('T')[0],
+      updatedAt: new Date().toISOString().split('T')[0],
+    };
+
+    // 2. I-save sa offline CouchDB core local engine
+    await db.post(newRequestPayload);
+
+    // 3. UI SYNC TRIGGER: Idagdag ang bagong record sa active list memory array kung nandoon ang prop
+    // if (typeof setIssuedCertificates === 'function') {
+    //   setIssuedCertificates((prevCerts) => {
+    //     const updatedList = [newRequestPayload, ...prevCerts];
+    //     // Siguraduhing naka-sync din agad sa localStorage para kahit i-refresh ay hindi mawawala
+    //     localStorage.setItem('bustrac_certs', JSON.stringify(updatedList));
+    //     return updatedList;
+    //   });
+    // }
+
+    alert('✓ Certificate request submitted and queued for issuance preview!');
+    setRequestForm(INITIAL_FORM);
+    setShowModal(false);
+  } catch (error) {
+    console.error('Unable to save certificate request', error);
+    alert('Failed to synchronize transaction with database engine.');
+  }
+};
 
   const getStatusBadge = (step) => {
     switch (step) {
@@ -404,6 +437,50 @@ export default function CertificateLifecycle() {
             </form>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+export  function CertificateIssuancePrint({ issuedCertificates, handlePrintCertificate }) {
+  return (
+    <div className="card">
+      {/* Title and description */}
+      <div className="card-title">📄 Issued Certificates</div>
+
+      {issuedCertificates.length === 0 ? (
+        <p>No issued certificates yet.</p>
+      ) : (
+        <table>
+          <thead>
+            <tr>
+              <th>Resident</th>
+              <th>Certificate Type</th>
+              <th>Purpose</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody>
+            {issuedCertificates.map((cert) => (
+              <tr key={cert._id}>
+                <td>
+                  <strong>{cert.firstName} {cert.lastName}</strong>
+                </td>
+                <td>{cert.certificateType}</td>
+                <td>{cert.purpose}</td>
+                <td>
+                  {/* Place the print button here */}
+                  <button
+                    type="button"
+                    className="btn btn-primary btn-sm"
+                    onClick={() => handlePrintCertificate(cert)}
+                  >
+                    🖨️ Print & Issue
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
