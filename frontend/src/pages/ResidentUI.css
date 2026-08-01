@@ -1,30 +1,30 @@
 .resident-root-container {
-  --bg: #F0F4FF;
-  --surface: #FFFFFF;
-  --surface2: #F7F9FF;
-  --border: #E2E8F8;
-  --border2: #D0D8F0;
-  --text: #1A2342;
-  --muted: #6B7A9F;
-  --hint: #9BA6C4;
-  --primary: #2563EB;
-  --primary-dark: #1D4ED8;
-  --primary-light: #EEF2FF;
-  --green: #059669;
-  --green-bg: #ECFDF5;
-  --amber: #D97706;
-  --amber-bg: #FFFBEB;
-  --red: #DC2626;
-  --red-bg: #FEF2F2;
-  --purple: #7C3AED;
-  --purple-bg: #F5F3FF;
-  --teal: #0891B2;
-  --teal-bg: #ECFEFF;
+  --bg: #111318;
+  --surface: #1a1d24;
+  --surface2: #20242e;
+  --border: #2a2f3d;
+  --border2: #323849;
+  --text: #e8ecf4;
+  --muted: #7b83a0;
+  --hint: #4a5168;
+  --primary: #4f8ef7;
+  --primary-dark: #3a7ae8;
+  --primary-light: rgba(79, 142, 247, 0.1);
+  --green: #34d399;
+  --green-bg: rgba(52, 211, 153, 0.1);
+  --amber: #fbbf24;
+  --amber-bg: rgba(251, 191, 36, 0.1);
+  --red: #f87171;
+  --red-bg: rgba(248, 113, 113, 0.1);
+  --purple: #a78bfa;
+  --purple-bg: rgba(167, 139, 250, 0.1);
+  --teal: #2dd4bf;
+  --teal-bg: rgba(45, 212, 191, 0.1);
   --radius: 14px;
   --radius-sm: 8px;
   --radius-xs: 6px;
-  --shadow: 0 1px 3px rgba(26, 35, 66, 0.08), 0 4px 16px rgba(26, 35, 66, 0.04);
-  --shadow-md: 0 4px 20px rgba(26, 35, 66, 0.12);
+  --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.2);
+  --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.4);
   --font: 'Nunito', sans-serif;
   --nav-h: 64px;
   font-family: var(--font);
@@ -49,11 +49,11 @@
   align-items: center;
   justify-content: center;
   padding: 20px;
-  background: linear-gradient(135deg, #EEF2FF 0%, #F0F9FF 50%, #F5F3FF 100%);
+  background: linear-gradient(135deg, #1a1d24 0%, #20242e 50%, #1a1d24 100%);
 }
 
 .resident-root-container .login-card {
-  background: white;
+  background: var(--surface);
   border-radius: 24px;
   padding: 40px 36px;
   width: 100%;
@@ -131,7 +131,7 @@
   font-size: 12px;
   font-weight: 700;
   border: 2px solid var(--border);
-  background: white;
+  background: var(--surface);
   color: var(--muted);
   cursor: pointer;
   transition: all 0.15s;
@@ -173,7 +173,7 @@
 
 .resident-root-container .fc:focus {
   border-color: var(--primary);
-  background: white;
+  background: var(--surface);
 }
 
 .resident-root-container .btn {
@@ -203,7 +203,7 @@
 }
 
 .resident-root-container .btn-outline {
-  background: white;
+  background: var(--surface);
   color: var(--primary);
   border: 2px solid var(--primary);
 }
@@ -246,7 +246,7 @@
 
 .resident-root-container .topnav {
   height: auto;
-  background: white;
+  background: var(--surface);
   border-bottom: 2px solid var(--border);
   display: flex;
   align-items: center;
@@ -374,7 +374,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  background: white;
+  background: var(--surface);
   padding: 8px 14px;
   border-radius: 20px;
   box-shadow: 0 2px 12px rgba(5, 150, 105, 0.2);
@@ -452,7 +452,7 @@
 }
 
 .resident-root-container .card {
-  background: white;
+  background: var(--surface);
   border-radius: var(--radius);
   padding: 20px;
   box-shadow: var(--shadow);
@@ -524,7 +524,7 @@
 }
 
 .resident-root-container .stat-card {
-  background: white;
+  background: var(--surface);
   border-radius: var(--radius);
   padding: 16px;
   box-shadow: var(--shadow);
@@ -620,7 +620,7 @@
 }
 
 .resident-root-container .ann-card {
-  background: white;
+  background: var(--surface);
   border-radius: var(--radius);
   padding: 18px;
   box-shadow: var(--shadow);
@@ -735,7 +735,7 @@
   font-size: 12px;
   font-weight: 700;
   border: 2px solid var(--border);
-  background: white;
+  background: var(--surface);
   color: var(--muted);
   cursor: pointer;
   transition: all 0.15s;
@@ -786,18 +786,62 @@
   margin: 16px 0;
 }
 
-.resident-root-container .install-banner {
-  background: linear-gradient(135deg, #EEF2FF, #F5F3FF);
-  border: 2px solid #C7D2FE;
-  border-radius: var(--radius);
-  padding: 18px;
-  margin-bottom: 20px;
-  display: flex;
-  gap: 14px;
-  align-items: center;
-}
+@media (max-width: 768px) {
+  /* Gawing full rows ang Topnav sa mobile */
+  .resident-root-container .topnav {
+    height: auto;
+    padding: 10px 15px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
 
-.resident-root-container .install-icon {
-  font-size: 32px;
-  flex-shrink: 0;
+  /* Ilipat ang Navigation sa pinaka-ibaba para maging totoong Bottom Nav sa Mobile */
+  .resident-root-container .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border-top: 2px solid var(--border);
+    justify-content: space-around;
+    padding: 6px 0;
+    z-index: 200;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Ipakita ang Icons at ayusin ang layout ng text para nakapatong sa isa't isa */
+  .resident-root-container .bnav-item {
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 0;
+    font-size: 11px;
+    border-bottom: none !important; /* Alisin ang topnav line indicators */
+    border-radius: 8px;
+    flex: 1;
+  }
+
+  /* Ipakita na ang emoji o icon na nilagay mo sa JSX */
+  .resident-root-container .bnav-item .icon {
+    display: inline-block;
+    font-size: 18px;
+  }
+
+  /* Ayusin ang positioning ng red badges para sumakto sa ibabaw ng icon */
+  .resident-root-container .bnav-badge {
+    top: 2px;
+    right: 25%;
+  }
+
+  /* Bigyan ng padding ang content sa ilalim para hindi matakpan ng bottom nav */
+  .resident-root-container .content {
+    padding-bottom: 80px; 
+  }
+
+  /* Gawing single column ang dashboard cards para hindi masikip */
+  .resident-root-container .stat-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
 }

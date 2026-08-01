@@ -1,8 +1,16 @@
 import { useState, useEffect, useCallback, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import PouchDB from 'pouchdb';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
+
+import {
+  FaHome,
+  FaFileAlt,
+  FaBullhorn,
+  FaCommentDots,
+  FaUser
+} from "react-icons/fa";
 
 const CERT_FORM_INITIAL = {
   firstName: '',
@@ -20,6 +28,50 @@ const REMOTE_DB_URL = 'http://admin:capstone2026@localhost:5984/bustrachub_db';
 
 export default function ResidentUI() {
   const navigate = useNavigate();
+  const location = useLocation();
+  
+  const loggedInUser = useMemo(() => {
+    const rawUser = sessionStorage.getItem('bustrac_user');
+    if (!rawUser) return { fullName: 'Resident', initials: 'RS' };
+    
+    try {
+      // Try to parse as JSON first (handles both string and object cases)
+      const parsed = typeof rawUser === 'string' ? JSON.parse(rawUser) : rawUser;
+      const name = parsed.fullName || parsed.user || parsed.name || 'Resident';
+      const initials = name.split(' ')
+        .map(n => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
+      
+      return { 
+        fullName: name, 
+        initials,
+        // Preserve other user data if needed
+        ...parsed 
+      };
+    } catch (e) {
+      // Fallback for plain string
+      const initials = rawUser.split(' ')
+        .map(n => n[0])
+        .join('')
+        .slice(0, 2)
+        .toUpperCase();
+      return { fullName: rawUser, initials };
+    }
+  }, []);
+  
+  const greetingText = useMemo(() => {
+  const currentHour = new Date().getHours();
+  if (currentHour < 12) {
+    return 'Good morning';
+  } else if (currentHour < 18) {
+    return 'Good afternoon';
+  } else {
+    return 'Good evening';
+  }
+}, []);
+
   const db = useMemo(() => {
     if (typeof window === 'undefined') return null;
     return new PouchDB('bustrac_db');
@@ -50,6 +102,28 @@ export default function ResidentUI() {
   const [feedbackType, setFeedbackType] = useState('Complaint');
   const [feedbackSubject, setFeedbackSubject] = useState('');
   const [feedbackMessage, setFeedbackMessage] = useState('');
+  
+  useEffect(() => {
+    // Tingnan kung may ipinasang activeTab mula sa Landing Page -> Login link chain
+    if (location.state?.activeTab) {
+      const tabMap = {
+        announcements: 's-announcements',
+        tracking: 's-certificates',
+        feedback: 's-feedback',
+        hotlines: 's-home', // Kung wala pang hiwalay na tab ang hotlines, default muna sa home
+      };
+
+      const matchedTab = tabMap[location.state.activeTab];
+      
+      if (matchedTab) {
+        setActiveScreen(matchedTab);
+        console.log(`🎯 Context Switch: Initialized view to ${matchedTab}`);
+      }
+
+      // Linisin ang history state para hindi paulit-ulit na bumabalik sa tab na ito kapag nag-refresh ang user
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
 
   // Track online/offline status for the offline notice banner
   useEffect(() => {
@@ -298,11 +372,32 @@ export default function ResidentUI() {
   );
 
   const navItems = [
-    { id: 's-home', label: 'Home', icon: 'Home', badge: null, badgeColor: 'var(--red)' },
-    { id: 's-certificates', label: 'Certificates', icon: 'Certificates', badge: myRequests.length > 0 ? myRequests.length : null, badgeColor: 'var(--red)' },
-    { id: 's-announcements', label: 'News', icon: 'News', badge: announcements.length > 0 ? announcements.length : null, badgeColor: 'var(--red)' },
-    { id: 's-feedback', label: 'Feedback', icon: 'Feedback', badge: myFeedbacks.length > 0 ? myFeedbacks.length : null, badgeColor: 'var(--red)' },
-  ];
+  {
+    id:"s-home",
+    label:"Home",
+    icon:<FaHome/>
+  },
+  {
+    id:"s-certificates",
+    label:"Certificates",
+    icon:<FaFileAlt/>
+  },
+  {
+    id:"s-announcements",
+    label:"News",
+    icon:<FaBullhorn/>
+  },
+  {
+    id:"s-feedback",
+    label:"Feedback",
+    icon:<FaCommentDots/>
+  },
+  {
+    id:"s-profile",
+    label:"Profile",
+    icon:<FaUser/>
+  }
+];
 
   const pendingRequestCount = myRequests.filter((request) => {
     const statusLabel = request.status || 'Pending';
@@ -370,14 +465,14 @@ export default function ResidentUI() {
             )}
 
             <div className="page-hdr">
-              <div className="page-title">Good morning</div>
+              <div className="page-title">{greetingText}, {loggedInUser.fullName}!</div>
               <div className="page-sub">Barangay Bustrac</div>
             </div>
 
             <div className="stat-row">
               <div className="stat-card">
                 <div className="stat-val" style={{ color: 'var(--primary)' }}>{myRequests.length}</div>
-                <div className="stat-lbl">My Certificates</div>
+                <div className="stat-lbl">Certificates</div>
               </div>
               <div className="stat-card">
                 <div className="stat-val" style={{ color: 'var(--green)' }}>{pendingRequestCount}</div>
@@ -408,11 +503,50 @@ export default function ResidentUI() {
                 ))
               ) : (
                 <div className="notice notice-info" style={{ marginTop: '8px' }}>
-                  No announcements have been synced yet.
+                  📢
+
+No announcements available.
+
+Check back later.
                 </div>
               )}
             </div>
-
+            
+            <div className="card">
+    <div className="card-title" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+      🚨 Emergency Hotlines (Nabua)
+    </div>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '4px' }}>
+      <div className="list-item" style={{ padding: '8px 0' }}>
+        <div className="list-body">
+          <div className="list-title">MDRRMO Nabua (Rescue)</div>
+          <div className="list-sub">Disaster & Emergency Response</div>
+        </div>
+        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--green)' }}>0917-506-0294</div>
+      </div>
+      <div className="list-item" style={{ padding: '8px 0' }}>
+        <div className="list-body">
+          <div className="list-title">PNP Nabua (Police Station)</div>
+          <div className="list-sub">Law Enforcement & Safety Concerns</div>
+        </div>
+        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--green)' }}>0998-598-6014</div>
+      </div>
+      <div className="list-item" style={{ padding: '8px 0' }}>
+        <div className="list-body">
+          <div className="list-title">BFP Nabua (Fire Station)</div>
+          <div className="list-sub">Fire Control & Incidents</div>
+        </div>
+        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--green)' }}>(054) 288-4676</div>
+      </div>
+      <div className="list-item" style={{ padding: '8px 0', border: 'none' }}>
+        <div className="list-body">
+          <div className="list-title">Barangay Bustrac Hall</div>
+          <div className="list-sub">Local Desk Command Center</div>
+        </div>
+        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--green)' }}>0912-345-6789</div>
+      </div>
+    </div>
+  </div>
             <div className="card">
               <div className="card-title" style={{ marginBottom: '14px' }}>🚀 Quick Actions</div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
@@ -772,68 +906,125 @@ export default function ResidentUI() {
           </div>
 
           {/* PROFILE */}
-          <div className={`screen${activeScreen === 's-profile' ? ' active' : ''}`}>
-            <div className="page-hdr">
-              <div className="page-title">My Profile</div>
-              <div className="page-sub">Your resident information on file</div>
-            </div>
+<div className={`screen${activeScreen === 's-profile' ? ' active' : ''}`}>
+  <div className="page-hdr">
+    <div className="page-title">My Profile</div>
+    <div className="page-sub">Your resident information on file</div>
+  </div>
 
-            <div className="card" style={{ textAlign: 'center', padding: '28px' }}>
-              <div
-                style={{
-                  width: '70px',
-                  height: '70px',
-                  background: 'linear-gradient(135deg,#2563EB,#7C3AED)',
-                  borderRadius: '50%',
-                  margin: '0 auto 12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '28px',
-                  fontWeight: 900,
-                  color: 'white',
-                }}
-              >
-                MS
-              </div>
-              <div style={{ fontSize: '18px', fontWeight: 900 }}>Maria Dela Cruz Santos</div>
-              <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>Resident ID: RES-0001</div>
-              <span className="badge b-green" style={{ marginTop: '8px' }}>✓ Registered Voter</span>
-            </div>
+  <div className="card" style={{ textAlign: 'center', padding: '28px' }}>
+    <div
+      style={{
+        width: '70px',
+        height: '70px',
+        background: 'linear-gradient(135deg,#2563EB,#7C3AED)',
+        borderRadius: '50%',
+        margin: '0 auto 12px',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        fontSize: '28px',
+        fontWeight: 900,
+        color: 'white',
+      }}
+    >
+      {loggedInUser.initials}
+    </div>
+    <div style={{ fontSize: '18px', fontWeight: 900 }}>{loggedInUser.fullName}</div>
+    <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>
+      Resident ID: {loggedInUser.residentId || 'RES-0001'}
+    </div>
+    <span className="badge b-green" style={{ marginTop: '8px' }}>
+      ✓ {loggedInUser.voterStatus || 'Registered Voter'}
+    </span>
+  </div>
 
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>Personal Information</div>
-              <div className="list-item"><div className="list-body"><div className="list-sub">Birthdate</div><div className="list-title">March 12, 1990</div></div></div>
-              <div className="list-item"><div className="list-body"><div className="list-sub">Age</div><div className="list-title">34 years old</div></div></div>
-              <div className="list-item"><div className="list-body"><div className="list-sub">Gender</div><div className="list-title">Female</div></div></div>
-              <div className="list-item"><div className="list-body"><div className="list-sub">Civil Status</div><div className="list-title">Married</div></div></div>
-              <div className="list-item"><div className="list-body"><div className="list-sub">Contact Number</div><div className="list-title">0917-123-4567</div></div></div>
-              <div className="list-item"><div className="list-body"><div className="list-sub">Purok</div><div className="list-title">Purok 3, Barangay Bustrac</div></div></div>
-              <div className="list-item" style={{ border: 'none' }}><div className="list-body"><div className="list-sub">Household</div><div className="list-title">HH-0012 — Santos Family</div></div></div>
-            </div>
+  <div className="card">
+    <div className="card-title" style={{ marginBottom: '14px' }}>Personal Information</div>
+    <div className="list-item">
+      <div className="list-body">
+        <div className="list-sub">Birthdate</div>
+        <div className="list-title">{loggedInUser.birthdate || 'March 12, 1990'}</div>
+      </div>
+    </div>
+    <div className="list-item">
+      <div className="list-body">
+        <div className="list-sub">Age</div>
+        <div className="list-title">{loggedInUser.age ? `${loggedInUser.age} years old` : '34 years old'}</div>
+      </div>
+    </div>
+    <div className="list-item">
+      <div className="list-body">
+        <div className="list-sub">Gender</div>
+        <div className="list-title">{loggedInUser.gender || 'Female'}</div>
+      </div>
+    </div>
+    <div className="list-item">
+      <div className="list-body">
+        <div className="list-sub">Civil Status</div>
+        <div className="list-title">{loggedInUser.civilStatus || 'Married'}</div>
+      </div>
+    </div>
+    <div className="list-item">
+      <div className="list-body">
+        <div className="list-sub">Contact Number</div>
+        <div className="list-title">{loggedInUser.contact || '0917-123-4567'}</div>
+      </div>
+    </div>
+    <div className="list-item">
+      <div className="list-body">
+        <div className="list-sub">Purok</div>
+        <div className="list-title">{loggedInUser.purok ? `Purok ${loggedInUser.purok}, Barangay Bustrac` : 'Purok 3, Barangay Bustrac'}</div>
+      </div>
+    </div>
+    <div className="list-item" style={{ border: 'none' }}>
+      <div className="list-body">
+        <div className="list-sub">Household</div>
+        <div className="list-title">{loggedInUser.household || 'HH-0012 — Santos Family'}</div>
+      </div>
+    </div>
+  </div>
 
-            <div className="sync-status">
-              <div className="sync-dot" />
-              CouchDB sync — Up to date · Last sync: Today, 07:45 AM
-            </div>
+  <div className="sync-status">
+    <div className="sync-dot" />
+    CouchDB sync — Up to date · Last sync: Today, 07:45 AM
+  </div>
 
-            <button
-              className="btn btn-ghost btn-full"
-              onClick={handleLogout}
-              style={{ color: 'var(--red)', borderColor: '#FECACA' }}
-            >
-              Sign Out
-            </button>
-          </div>
+  <button
+    className="btn btn-ghost btn-full"
+    onClick={handleLogout}
+    style={{ color: 'var(--red)', borderColor: '#FECACA' }}
+  >
+    🚪 Sign Out
+  </button>
+</div>
         </div>
         {/* /content */}
       </div>
 
       {/* LIVE INDICATOR */}
-      <div className="live-indicator">
-        <div className="live-dot" />
-        <div className="live-text">LIVE</div>
+      <div 
+        className="live-indicator" 
+        style={{ 
+          borderColor: isOffline ? 'var(--red)' : 'var(--green)',
+          boxShadow: isOffline ? '0 2px 12px rgba(248, 113, 113, 0.2)' : '0 2px 12px rgba(5, 150, 105, 0.2)'
+        }}
+      >
+        <div 
+          className="live-dot" 
+          style={{ 
+            background: isOffline ? 'var(--red)' : 'var(--green)',
+            animation: isOffline ? 'none' : 'resident-pulse 2s infinite'
+          }} 
+        />
+        <div 
+          className="live-text" 
+          style={{ color: isOffline ? 'var(--red)' : 'var(--green)' }}
+        >
+          {isOffline ? 'OFFLINE' : 'LIVE'}
+        </div>
       </div>
+
     </div>
   );
 }

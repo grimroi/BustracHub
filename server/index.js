@@ -42,7 +42,15 @@ async function initDB() {
           password: 'password',
           role: 'admin',
           path: '/admin'
-        }
+        },
+        {
+          _id: 'user_juan_resident',
+          type: 'user',
+          username: 'juan2026',
+          password: 'password',
+          role: 'resident',
+          path: '/' // Babalik sa landing o dediretso sa public pages
+              }
       ];
       
       // Bulk insert demo profiles

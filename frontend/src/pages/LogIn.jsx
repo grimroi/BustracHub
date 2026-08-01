@@ -1,9 +1,10 @@
 import { useState, useEffect, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
 
 export default function LogIn() {
   const navigate = useNavigate();
+  const location = useLocation();
 
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -13,41 +14,62 @@ export default function LogIn() {
   );
 
   const handleLogin = useCallback(
-    async (event) => {
-      event.preventDefault();
-      setShowError(false);
+  async (event) => {
+    event.preventDefault();
+    setShowError(false);
 
-      const trimmedUsername = username.trim();
+    const trimmedUsername = username.trim();
 
-      try {
-        const response = await fetch('http://localhost:5000/api/login', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-          },
-          body: JSON.stringify({
-            username: trimmedUsername,
-            password: password,
-          }),
-        });
+    try {
+      const response = await fetch('http://localhost:5000/api/login', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          username: trimmedUsername,
+          password: password,
+        }),
+      });
 
-        const data = await response.json();
+      const data = await response.json();
 
-        if (response.ok && data.success) {
-          sessionStorage.setItem('bustrac_role', data.role);
-          sessionStorage.setItem('bustrac_user', data.user);
-          sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
-          navigate(data.redirectPath);
-        } else {
-          setShowError(true);
+      if (response.ok && data.success) {
+        // I-save ang session configuration
+        sessionStorage.setItem('bustrac_role', data.role);
+        sessionStorage.setItem('bustrac_user', data.user);
+        sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
+        console.log(`➡️ Auth verified. User Role: ${data.role}`);
+
+        // 💡 CLEAN ROLE-BASED REDIRECTION CONTROL
+        if (data.role === 'admin') {
+          navigate('/admin');
+        } 
+        else if (data.role === 'staff') {
+          navigate('/staff');
+        } 
+        else if (data.role === 'resident') {
+          // Kung may pinuntahang public card si resident, ibalik siya doon. Kung wala, sa /resident dashboard.
+          const destination = location.state?.redirectTo || '/resident';
+          navigate(destination, { 
+          state: { activeTab: location.state?.activeTab } 
+           });
         }
-      } catch (error) {
-        console.error('Backend connection failed:', error);
+        else {
+          // Safety fallback
+          navigate('/');
+        }
+      } else {
         setShowError(true);
       }
-    },
-    [username, password, navigate]
-  );
+    } catch (error) {
+      console.error('Backend connection failed:', error);
+      setShowError(true);
+    }
+  },
+  [username, password, navigate, location]
+);
 
   const handleUsernameChange = (event) => {
     setUsername(event.target.value);
@@ -155,6 +177,7 @@ export default function LogIn() {
         {/* BACK TO PUBLIC PORTAL & OFFLINE NOTE */}
         <div className="text-center pt-2 space-y-3">
           <button
+            type="button"
             onClick={() => navigate('/')}
             className="text-xs text-slate-400 hover:text-emerald-400 transition-colors font-medium inline-flex items-center gap-1"
           >
