@@ -49,7 +49,19 @@ async function initDB() {
           username: 'juan2026',
           password: 'password',
           role: 'resident',
-          path: '/' // Babalik sa landing o dediretso sa public pages
+          path: '/',
+          fullName: 'Juan Dela Cruz',
+          firstName: 'Juan',
+          lastName: 'Dela Cruz',
+          residentId: 'RES-0001',
+          purok: '3',
+          age: 34,
+          birthdate: '1990-03-12',
+          gender: 'Male',
+          civilStatus: 'Married',
+          contact: '09171234567',
+          household: 'HH-0012 — Dela Cruz Family',
+          voterStatus: 'Registered Voter'
               }
       ];
       
@@ -91,11 +103,13 @@ app.post('/api/login', async (req, res) => {
 
     if (result.docs.length > 0) {
       const matchedUser = result.docs[0];
+      const { password: _pw, ...safeUserData } = matchedUser;
+
       return res.json({
         success: true,
         role: matchedUser.role,
         redirectPath: matchedUser.path,
-        user: matchedUser.username
+        user: safeUserData
       });
     } else {
       return res.status(401).json({ success: false, message: "Invalid username or password." });

@@ -102,9 +102,10 @@ export default function ResidentUI() {
   const [feedbackType, setFeedbackType] = useState('Complaint');
   const [feedbackSubject, setFeedbackSubject] = useState('');
   const [feedbackMessage, setFeedbackMessage] = useState('');
+
+  const [lastSync, setLastSync] = useState(null);
   
   useEffect(() => {
-    // Tingnan kung may ipinasang activeTab mula sa Landing Page -> Login link chain
     if (location.state?.activeTab) {
       const tabMap = {
         announcements: 's-announcements',
@@ -156,28 +157,34 @@ export default function ResidentUI() {
           );
 
         const sortedRequests = docs
-          .filter((doc) => doc.type === 'certificate_request')
-          .sort(
-            (a, b) =>
-              new Date(b.timestamp || b.createdAt || 0).getTime() -
-              new Date(a.timestamp || a.createdAt || 0).getTime()
-          );
+  .filter((doc) => 
+    doc.type === 'certificate_request' && 
+    doc.residentId === (loggedInUser.residentId || loggedInUser.username)
+  )
+  .sort(
+    (a, b) =>
+      new Date(b.timestamp || b.createdAt || 0).getTime() -
+      new Date(a.timestamp || a.createdAt || 0).getTime()
+  );
 
         const sortedFeedbacks = docs
-          .filter((doc) => doc.type === 'feedback_submission')
-          .sort(
-            (a, b) =>
-              new Date(b.timestamp || b.createdAt || 0).getTime() -
-              new Date(a.timestamp || a.createdAt || 0).getTime()
-          );
+  .filter((doc) => 
+    doc.type === 'feedback_submission' && 
+    doc.residentId === (loggedInUser.residentId || loggedInUser.username)
+  )
+  .sort(
+    (a, b) =>
+      new Date(b.timestamp || b.createdAt || 0).getTime() -
+      new Date(a.timestamp || a.createdAt || 0).getTime()
+  );
 
         const sortedAnnouncements = docs
-          .filter((doc) => doc.type === 'announcement')
-          .sort(
-            (a, b) =>
-              new Date(b.timestamp || b.createdAt || 0).getTime() -
-              new Date(a.timestamp || a.createdAt || 0).getTime()
-          );
+        .filter((doc) => doc.type === 'announcement')
+        .sort(
+          (a, b) =>
+            new Date(b.timestamp || b.createdAt || 0).getTime() -
+            new Date(a.timestamp || a.createdAt || 0).getTime()
+        );
 
         setMyRequests(sortedRequests);
         setMyFeedbacks(sortedFeedbacks);
@@ -199,12 +206,32 @@ export default function ResidentUI() {
 
     const remoteDb = new PouchDB(REMOTE_DB_URL);
     const sync = db.sync(remoteDb, { live: true, retry: true });
+    
+    sync.on("active", () => {
+    console.log("Syncing...");
+});
+
+sync.on("complete", () => {
+    console.log("Sync complete");
+});
+    
+      sync.on('change', () => {
+      setLastSync(new Date());
+    });
+
+    sync.on('paused', () => {
+      setLastSync(new Date());
+    });
+
+    sync.on('error', (error) => {
+      console.error('Sync error', error);
+    });
 
     return () => {
       changes.cancel();
       sync.cancel();
     };
-  }, [db]);
+  }, [db, loggedInUser]);
 
   const goToTab = useCallback((screenId) => {
     setActiveScreen(screenId);
@@ -212,10 +239,12 @@ export default function ResidentUI() {
   }, []);
 
   const handleLogout = useCallback(() => {
-    if (window.confirm('Are you sure you want to leave the resident portal?')) {
-      navigate('/');
-    }
-  }, [navigate]);
+  if (window.confirm('Are you sure you want to leave the resident portal?')) {
+    sessionStorage.removeItem('bustrac_user');
+    sessionStorage.removeItem('lastCertRequest');
+    navigate('/');
+  }
+}, [navigate]);
 
   const updateCertField = (field) => (event) => {
     setCertForm((prev) => ({ ...prev, [field]: event.target.value }));
@@ -309,12 +338,16 @@ export default function ResidentUI() {
 
       try {
         await db.post({
+          residentId: loggedInUser.residentId || loggedInUser.username,
+          residentName: loggedInUser.fullName,
+          username: loggedInUser.username,
+          refNumber,
           ...certRequest,
-          type: 'certificate_request',
+          type: "certificate_request",
           timestamp: new Date().toISOString(),
-          status: 'Pending',
+          status: "Pending",
           step: 1,
-        });
+      });
 
         setShowCertForm(false);
         setCertSuccess({
@@ -331,7 +364,7 @@ export default function ResidentUI() {
         alert('Unable to save your request offline right now.');
       }
     },
-    [certForm, db]
+    [certForm, db, loggedInUser]
   );
 
   const submitFeedback = useCallback(
@@ -356,6 +389,9 @@ export default function ResidentUI() {
           message: feedbackMessage.trim(),
           status: 'Pending',
           timestamp: new Date().toISOString(),
+          residentId: loggedInUser.residentId || loggedInUser.username,
+          residentName: loggedInUser.fullName,
+          username: loggedInUser.username,
         });
 
         alert('Thank you! Your ' + feedbackType.toLowerCase() + ' has been submitted successfully.');
@@ -368,7 +404,7 @@ export default function ResidentUI() {
         alert('Unable to save your feedback offline right now.');
       }
     },
-    [feedbackSubject, feedbackMessage, feedbackType, goToTab, db]
+    [feedbackSubject, feedbackMessage, feedbackType, goToTab, db, loggedInUser]
   );
 
   const navItems = [
@@ -452,110 +488,152 @@ export default function ResidentUI() {
 
         {/* CONTENT */}
         <div className="content">
-          {/* HOME */}
-          <div className={`screen${activeScreen === 's-home' ? ' active' : ''}`}>
-            {isOffline && (
-              <div className="notice notice-offline">
-                <span style={{ fontSize: '16px' }}>📡</span>
-                <div>
-                  <strong>You're offline.</strong> You can still browse announcements and submit
-                  requests. They'll sync when you reconnect.
-                </div>
-              </div>
-            )}
+          {/* HOME SCREEN */}
+<div className={`screen${activeScreen === 's-home' ? ' active' : ''}`}>
+  {isOffline && (
+    <div className="notice notice-offline">
+      <span style={{ fontSize: '16px' }}>📡</span>
+      <div>
+        <strong>You're offline.</strong> You can still browse announcements and submit
+        requests. They'll sync when you reconnect.
+      </div>
+    </div>
+  )}
 
-            <div className="page-hdr">
-              <div className="page-title">{greetingText}, {loggedInUser.fullName}!</div>
-              <div className="page-sub">Barangay Bustrac</div>
-            </div>
+  <div className="page-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+    <div>
+      <div className="page-title">{greetingText}, {loggedInUser.fullName}!</div>
+      <div className="page-sub" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+        <span>Barangay Bustrac</span>
+        <span>•</span>
+        <span style={{ 
+          color: isOffline ? 'var(--red)' : 'var(--green)', 
+          fontWeight: '800', 
+          display: 'inline-flex', 
+          alignItems: 'center', 
+          gap: '4px' 
+        }}>
+          {isOffline ? '🔴 Offline (Working Locally)' : '🟢 Connected & Synced'}
+        </span>
+      </div>
+    </div>
+  </div>
 
-            <div className="stat-row">
-              <div className="stat-card">
-                <div className="stat-val" style={{ color: 'var(--primary)' }}>{myRequests.length}</div>
-                <div className="stat-lbl">Certificates</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-val" style={{ color: 'var(--green)' }}>{pendingRequestCount}</div>
-                <div className="stat-lbl">Pending Request</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-val" style={{ color: 'var(--amber)' }}>{announcements.length}</div>
-                <div className="stat-lbl">Announcements</div>
-              </div>
-              <div className="stat-card">
-                <div className="stat-val" style={{ color: 'var(--purple)' }}>{myFeedbacks.length}</div>
-                <div className="stat-lbl">My Feedbacks</div>
-              </div>
-            </div>
+  <div className="stat-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+    <div className="stat-card" onClick={() => goToTab('s-certificates')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+      <div style={{ fontSize: '20px', marginBottom: '4px' }}>📄</div>
+      <div className="stat-val" style={{ color: 'var(--primary)' }}>{myRequests.length}</div>
+      <div className="stat-lbl">Certificates</div>
+    </div>
+    
+    <div className="stat-card" onClick={() => goToTab('s-certificates')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+      <div style={{ fontSize: '20px', marginBottom: '4px' }}>⏳</div>
+      <div className="stat-val" style={{ color: 'var(--amber)' }}>{pendingRequestCount}</div>
+      <div className="stat-lbl">Pending Request</div>
+    </div>
+    
+    <div className="stat-card" onClick={() => goToTab('s-announcements')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+      <div style={{ fontSize: '20px', marginBottom: '4px' }}>📢</div>
+      <div className="stat-val" style={{ color: 'var(--green)' }}>{announcements.length}</div>
+      <div className="stat-lbl">Announcements</div>
+    </div>
+    
+    <div className="stat-card" onClick={() => goToTab('s-feedback')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+      <div style={{ fontSize: '20px', marginBottom: '4px' }}>💬</div>
+      <div className="stat-val" style={{ color: 'var(--purple)' }}>{myFeedbacks.length}</div>
+      <div className="stat-lbl">My Feedbacks</div>
+    </div>
+  </div>
 
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>📌 Latest Announcements</div>
-              {announcements.length ? (
-                announcements.slice(0, 3).map((announcement) => (
-                  <div className="list-item" key={announcement._id}>
-                    <div className="list-icon" style={{ background: announcement.category === 'Health' ? '#FFFBEB' : announcement.category === 'Governance' ? '#EEF2FF' : '#F3F4F6' }}>📢</div>
-                    <div className="list-body">
-                      <div className="list-title">{announcement.title}</div>
-                      <div className="list-sub">{announcement.category || 'General'} · Posted {announcement.author ? `by ${announcement.author}` : 'recently'}</div>
-                    </div>
-                    <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')}>View</button>
-                  </div>
-                ))
-              ) : (
-                <div className="notice notice-info" style={{ marginTop: '8px' }}>
-                  📢
+  <div className="card">
+    <div className="card-title" style={{ marginBottom: '14px' }}>📌 Latest Announcements</div>
+    {announcements.length ? (
+      announcements.slice(0, 3).map((announcement) => (
+        <div className="list-item" key={announcement._id}>
+          <div className="list-icon" style={{ background: announcement.category === 'Health' ? '#FFFBEB' : announcement.category === 'Governance' ? '#EEF2FF' : '#F3F4F6' }}>📢</div>
+          <div className="list-body">
+            <div className="list-title">{announcement.title}</div>
+            <div className="list-sub">{announcement.category || 'General'} · Posted {announcement.author ? `by ${announcement.author}` : 'recently'}</div>
+          </div>
+          <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')}>View</button>
+        </div>
+      ))
+    ) : (
+      <div style={{ textAlign: 'center', padding: '24px 10px', color: 'var(--muted)' }}>
+        <div style={{ fontSize: '36px', marginBottom: '8px' }}>📭</div>
+        <div style={{ fontWeight: '700', fontSize: '14px', color: 'var(--text)' }}>No announcements yet.</div>
+        <div style={{ fontSize: '12px', marginTop: '2px' }}>Check back later for new updates.</div>
+      </div>
+    )}
+  </div>
 
-No announcements available.
-
-Check back later.
-                </div>
-              )}
-            </div>
-            
-            <div className="card">
+  <div className="card">
     <div className="card-title" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
       🚨 Emergency Hotlines (Nabua)
     </div>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '4px' }}>
-      <div className="list-item" style={{ padding: '8px 0' }}>
+      <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div className="list-body">
           <div className="list-title">MDRRMO Nabua (Rescue)</div>
           <div className="list-sub">Disaster & Emergency Response</div>
         </div>
-        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--green)' }}>0917-506-0294</div>
+        <a href="tel:09175060294" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          📞 Call
+        </a>
       </div>
-      <div className="list-item" style={{ padding: '8px 0' }}>
+      
+      <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div className="list-body">
           <div className="list-title">PNP Nabua (Police Station)</div>
           <div className="list-sub">Law Enforcement & Safety Concerns</div>
         </div>
-        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--green)' }}>0998-598-6014</div>
+        <a href="tel:09985986014" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          📞 Call
+        </a>
       </div>
-      <div className="list-item" style={{ padding: '8px 0' }}>
+      
+      <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div className="list-body">
           <div className="list-title">BFP Nabua (Fire Station)</div>
           <div className="list-sub">Fire Control & Incidents</div>
         </div>
-        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--green)' }}>(054) 288-4676</div>
+        <a href="tel:0542884676" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          📞 Call
+        </a>
       </div>
-      <div className="list-item" style={{ padding: '8px 0', border: 'none' }}>
+      
+      <div className="list-item" style={{ padding: '8px 0', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
         <div className="list-body">
           <div className="list-title">Barangay Bustrac Hall</div>
           <div className="list-sub">Local Desk Command Center</div>
         </div>
-        <div style={{ fontSize: '13px', fontWeight: '800', color: 'var(--green)' }}>0912-345-6789</div>
+        <a href="tel:09123456789" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+          📞 Call
+        </a>
       </div>
     </div>
   </div>
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>🚀 Quick Actions</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
-                <button className="btn btn-outline" onClick={() => goToTab('s-certificates')}>📝 Request Certificate</button>
-                <button className="btn btn-outline" onClick={() => goToTab('s-feedback')}>💬 Submit Feedback</button>
-                <button className="btn btn-outline" onClick={() => goToTab('s-announcements')}>📢 Announcements</button>
-              </div>
-            </div>
-          </div>
+
+  <div className="card">
+    <div className="card-title" style={{ marginBottom: '14px' }}>🚀 Quick Actions</div>
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+      <button className="btn btn-outline" onClick={() => goToTab('s-certificates')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
+        <span style={{ fontSize: '24px' }}>📝</span>
+        <span style={{ fontSize: '13px', fontWeight: '800' }}>Request Certificate</span>
+      </button>
+      
+      <button className="btn btn-outline" onClick={() => goToTab('s-feedback')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
+        <span style={{ fontSize: '24px' }}>💬</span>
+        <span style={{ fontSize: '13px', fontWeight: '800' }}>Submit Feedback</span>
+      </button>
+      
+      <button className="btn btn-outline" onClick={() => goToTab('s-announcements')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
+        <span style={{ fontSize: '24px' }}>📢</span>
+        <span style={{ fontSize: '13px', fontWeight: '800' }}>View News</span>
+      </button>
+    </div>
+  </div>
+</div>
 
           {/* CERTIFICATES */}
           <div className={`screen${activeScreen === 's-certificates' ? ' active' : ''}`}>
@@ -564,157 +642,134 @@ Check back later.
               <div className="page-sub">Request and track your barangay certificates</div>
             </div>
 
-            <button
-              className="btn btn-primary btn-full"
-              style={{ marginBottom: '18px' }}
-              onClick={() => setShowCertForm(true)}
-            >
-              ＋ Request a Certificate
-            </button>
+            {!showCertForm && (
+              <button
+                className="btn btn-primary btn-full"
+                style={{ marginBottom: '18px' }}
+                onClick={() => setShowCertForm(true)}
+              >
+                <span>＋</span> Request a Certificate
+              </button>
+            )}
 
             {showCertForm && (
-              <div>
-                <div className="card">
-                  <div className="card-title" style={{ marginBottom: '16px' }}>New Certificate Request</div>
-                  <form onSubmit={submitCert}>
-                    {/* Resident Information Section */}
-                    <div style={{ marginBottom: '16px', paddingBottom: '14px', borderBottom: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '12px' }}>📋 Your Information</div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                        <div className="fg">
-                          <label className="fl">First Name</label>
-                          <input
-                            className="fc"
-                            placeholder="e.g. Maria"
-                            value={certForm.firstName}
-                            onChange={updateCertField('firstName')}
-                            required
-                          />
-                        </div>
-                        <div className="fg">
-                          <label className="fl">Last Name</label>
-                          <input
-                            className="fc"
-                            placeholder="e.g. Santos"
-                            value={certForm.lastName}
-                            onChange={updateCertField('lastName')}
-                            required
-                          />
-                        </div>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                        <div className="fg">
-                          <label className="fl">Birthdate</label>
-                          <input
-                            className="fc"
-                            type="date"
-                            value={certForm.birthdate}
-                            onChange={updateCertField('birthdate')}
-                            required
-                          />
-                        </div>
-                        <div className="fg">
-                          <label className="fl">Age</label>
-                          <input
-                            className="fc"
-                            type="number"
-                            placeholder="e.g. 34"
-                            value={certForm.age}
-                            onChange={updateCertField('age')}
-                            required
-                          />
-                        </div>
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                        <div className="fg">
-                          <label className="fl">Contact Number</label>
-                          <input
-                            className="fc"
-                            type="tel"
-                            placeholder="09XX-XXX-XXXX"
-                            value={certForm.contact}
-                            onChange={updateCertField('contact')}
-                            required
-                          />
-                        </div>
-                        <div className="fg">
-                          <label className="fl">Purok</label>
-                          <input
-                            className="fc"
-                            placeholder="e.g. Purok 3"
-                            value={certForm.purok}
-                            onChange={updateCertField('purok')}
-                            required
-                          />
-                        </div>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Email (Optional)</label>
-                        <input
-                          className="fc"
-                          type="email"
-                          placeholder="your.email@example.com"
-                          value={certForm.email}
-                          onChange={updateCertField('email')}
-                        />
-                      </div>
+            <div>
+              <div className="card" style={{ borderColor: 'var(--primary-light)' }}>
+                <div className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  ✨ New Certificate Request
+                </div>
+                
+                <form onSubmit={(e) => {
+                  submitCert(e);
+                  setShowCertForm(false);
+                }}>
+                  {/* Applicant Profile (Auto-Verified) */}
+                  <div style={{ marginBottom: '20px', padding: '14px', background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                    <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--primary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                      👤 Applicant Profile (Auto-Verified)
                     </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px', fontSize: '13px' }}>
+                      <div><span style={{ color: 'var(--muted)' }}>Name:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.fullName || 'Not Available'}</strong></div>
+                      <div><span style={{ color: 'var(--muted)' }}>Purok:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.purok || 'Not on record'}</strong></div>
+                      <div><span style={{ color: 'var(--muted)' }}>Age:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.age ? `${loggedInUser.age} years old` : 'Not Available'}</strong></div>
+                      <div><span style={{ color: 'var(--muted)' }}>Birthdate:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.dob || 'Not Available'}</strong></div>
+                      <div style={{ gridColumn: 'span 2' }}><span style={{ color: 'var(--muted)' }}>Contact:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.contact || 'Not on record'}</strong></div>
+                    </div>
+                    <div style={{ fontSize: '11px', color: 'var(--green)', marginTop: '10px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      <span>✓</span> Information synced from your resident profile account.
+                    </div>
+                  </div>
 
-                    {/* Certificate Details Section */}
-                    <div style={{ marginBottom: '16px' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '12px' }}>📄 Certificate Request</div>
-                      <div className="fg">
-                        <label className="fl">Certificate Type</label>
-                        <select
-                          className="fc"
-                          value={certForm.certType}
-                          onChange={updateCertField('certType')}
-                          required
-                        >
-                          <option value="">-- Select Certificate Type --</option>
-                          <option value="Barangay Clearance">Barangay Clearance</option>
-                          <option value="Certificate of Indigency">Certificate of Indigency</option>
-                          <option value="Certificate of Residency">Certificate of Residency</option>
-                        </select>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Purpose of Certificate</label>
-                        <textarea
-                          className="fc"
-                          rows="3"
-                          placeholder="e.g. For employment at DOLE-Camarines Sur..."
-                          value={certForm.certPurpose}
-                          onChange={updateCertField('certPurpose')}
-                          required
-                        />
-                      </div>
+                  {/* Certificate Details Section */}
+                  <div style={{ marginBottom: '16px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '12px', color: 'var(--text)' }}>
+                      📋 Request Specifications
                     </div>
+                    
+                    <div className="fg">
+                      <label className="fl">Certificate Type</label>
+                      <select
+                        className="fc"
+                        value={certForm.certType}
+                        onChange={updateCertField('certType')}
+                        required
+                      >
+                        <option value="">-- Select Certificate Type --</option>
+                        <option value="Barangay Clearance">📄 Barangay Clearance</option>
+                        <option value="Certificate of Indigency">🤝 Certificate of Indigency</option>
+                        <option value="Certificate of Residency">🏠 Certificate of Residency</option>
+                      </select>
+                    </div>
+                    
+                    <div className="fg">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                        <label className="fl" style={{ margin: 0 }}>Purpose of Certificate</label>
+                        <span style={{ fontSize: '11px', color: (certForm.certPurpose?.length || 0) > 200 ? 'var(--red)' : 'var(--muted)' }}>
+                          {certForm.certPurpose?.length || 0} / 200 chars
+                        </span>
+                      </div>
+                      <textarea
+                        className="fc"
+                        rows="3"
+                        maxLength="200"
+                        placeholder="e.g. For employment requirements at DOLE-Camarines Sur..."
+                        value={certForm.certPurpose}
+                        onChange={updateCertField('certPurpose')}
+                        required
+                      />
+                    </div>
+                  </div>
 
-                    <div className="notice notice-info" style={{ marginBottom: '14px' }}>
-                      <span>ℹ️</span>
-                      <div style={{ fontSize: '12px' }}>
-                        Your request will be reviewed by the barangay office. You will be notified once approved.
-                      </div>
+                  <div style={{ 
+                    marginBottom: '18px', 
+                    padding: '12px 14px', 
+                    background: 'var(--surface2)', 
+                    borderRadius: 'var(--radius-sm)', 
+                    border: '1px solid rgba(79, 142, 247, 0.2)', 
+                    display: 'flex', 
+                    gap: '10px', 
+                    alignItems: 'flex-start' 
+                  }}>
+                    <span style={{ color: 'var(--primary)', fontSize: '14px' }}>ℹ️</span>
+                    <div style={{ fontSize: '12.5px', color: 'var(--muted)', lineHeight: '1.5' }}>
+                      Your request will be routed directly to the Barangay Captain's desk for evaluation.
                     </div>
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" className="btn btn-primary">Submit Request</button>
-                      <button type="button" className="btn btn-ghost" onClick={() => setShowCertForm(false)}>Cancel</button>
-                    </div>
-                  </form>
+                  </div>
+
+                  {/* Action Buttons */}
+                  <div style={{ display: 'flex', gap: '10px' }}>
+                    <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Submit Certificate Request</button>
+                    <button type="button" className="btn btn-ghost" onClick={() => setShowCertForm(false)}>
+                      ← Cancel
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+
+            {/* Success Message Block - Ngayong nag-o-autoclose ang form, lilitaw ito sa pinaka-itaas ng list */}
+            {certSuccess && (
+              <div className="notice notice-success" style={{ padding: '16px', borderRadius: 'var(--radius-sm)', marginBottom: '20px' }}>
+                <div style={{ fontSize: '18px' }}>✅</div>
+                <div>
+                  <strong style={{ display: 'block', marginBottom: '2px', fontSize: '14px' }}>Request Filed Successfully!</strong>
+                  <div style={{ fontSize: '12px', opacity: 0.9 }}>
+                    Tracking Reference: <code style={{ background: 'var(--surface)', color: 'var(--green)', padding: '2px 6px', borderRadius: '4px', fontWeight: 'bold', border: '1px solid var(--border)' }}>{certSuccess.refNumber}</code>
+                  </div>
+                  <div style={{ fontSize: '12px', marginTop: '4px', opacity: 0.8 }}>
+                    The document state has been appended to your tracking index below.
+                  </div>
                 </div>
               </div>
             )}
 
-            {certSuccess && (
-              <div className="notice notice-success">
-                <span>✅</span>
-                <strong>Request submitted!</strong>&nbsp;
-                {certSuccess.firstName} {certSuccess.lastName} - {certSuccess.certType} (Ref: {certSuccess.refNumber}) is now pending approval.
-              </div>
-            )}
-
-            <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
-              My Requests
+            {/* Dynamic Tracker Header Counter */}
+            <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span>My Requests</span>
+              <span className="badge b-blue" style={{ fontSize: '10px' }}>
+                {myRequests.length} Total
+              </span>
             </div>
 
             {myRequests.length ? (
@@ -724,41 +779,83 @@ Check back later.
                 const isIssued = statusLabel === 'Issued' || stepCount >= 4;
                 const badgeClass = isIssued ? 'badge b-green' : 'badge b-amber';
                 const refNumber = request.refNumber || `CERT-${(request._id || '').slice(-6).toUpperCase()}`;
+                
+                let certIcon = '📄';
+                if (request.certType?.includes('Indigency')) certIcon = '🤝';
+                if (request.certType?.includes('Residency')) certIcon = '🏠';
+
                 const submittedDate = request.timestamp
-                  ? new Date(request.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+                  ? new Date(request.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
                   : 'Recently added';
 
                 return (
-                  <div className="card" key={request._id}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                  /* CARD ENHANCEMENT: High-fidelity layout matching production standards */
+                  <div className="card" key={request._id} style={{ padding: '18px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                       <div>
-                        <div className="card-title">{request.certType}</div>
-                        <div className="card-meta">{refNumber} · {request.certPurpose || 'No purpose provided'}</div>
+                        <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px', fontWeight: '800' }}>
+                          <span>{certIcon}</span> {request.certType}
+                        </div>
+                        {/* Context Purpose Row */}
+                        <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '2px', fontStyle: request.certPurpose ? 'normal' : 'italic' }}>
+                          {request.certPurpose || 'No purpose specification declaration'}
+                        </div>
                       </div>
-                      <span className={badgeClass}>{isIssued ? '✓ Issued' : '⏳ Pending'}</span>
+                      <span className={badgeClass} style={{ textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.3px' }}>
+                        {isIssued ? '✓ Issued' : '⏳ Pending'}
+                      </span>
                     </div>
-                    <div className="steps">
+
+                    {/* Core Metadata Grid */}
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--surface2)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', marginBottom: '16px', border: '1px solid var(--border)', fontSize: '12px' }}>
+                      <div><span style={{ color: 'var(--muted)' }}>Reference:</span> <code style={{ color: 'var(--text)', fontWeight: '700', marginLeft: '4px' }}>{refNumber}</code></div>
+                      <div style={{ textAlign: 'right' }}><span style={{ color: 'var(--muted)' }}>Filed:</span> <strong style={{ color: 'var(--text)', marginLeft: '4px' }}>{submittedDate}</strong></div>
+                    </div>
+
+                    {/* Stepper Implementation */}
+                    <div className="steps" style={{ marginBottom: '6px' }}>
                       {['Submitted', 'Review', 'Approved', 'Issued'].map((label, index) => {
                         const value = index + 1;
                         const isDone = stepCount > value;
                         const isActive = stepCount === value;
+                        
                         return (
                           <div key={label} className={`step${isDone ? ' done' : isActive ? ' active' : ' pending'}`}>
-                            <div className="step-circle">{isDone ? '✓' : value}</div>
-                            <div className="step-label">{label}</div>
+                            <div className="step-circle">
+                              {isDone ? '✓' : value}
+                            </div>
+                            <div className="step-label">
+                              {label}
+                            </div>
                             {index < 3 && <div className="step-line" />}
                           </div>
                         );
                       })}
                     </div>
-                    <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                      Submitted {submittedDate} · {isIssued ? 'Request completed' : 'Awaiting Barangay Captain approval'}
+
+                    <div style={{ fontSize: '11px', color: 'var(--muted)', borderTop: '1px solid var(--border)', paddingTop: '10px', marginTop: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isIssued ? 'var(--green)' : 'var(--amber)' }} />
+                        Status Log
+                      </span>
+                      <span style={{ fontWeight: '600', color: isIssued ? 'var(--green)' : 'var(--muted)' }}>
+                        {isIssued ? '✨ Document ready for collection' : '⏳ Awaiting Administrative E-Signature'}
+                      </span>
                     </div>
                   </div>
                 );
               })
             ) : (
-              <div className="notice notice-info">No certificate requests have been saved locally yet.</div>
+              <div className="card" style={{ textAlign: 'center', padding: '36px 20px', border: '2px dashed var(--border)', background: 'transparent' }}>
+                <div style={{ fontSize: '40px', marginBottom: '10px' }}>📭</div>
+                <div style={{ fontWeight: '800', fontSize: '15px', color: 'var(--text)' }}>No certificate requests yet.</div>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px', marginBottom: '16px' }}>
+                  Your local logs are clear. You can request clearances and tracking histories anytime.
+                </div>
+                <button className="btn btn-outline btn-sm" onClick={() => setShowCertForm(true)} style={{ margin: '0 auto' }}>
+                  Submit First Request
+                </button>
+              </div>
             )}
           </div>
 
@@ -932,10 +1029,10 @@ Check back later.
     </div>
     <div style={{ fontSize: '18px', fontWeight: 900 }}>{loggedInUser.fullName}</div>
     <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>
-      Resident ID: {loggedInUser.residentId || 'RES-0001'}
+      Resident ID: {loggedInUser.residentId || 'Not Available'}
     </div>
     <span className="badge b-green" style={{ marginTop: '8px' }}>
-      ✓ {loggedInUser.voterStatus || 'Registered Voter'}
+      ✓ {loggedInUser.voterStatus || 'Not Available'}
     </span>
   </div>
 
@@ -944,50 +1041,52 @@ Check back later.
     <div className="list-item">
       <div className="list-body">
         <div className="list-sub">Birthdate</div>
-        <div className="list-title">{loggedInUser.birthdate || 'March 12, 1990'}</div>
+        <div className="list-title">{loggedInUser.birthdate || 'Not Available'}</div>
       </div>
     </div>
     <div className="list-item">
       <div className="list-body">
         <div className="list-sub">Age</div>
-        <div className="list-title">{loggedInUser.age ? `${loggedInUser.age} years old` : '34 years old'}</div>
+        <div className="list-title">{loggedInUser.age ? `${loggedInUser.age} years old` : 'Not Available'}</div>
       </div>
     </div>
     <div className="list-item">
       <div className="list-body">
         <div className="list-sub">Gender</div>
-        <div className="list-title">{loggedInUser.gender || 'Female'}</div>
+        <div className="list-title">{loggedInUser.gender || 'Not Available'}</div>
       </div>
     </div>
     <div className="list-item">
       <div className="list-body">
         <div className="list-sub">Civil Status</div>
-        <div className="list-title">{loggedInUser.civilStatus || 'Married'}</div>
+        <div className="list-title">{loggedInUser.civilStatus || 'Not Available'}</div>
       </div>
     </div>
     <div className="list-item">
       <div className="list-body">
         <div className="list-sub">Contact Number</div>
-        <div className="list-title">{loggedInUser.contact || '0917-123-4567'}</div>
+        <div className="list-title">{loggedInUser.contact || 'Not Available'}</div>
       </div>
     </div>
     <div className="list-item">
       <div className="list-body">
         <div className="list-sub">Purok</div>
-        <div className="list-title">{loggedInUser.purok ? `Purok ${loggedInUser.purok}, Barangay Bustrac` : 'Purok 3, Barangay Bustrac'}</div>
+        <div className="list-title">
+          {loggedInUser.purok ? `Purok ${loggedInUser.purok}, Barangay Bustrac` : 'Not Available'}
+        </div>
       </div>
     </div>
     <div className="list-item" style={{ border: 'none' }}>
       <div className="list-body">
         <div className="list-sub">Household</div>
-        <div className="list-title">{loggedInUser.household || 'HH-0012 — Santos Family'}</div>
+        <div className="list-title">{loggedInUser.household || 'Not Available'}</div>
       </div>
     </div>
   </div>
 
   <div className="sync-status">
-    <div className="sync-dot" />
-    CouchDB sync — Up to date · Last sync: Today, 07:45 AM
+    <div className={`sync-dot ${isOffline ? 'offline' : ''}`} />
+    CouchDB sync — {isOffline ? 'Offline' : 'Up to date'} · Last sync: {lastSync ? lastSync.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never'}
   </div>
 
   <button

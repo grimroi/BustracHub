@@ -37,12 +37,11 @@ export default function LogIn() {
       if (response.ok && data.success) {
         // I-save ang session configuration
         sessionStorage.setItem('bustrac_role', data.role);
-        sessionStorage.setItem('bustrac_user', data.user);
+        sessionStorage.setItem('bustrac_user', JSON.stringify(data.user));
         sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
 
         console.log(`➡️ Auth verified. User Role: ${data.role}`);
 
-        // 💡 CLEAN ROLE-BASED REDIRECTION CONTROL
         if (data.role === 'admin') {
           navigate('/admin');
         } 
