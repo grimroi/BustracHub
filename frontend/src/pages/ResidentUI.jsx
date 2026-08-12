@@ -251,121 +251,144 @@ sync.on("complete", () => {
   };
 
   const submitCert = useCallback(
-    async (event) => {
-      event.preventDefault();
+  async (event) => {
+    event.preventDefault();
 
-      const {
-        firstName,
-        lastName,
-        birthdate,
-        age,
-        contact,
-        purok,
-        email,
-        certType,
-        certPurpose,
-      } = certForm;
+    const {
+      certType,
+      certPurpose,
+      email,
+    } = certForm;
 
-      const trimmedFirstName = firstName.trim();
-      const trimmedLastName = lastName.trim();
-      const trimmedContact = contact.trim();
-      const trimmedPurok = purok.trim();
-      const trimmedEmail = email.trim();
-      const trimmedPurpose = certPurpose.trim();
+    const trimmedPurpose = certPurpose.trim();
+    const trimmedEmail = email.trim();
 
-      if (!trimmedFirstName) {
-        alert('First name is required.');
-        return;
-      }
-      if (!trimmedLastName) {
-        alert('Last name is required.');
-        return;
-      }
-      if (!birthdate) {
-        alert('Birthdate is required.');
-        return;
-      }
-      if (!age || age < 1 || age > 120) {
-        alert('Please enter a valid age (1-120).');
-        return;
-      }
-      if (!trimmedContact) {
-        alert('Contact number is required.');
-        return;
-      }
-      if (!trimmedPurok) {
-        alert('Purok/Area is required.');
-        return;
-      }
-      if (!certType) {
-        alert('Please select a certificate type.');
-        return;
-      }
-      if (!trimmedPurpose) {
-        alert('Please provide the purpose of the certificate.');
-        return;
-      }
-      if (trimmedEmail && !trimmedEmail.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)) {
-        alert('Please enter a valid email address.');
-        return;
-      }
-      if (!trimmedContact.match(/^\d{10,}$/)) {
-        alert('Please enter a valid contact number (at least 10 digits).');
-        return;
-      }
+    // Auto-verified resident information
+    const fullName = loggedInUser?.fullName?.trim() || '';
+    const birthdate = loggedInUser?.birthdate || '';
+    const age = Number(loggedInUser?.age) || 0;
+    const rawContact = loggedInUser?.contact?.trim() || '';
+    const contact = rawContact.replace(/\D/g, '');
+    const purok = String(loggedInUser?.purok || '').trim();
 
-      if (!db) {
-        alert('Local database is unavailable.');
-        return;
-      }
+    // Derive first and last name from resident profile
+    const nameParts = fullName.split(/\s+/).filter(Boolean);
+    const firstName = nameParts[0] || '';
+    const lastName = nameParts.length > 1
+      ? nameParts.slice(1).join(' ')
+      : '';
 
-      const certRequest = {
-        firstName: trimmedFirstName,
-        lastName: trimmedLastName,
-        birthdate,
-        age,
-        contact: trimmedContact,
-        purok: trimmedPurok,
-        email: trimmedEmail,
-        certType,
-        certPurpose: trimmedPurpose,
-        dateSubmitted: new Date().toLocaleString(),
+    if (!firstName) {
+      alert('Resident profile name is required.');
+      return;
+    }
+
+    if (!lastName) {
+      alert('Resident profile last name is required.');
+      return;
+    }
+
+    if (!birthdate) {
+      alert('Birthdate is missing from your resident profile.');
+      return;
+    }
+
+    if (!age || age < 1 || age > 120) {
+      alert('Your resident profile contains an invalid age.');
+      return;
+    }
+
+    if (!contact) {
+      alert('Contact number is missing from your resident profile.');
+      return;
+    }
+
+    if (!purok) {
+      alert('Purok/Area is missing from your resident profile.');
+      return;
+    }
+
+    if (!certType) {
+      alert('Please select a certificate type.');
+      return;
+    }
+
+    if (!trimmedPurpose) {
+      alert('Please provide the purpose of the certificate.');
+      return;
+    }
+
+    if (
+      trimmedEmail &&
+      !trimmedEmail.match(/^[^\s@]+@[^\s@]+\.[^\s@]+$/)
+    ) {
+      alert('Please enter a valid email address.');
+      return;
+    }
+
+    if (!/^09\d{9}$/.test(contact)) {
+      alert('Your resident profile contains an invalid Philippine mobile number.');
+      return;
+    }
+
+    if (!db) {
+      alert('Local database is unavailable.');
+      return;
+    }
+
+    const certRequest = {
+      firstName,
+      lastName,
+      birthdate,
+      age,
+      contact,
+      purok,
+      email: trimmedEmail,
+      certType,
+      certPurpose: trimmedPurpose,
+      dateSubmitted: new Date().toLocaleString(),
+      status: 'Pending',
+    };
+
+    sessionStorage.setItem(
+      'lastCertRequest',
+      JSON.stringify(certRequest)
+    );
+
+    const refNumber = 'CERT-' + Date.now().toString().slice(-6);
+
+    try {
+      await db.post({
+        residentId: loggedInUser.residentId || loggedInUser.username,
+        residentName: loggedInUser.fullName,
+        username: loggedInUser.username,
+        refNumber,
+        ...certRequest,
+        type: 'certificate_request',
+        timestamp: new Date().toISOString(),
         status: 'Pending',
-      };
-      sessionStorage.setItem('lastCertRequest', JSON.stringify(certRequest));
-
-      const refNumber = 'CERT-' + Date.now().toString().slice(-6);
-
-      try {
-        await db.post({
-          residentId: loggedInUser.residentId || loggedInUser.username,
-          residentName: loggedInUser.fullName,
-          username: loggedInUser.username,
-          refNumber,
-          ...certRequest,
-          type: "certificate_request",
-          timestamp: new Date().toISOString(),
-          status: "Pending",
-          step: 1,
+        step: 1,
       });
 
-        setShowCertForm(false);
-        setCertSuccess({
-          firstName: trimmedFirstName,
-          lastName: trimmedLastName,
-          certType,
-          refNumber,
-        });
-        setCertForm(CERT_FORM_INITIAL);
+      setShowCertForm(false);
 
-        setTimeout(() => setCertSuccess(null), 5000);
-      } catch (error) {
-        console.error('Unable to save certificate request', error);
-        alert('Unable to save your request offline right now.');
-      }
-    },
-    [certForm, db, loggedInUser]
-  );
+      setCertSuccess({
+        firstName,
+        lastName,
+        certType,
+        refNumber,
+      });
+
+      setCertForm(CERT_FORM_INITIAL);
+
+      setTimeout(() => setCertSuccess(null), 5000);
+    } catch (error) {
+      console.error('Unable to save certificate request', error);
+      alert('Unable to save your request offline right now.');
+    }
+  },
+  [certForm, db, loggedInUser]
+);
 
   const submitFeedback = useCallback(
     async (event) => {
@@ -672,7 +695,7 @@ sync.on("complete", () => {
                       <div><span style={{ color: 'var(--muted)' }}>Name:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.fullName || 'Not Available'}</strong></div>
                       <div><span style={{ color: 'var(--muted)' }}>Purok:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.purok || 'Not on record'}</strong></div>
                       <div><span style={{ color: 'var(--muted)' }}>Age:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.age ? `${loggedInUser.age} years old` : 'Not Available'}</strong></div>
-                      <div><span style={{ color: 'var(--muted)' }}>Birthdate:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.dob || 'Not Available'}</strong></div>
+                      <div><span style={{ color: 'var(--muted)' }}>Birthdate:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.birthdate || 'Not Available'}</strong></div>
                       <div style={{ gridColumn: 'span 2' }}><span style={{ color: 'var(--muted)' }}>Contact:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.contact || 'Not on record'}</strong></div>
                     </div>
                     <div style={{ fontSize: '11px', color: 'var(--green)', marginTop: '10px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
@@ -736,7 +759,6 @@ sync.on("complete", () => {
                     </div>
                   </div>
 
-                  {/* Action Buttons */}
                   <div style={{ display: 'flex', gap: '10px' }}>
                     <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Submit Certificate Request</button>
                     <button type="button" className="btn btn-ghost" onClick={() => setShowCertForm(false)}>
@@ -748,8 +770,7 @@ sync.on("complete", () => {
             </div>
           )}
 
-            {/* Success Message Block - Ngayong nag-o-autoclose ang form, lilitaw ito sa pinaka-itaas ng list */}
-            {certSuccess && (
+              {certSuccess && (
               <div className="notice notice-success" style={{ padding: '16px', borderRadius: 'var(--radius-sm)', marginBottom: '20px' }}>
                 <div style={{ fontSize: '18px' }}>✅</div>
                 <div>
@@ -789,8 +810,7 @@ sync.on("complete", () => {
                   : 'Recently added';
 
                 return (
-                  /* CARD ENHANCEMENT: High-fidelity layout matching production standards */
-                  <div className="card" key={request._id} style={{ padding: '18px' }}>
+                      <div className="card" key={request._id} style={{ padding: '18px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
                       <div>
                         <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px', fontWeight: '800' }}>
