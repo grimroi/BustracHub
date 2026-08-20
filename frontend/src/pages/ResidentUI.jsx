@@ -859,7 +859,7 @@ sync.on("complete", () => {
                         Status Log
                       </span>
                       <span style={{ fontWeight: '600', color: isIssued ? 'var(--green)' : 'var(--muted)' }}>
-                        {isIssued ? '✨ Document ready for collection' : '⏳ Awaiting Administrative E-Signature'}
+                        {isIssued ? ' Document ready for collection' : '⏳ Awaiting Administrative E-Signature'}
                       </span>
                     </div>
                   </div>

@@ -2,6 +2,17 @@ import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
 
+const hashPasswordForOffline = async (password) => {
+  const encoder = new TextEncoder();
+  const data = encoder.encode(password);
+
+  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
+
+  return Array.from(new Uint8Array(hashBuffer))
+    .map((byte) => byte.toString(16).padStart(2, '0'))
+    .join('');
+};
+
 export default function LogIn() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -35,36 +46,122 @@ export default function LogIn() {
       const data = await response.json();
 
       if (response.ok && data.success) {
-        // I-save ang session configuration
+        // Save current authenticated session
         sessionStorage.setItem('bustrac_role', data.role);
-        sessionStorage.setItem('bustrac_user', JSON.stringify(data.user));
-        sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+        sessionStorage.setItem(
+          'bustrac_user',
+          JSON.stringify(data.user)
+        );
+        sessionStorage.setItem(
+          'bustrac_loginTime',
+          new Date().toISOString()
+        );
+
+        // Save offline login verifier (multi-user keyed store)
+        const passwordHash = await hashPasswordForOffline(password);
+
+        const existingOfflineAuth =
+          JSON.parse(localStorage.getItem('bustrac_offline_auth') || '{}');
+
+        existingOfflineAuth[trimmedUsername] = {
+          username: trimmedUsername,
+          passwordHash,
+          role: data.role,
+          user: data.user,
+        };
+
+        localStorage.setItem(
+          'bustrac_offline_auth',
+          JSON.stringify(existingOfflineAuth)
+        );
 
         console.log(`➡️ Auth verified. User Role: ${data.role}`);
 
         if (data.role === 'admin') {
           navigate('/admin');
-        } 
-        else if (data.role === 'staff') {
+        } else if (data.role === 'staff') {
           navigate('/staff');
-        } 
-        else if (data.role === 'resident') {
-          // Kung may pinuntahang public card si resident, ibalik siya doon. Kung wala, sa /resident dashboard.
-          const destination = location.state?.redirectTo || '/resident';
-          navigate(destination, { 
-          state: { activeTab: location.state?.activeTab } 
-           });
-        }
-        else {
-          // Safety fallback
+        } else if (data.role === 'resident') {
+          const destination =
+            location.state?.redirectTo || '/resident';
+
+          navigate(destination, {
+            state: {
+              activeTab: location.state?.activeTab,
+            },
+          });
+        } else {
           navigate('/');
         }
-      } else {
+
+        return;
+      }
+
+      setShowError(true);
+    } catch (error) {
+      console.warn(
+        'Backend unavailable. Attempting offline login...'
+      );
+
+      try {
+  const storedOfflineAuth = localStorage.getItem('bustrac_offline_auth');
+
+  if (!storedOfflineAuth) {
+    console.warn('No offline credentials available.');
+    setShowError(true);
+    return;
+  }
+
+  const allOfflineAuth = JSON.parse(storedOfflineAuth);
+  const offlineAuth = allOfflineAuth[trimmedUsername];
+
+  if (!offlineAuth) {
+    console.warn('No offline record for this username.');
+    setShowError(true);
+    return;
+  }
+
+  const passwordHash = await hashPasswordForOffline(password);
+  const passwordMatches = passwordHash === offlineAuth.passwordHash;
+
+  if (!passwordMatches) {
+    console.warn('Offline password does not match.');
+    setShowError(true);
+    return;
+  }
+
+  // Restore local session
+  sessionStorage.setItem('bustrac_role', offlineAuth.role);
+  sessionStorage.setItem('bustrac_user', JSON.stringify(offlineAuth.user));
+  sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
+        console.log(
+          `➡️ Offline authentication successful. User Role: ${offlineAuth.role}`
+        );
+
+        if (offlineAuth.role === 'admin') {
+          navigate('/admin');
+        } else if (offlineAuth.role === 'staff') {
+          navigate('/staff');
+        } else if (offlineAuth.role === 'resident') {
+          const destination =
+            location.state?.redirectTo || '/resident';
+
+          navigate(destination, {
+            state: {
+              activeTab: location.state?.activeTab,
+            },
+          });
+        } else {
+          navigate('/');
+        }
+      } catch (offlineError) {
+        console.error(
+          'Offline authentication failed:',
+          offlineError
+        );
         setShowError(true);
       }
-    } catch (error) {
-      console.error('Backend connection failed:', error);
-      setShowError(true);
     }
   },
   [username, password, navigate, location]

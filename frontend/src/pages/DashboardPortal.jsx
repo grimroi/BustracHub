@@ -96,26 +96,42 @@ export default function DashboardPortal({ role = 'staff' }) {
   const location = useLocation();
 
   // ── Dynamic User Identity ──
-  const username    = sessionStorage.getItem('bustrac_user');
-  const displayName = NAME_MAP[username] ?? username ?? 'Portal User';
-  const initials    = displayName
-    .split(' ')
-    .map((w) => w[0])
-    .join('')
-    .slice(0, 2)
-    .toUpperCase();
+const rawUser = sessionStorage.getItem('bustrac_user');
 
+let currentUser = {};
+
+try {
+  currentUser = rawUser ? JSON.parse(rawUser) : {};
+} catch {
+  // Backward compatibility for old plain-string sessions
+  currentUser = {
+    username: rawUser || '',
+  };
+}
+
+const username = currentUser.username || '';
+
+const displayName =
+  currentUser.fullName ||
+  NAME_MAP[username] ||
+  username ||
+  'Portal User';
+
+const initials = displayName
+  .split(' ')
+  .map((w) => w[0])
+  .join('')
+  .slice(0, 2)
+  .toUpperCase();
+  
   // ── Navigation State ──
   const [screen,  setScreen]  = useState('dashboard');
-  const [offline, setOffline] = useState(false);
   const [selectedCertificate, setSelectedCertificate] = useState(null);
 
-  const [isOnline, setIsOnline] = useState(navigator.onLine);
-  const [syncState, setSyncState] = useState('synced');
+  const [syncState, setSyncState] = useState(navigator.onLine ? 'synced' : 'offline');
   
   useEffect(() => {
   const handleOnline = () => {
-    setIsOnline(true);
     setSyncState('syncing');
     
     // Simulate the re-synchronization pipeline to the CouchDB server.
@@ -125,7 +141,6 @@ export default function DashboardPortal({ role = 'staff' }) {
   };
 
   const handleOffline = () => {
-    setIsOnline(false);
     setSyncState('offline');
   };
 
@@ -136,7 +151,8 @@ export default function DashboardPortal({ role = 'staff' }) {
     window.removeEventListener('online', handleOnline);
     window.removeEventListener('offline', handleOffline);
   };
-}, []);
+  }, []);
+
   // ── Staff: Blotter Case / Summons State ──
   const [staffCase, setStaffCase] = useState({
     caseNum:      'BLT-2024-041',
@@ -170,10 +186,10 @@ export default function DashboardPortal({ role = 'staff' }) {
 
   const [showBulkDropdown, setShowBulkDropdown] = useState(false);
 
-  // ── Multi-select States para sa mga Residente ──
+  // Multi-select States for the Residents
 const [selectedResidents, setSelectedResidents] = useState([]);
 
-// ── State para sa search input text ──
+// State for search input text
 const [searchTerm, setSearchTerm] = useState('');
 const [genderFilter, setGenderFilter] = useState('All Gender');
 
@@ -204,11 +220,11 @@ const [programStatusFilter, setProgramStatusFilter] = useState('All'); // All, A
 const [programSortOption, setProgramSortOption] = useState('Newest');  // Newest, Oldest, Alpha, MostBeneficiaries
 
 // Modals/Editing Focus States
-const [editingProgram, setEditingProgram] = useState(null); // Maglalaman ng prog object kapag nag-eedit
-const [viewingProgram, setViewingProgram] = useState(null); // Maglalaman ng prog object para sa full details modal
-const [confirmDeleteId, setConfirmDeleteId] = useState(null); // Target ID para sa safe delete prompt
+const [editingProgram, setEditingProgram] = useState(null); // Will contain the prog object when editing
+const [viewingProgram, setViewingProgram] = useState(null); // Will contain the prog object for the full details modal
+const [confirmDeleteId, setConfirmDeleteId] = useState(null); // Target ID for the safe delete prompt
 
-// Auto-save tracker para sa mga programs
+// Auto-save tracker for the programs
 useEffect(() => {
   localStorage.setItem('bustrac_programs', JSON.stringify(programsList));
 }, [programsList]);
@@ -286,7 +302,7 @@ useEffect(() => {
   }).on('change', (change) => {
     if (change.doc && change.doc.type === 'certificate_request') {
       setIssuedCertificates((prevCerts) => {
-        // Alisin ang lumang bersyon ng doc (kung mayroon) at isingit ang pinakabago
+        // Remove the old version of the doc (if any) and insert the newest
         const filtered = prevCerts.filter(c => c._id !== change.doc._id);
         return [change.doc, ...filtered];
       });
@@ -414,11 +430,11 @@ useEffect(() => {
   localStorage.setItem('bustrac_households', JSON.stringify(householdsList));
 }, [householdsList]);
 
-// 2. Derived array para sa dynamic sorting base sa active sort order state
+// 2. Derived array for dynamic sorting based on active sort order state
 const sortedHouseholds = [...householdsList].sort((a, b) => {
   if (addressSortOrder === 'asc') return a.address.localeCompare(b.address);
   if (addressSortOrder === 'desc') return b.address.localeCompare(a.address);
-  return 0; // 'none' — ibabalik sa default/original order
+  return 0; // 'none' — will return to default/original order
 });
 // ──────────────────────────────────────────────────────────────────────
 // 3. DYNAMIC DROPDOWN GENERATOR (Extracts unique puroks from active list)
@@ -440,7 +456,7 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   // B. Purok Dropdown Filter Match Condition
   const matchesPurok = purokFilter === 'All Puroks' || h.purok === purokFilter;
   
-  // Dapat parehong kondisyon ay pumasa (TRUE) para manatili sa active view list
+  // Both conditions must pass (TRUE) to remain in the active view list
   return matchesSearch && matchesPurok;
 });
   // ─────────────────────────────────────────────
@@ -453,7 +469,6 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   window.history.pushState({ internalScreen: id }, '', '');
 };
   const logout        = ()  => navigate('/login');
-  const toggleOffline = ()  => setOffline((prev) => !prev);
 
   // ─────────────────────────────────────────────
   // HANDLERS — STAFF BLOTTER / SUMMONS
@@ -505,7 +520,7 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   const updateResidentField = (field, value) =>
     setResidentForm((prev) => ({ ...prev, [field]: value }));
 
-  // 1. Function para i-populate ang form kapag pinindot ang Edit
+  // 1. Function to populate the form when Edit is clicked
 const handleStartEditResident = (res) => {
   const nameParts = res.name.split(' ');
   
@@ -525,18 +540,18 @@ const handleStartEditResident = (res) => {
   nav('add-resident'); // Dadalhin ka sa form screen para i-edit ang details
 };
 
-// 2. Function para burahin ang residente sa listahan
+// 2. Function to delete the resident from the list
 const handleDeleteResident = (id, name) => {
-  // Mas maganda sa presentation kung may pangalan ang tinatanong na burahin
+  // Better for the presentation if the name is asked when deleting
   if (window.confirm(`Sigurado ka ba na gusto mong burahin si ${name} (ID: ${id}) sa system roster?`)) {
     const filteredList = residentsList.filter(res => res.id !== id);
     
     setResidentsList(filteredList);
 
-    // Dito natin permanenteng isasave sa data simulation cache
+    // Here we will permanently save to the data simulation cache
     localStorage.setItem('bustrac_residents', JSON.stringify(filteredList));
     
-    // Alisin din sa mga naka-select na checkboxes kung naroroon
+    // Also remove from the selected checkboxes if present
     setSelectedResidents(prev => prev.filter(selectedId => selectedId !== id));
 
     alert("✓ Success: Resident record has been completely removed.");
@@ -645,7 +660,7 @@ const saveComplaintChanges = () => {
     return;
   }
 
-  // 1. DYNAMIC DATA PERSISTENCE: Ina-update ang master list sa React memory state
+  // 1. DYNAMIC DATA PERSISTENCE: Updating the master list in React memory state
   if (typeof setBlotterList === 'function') {
     setBlotterList((prevList) =>
       prevList.map((item) =>
@@ -664,7 +679,7 @@ const saveComplaintChanges = () => {
     );
   }
 
-  // 2. DYNAMIC ALERT: Tugma na sa totoong Case Number na pinindot mo (e.g., BLT-8875)
+  // 2. DYNAMIC ALERT: Now matches the actual Case Number you clicked (e.g., BLT-8875)
   alert(
     `✓ Complaint ${caseNum} updated successfully!\n\n` +
     `Changes saved:\n` +
@@ -691,7 +706,7 @@ const sendSummons = () => {
     return;
   }
   
-  // Tukuyin ang piniling notification channels
+  // Identify the selected notification channels
   const methods = [];
   if (sendSMS || sendSMS === undefined) methods.push('SMS'); // Fallback logic kung true by default
   if (sendEmail) methods.push('Email');
@@ -701,15 +716,14 @@ const sendSummons = () => {
                      `This operational transaction will toggle data logs.`;
   
   if (window.confirm(confirmMsg)) {
-    // DISPATCH AUTOMATION PRO-TIP: Kapag nagpadala ng summons, 
-    // awtomatiko nating gawing "Under Mediation" ang status ng kaso!
+    // When a summons is sent, automatically set the case status to "Under Mediation"
     if (typeof setBlotterList === 'function') {
       setBlotterList((prevList) =>
         prevList.map((item) =>
           item.id === caseNum ? { ...item, status: 'Under Mediation' } : item
         )
       );
-      // I-sync din ang kasalukuyang active form rendering context
+      // Also sync the current active form rendering context
       updateComplaintField('caseStatus', 'Under Mediation');
     }
 
@@ -758,7 +772,6 @@ const sendSummons = () => {
         .filter(
           doc =>
             doc.type === 'certificate_request' &&
-            // 💡 FIXED: Tinatanggap na pareho ang Step 3 (Approved) at Step 4 (Issued)
           (Number(doc.step) === 3 || Number(doc.step) === 4)
         );
 
@@ -813,7 +826,7 @@ const sendSummons = () => {
 };
 
 useEffect(() => {
-  // Tatakbo lang ang print kung ang sertipiko ay opisyal nang naka-Step 4 (Issued) at nasa tamang screen area
+  // Print will only run if the certificate is officially at Step 4 (Issued) and in the correct screen area
   if (selectedCertificate && Number(selectedCertificate.step) === 4 && screen === 'cert-print') {
     const printTimer = setTimeout(() => {
       window.print();
@@ -837,7 +850,7 @@ useEffect(() => {
     }
     return SCREEN_META[screen] ?? [screen, ''];
   })();
-  // Dynamic computing: Hinahanap nito kung tugma ang tinype sa Pangalan, ID, o Purok
+  // Dynamic computing: This looks for a match in the typed input against Name, ID, or Purok
 const filteredResidents = residentsList.filter((res) => {
   const query = searchTerm.toLowerCase();
   const matchesSearch =
@@ -851,13 +864,13 @@ const filteredResidents = residentsList.filter((res) => {
   return matchesSearch && matchesPurok && matchesGender;
 });
 
-// 📊 Dynamic Calculations para sa Dashboard Panels
+// Dynamic Calculations for the Dashboard Panels
 const totalResidents = residentsList.length;
 const totalHouseholds = householdsList.length;
 const totalVoters = residentsList.filter(r => r.voter).length;
 const totalConflicts = residentsList.filter(r => r.conflict).length;
 
-// 📈 Purok Breakdown Statistics (Para sa CSS Bar Graph)
+// Purok Breakdown Statistics (For the CSS Bar Graph)
 const getPurokCount = (purokName) => residentsList.filter(r => r.purok === purokName).length;
 const p1Count = getPurokCount('Purok 1');
 const p2Count = getPurokCount('Purok 2');
@@ -868,11 +881,11 @@ const [currentBeneficiaryId, setCurrentBeneficiaryId] = useState('');
 
 useEffect(() => {
   if (selectedResidents && selectedResidents.length > 0) {
-    // Kuhanin ang pinakaunang residente sa pila (Index 0)
+    // Get the first resident in the queue (Index 0)
     const activeId = selectedResidents[0];
     setCurrentBeneficiaryId(activeId);
   } else {
-    setCurrentBeneficiaryId(''); // Reset kapag walang pila
+    setCurrentBeneficiaryId(''); // Reset when there is no queue
   }
 }, [selectedResidents]);
 
@@ -1015,7 +1028,7 @@ const handleUpdateResidentChanges = (e) => {
   setResidentsList(prevList => {
     const updatedList = prevList.map(r => {
       if (r.id === selectedResidentId) {
-        // Pagsasamahin ulit ang pangalan para sa table display registry
+        // The name will be combined again for the table display registry
         const fullCombinedName = `${editForm.firstName} ${editForm.lastName}`.trim();
         
         return {
@@ -1026,7 +1039,7 @@ const handleUpdateResidentChanges = (e) => {
           civilStatus: editForm.civilStatus,
           purok: editForm.purok,
           household: editForm.household,
-          // Awtomatikong kukunin ang class para sa kulay ng badge ng Purok
+          // The class for the Purok badge color will be automatically retrieved
           purokClass: editForm.purok === 'Purok 1' ? 'p' : editForm.purok === 'Purok 3' ? 'b' : editForm.purok === 'Purok 5' ? 'a' : 'g'
         };
       }
@@ -1712,12 +1725,27 @@ const handleSubmitFeedbackAction = (e) => {
             </div>
             <div
               className="online-dot"
-              title={offline ? 'Offline — local sync' : 'Online — CouchDB synced'}
-              style={
-                offline
-                  ? { background: 'var(--amber)', boxShadow: '0 0 0 2px var(--amber-bg)' }
-                  : undefined
+              title={
+                syncState === 'offline'
+                  ? 'Offline — changes saved locally'
+                  : syncState === 'syncing'
+                    ? 'Connecting and syncing'
+                    : 'Online — changes synced'
               }
+              style={{
+                background:
+                  syncState === 'offline'
+                    ? 'var(--red)'
+                    : syncState === 'syncing'
+                      ? 'var(--amber)'
+                      : 'var(--green)',
+                boxShadow:
+                  syncState === 'offline'
+                    ? '0 0 0 2px var(--red-bg)'
+                    : syncState === 'syncing'
+                      ? '0 0 0 2px var(--amber-bg)'
+                      : '0 0 0 2px var(--green-bg)',
+              }}
             />
           </div>
         </aside>
@@ -1731,56 +1759,50 @@ const handleSubmitFeedbackAction = (e) => {
               <div className="tb-title">{title}</div>
               <div className="tb-sub">{subtitle}</div>
             </div>
-            {offline && (
-              <div className="offline-pill">📡 Offline — CouchDB local sync active</div>
-            )}
             {role === 'admin' && (
               <div className="role-admin">🔑 Admin</div>
             )}
             
             {/* ════════════════════════════════════════════════════════════════
-    DYNAMIC SYNC STATUS INDICATOR (GOOGLE DOCS BEHAVIOR COMPLIANT)
-    ════════════════════════════════════════════════════════════════ */}
-<div className="sync-status-container" style={{
-  display: 'flex',
-  alignItems: 'center',
-  gap: '8px',
-  padding: '6px 12px',
-  borderRadius: '20px',
-  background: syncState === 'offline' ? 'rgba(239, 68, 68, 0.15)' : 
-              syncState === 'syncing' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
-  border: `1px solid ${
-    syncState === 'offline' ? '#ef4444' : 
-    syncState === 'syncing' ? '#f59e0b' : '#10b981'
-  }`,
-  transition: 'all 0.3s ease'
-}}>
-  {/* The Pulsing Status Dot Indicator */}
-  <span style={{
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    background: syncState === 'offline' ? '#ef4444' : 
-                syncState === 'syncing' ? '#f59e0b' : '#10b981',
-    display: 'inline-block',
-    animation: syncState === 'syncing' ? 'pulse 1s infinite alternate' : 'none'
-  }} />
-  
-  {/* The Dynamic Contextual Messages */}
-  <span style={{ 
-    fontSize: '12px', 
-    fontWeight: '600',
-    color: syncState === 'offline' ? '#f87171' : 
-           syncState === 'syncing' ? '#fbbf24' : '#34d399'
-  }}>
-    {syncState === 'offline' && "☁️ Working Offline (Saved to Local Device)"}
-    {syncState === 'syncing' && "🔄 Connecting & Syncing changes to Central Cloud..."}
-    {syncState === 'synced' && "🗲 All changes synced to Cloud"}
-  </span>
-</div>
-            <button className="btn btn-g btn-sm" onClick={toggleOffline}>
-              Toggle Offline
-            </button>
+                DYNAMIC SYNC STATUS INDICATOR (GOOGLE DOCS BEHAVIOR COMPLIANT)
+                ════════════════════════════════════════════════════════════════ */}
+            <div className="sync-status-container" style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '6px 12px',
+              borderRadius: '20px',
+              background: syncState === 'offline' ? 'rgba(239, 68, 68, 0.15)' : 
+                          syncState === 'syncing' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)',
+              border: `1px solid ${
+                syncState === 'offline' ? '#ef4444' : 
+                syncState === 'syncing' ? '#f59e0b' : '#10b981'
+              }`,
+              transition: 'all 0.3s ease'
+            }}>
+              {/* The Pulsing Status Dot Indicator */}
+              <span style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: syncState === 'offline' ? '#ef4444' : 
+                            syncState === 'syncing' ? '#f59e0b' : '#10b981',
+                display: 'inline-block',
+                animation: syncState === 'syncing' ? 'dp-sync-pulse 1s infinite alternate' : 'none'
+              }} />
+              
+              {/* The Dynamic Contextual Messages */}
+              <span style={{ 
+                fontSize: '12px', 
+                fontWeight: '600',
+                color: syncState === 'offline' ? '#f87171' : 
+                      syncState === 'syncing' ? '#fbbf24' : '#34d399'
+              }}>
+                {syncState === 'offline' && "☁️ Working Offline (Saved to Local Device)"}
+                {syncState === 'syncing' && "🔄 Connecting & Syncing changes to Central Cloud..."}
+                {syncState === 'synced' && "🗲 All changes synced to Cloud"}
+              </span>
+            </div>
             <button className="btn btn-g btn-sm" onClick={logout}>
               Sign Out
             </button>
@@ -3576,7 +3598,6 @@ const handleSubmitFeedbackAction = (e) => {
     )}
 
     <div className="tc">
-      {/* KANWANG BAHAGI: TRANSACTION DATA ENTRY REGISTRY FORM */}
       <div className="fp">
         <div className="fp-t">📦 Distribution Entry</div>
         

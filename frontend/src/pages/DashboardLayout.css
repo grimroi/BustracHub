@@ -276,6 +276,11 @@
   50%       { opacity: 0.5; }
 }
 
+@keyframes dp-sync-pulse {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0.4; transform: scale(1.4); }
+}
+
 /* ── 6. MAIN AREA ── */
 .dashboard-shell-container .main {
   margin-left: var(--sidebar);
