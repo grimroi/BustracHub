@@ -4,6 +4,7 @@ import PouchDB from 'pouchdb';
 import logo from '../assets/logo.png';
 import CertificateLifecycle from './CertificateLifecycle';
 import './DashboardLayout.css';
+import { createAuditLog, getAuditLogs } from '../utils/auditLog';
 
 const db = new PouchDB('bustrac_db');
 
@@ -87,6 +88,23 @@ const NAME_MAP = {
   mgcortero:    'Mark Gian Cortero',
   jmacabangon:  'Juhairo Macabangon',
 };
+
+const ACTION_META = {
+  LOGIN:       { ico: '🔑', bg: 'var(--accent-bg)', badge: 'online',  bClass: 't' },
+  USER_LOGIN:  { ico: '🔑', bg: 'var(--accent-bg)', badge: 'online',  bClass: 't' },
+  CREATE:      { ico: '🚨', bg: 'var(--red-bg)',    badge: 'online',  bClass: 'g' },
+  UPDATE:      { ico: '✏️', bg: 'var(--amber-bg)',  badge: 'online',  bClass: 'g' },
+  ARCHIVE:     { ico: '🗃️', bg: 'var(--teal-bg)',   badge: 'archive', bClass: 'a' },
+  APPROVE:     { ico: '📝', bg: 'var(--accent-bg)', badge: 'online',  bClass: 't' },
+  SYNC:        { ico: '🔄', bg: 'var(--teal-bg)',   badge: 'sync',    bClass: 'b' },
+  RESOLVE:     { ico: '⚠️', bg: 'var(--amber-bg)',  badge: 'online',  bClass: 'g' },
+  FLAG:        { ico: '⚡', bg: 'var(--red-bg)',    badge: 'online',  bClass: 'g' },
+};
+
+function getActionMeta(action = '') {
+  const key = action.toUpperCase();
+  return ACTION_META[key] || { ico: '📄', bg: 'var(--accent-bg)', badge: 'online', bClass: 'g' };
+}
 
 // ─────────────────────────────────────────────
 // COMPONENT
@@ -278,7 +296,7 @@ useEffect(() => {
   
   // 1. Array list for approved certificates that are ready to be issued.
   const [issuedCertificates, setIssuedCertificates] = useState([]);
-  // 💡 LIVE SYNC: Automatically updates the UI whenever there is a change in PouchDB
+  // Automatically updates the UI whenever there is a change in PouchDB
 useEffect(() => {
   const fetchAllCerts = async () => {
     try {
@@ -314,7 +332,7 @@ useEffect(() => {
   return () => changes.cancel(); 
 }, []);
 
-   // ❌ 1. FUNCTION FOR DELETING A RESIDENT
+   // FUNCTION FOR DELETING A RESIDENT
   const deleteResident = (id) => {
     if (window.confirm("Are you sure you want to delete this resident?")) {
       setResidentsList(prev => prev.filter(res => res.id !== id));
@@ -322,7 +340,7 @@ useEffect(() => {
     }
   };
 
-  // 📝 2. FUNCTION TO ENABLE EDIT MODE
+  // FUNCTION TO ENABLE EDIT MODE
   const startEditResident = (res) => {
     setEditingResidentId(res.id);
 
@@ -345,8 +363,8 @@ useEffect(() => {
     nav('edit-resident');
   };
 
-  // 💾 3. FUNCTION TO SAVE THE UPDATED RESIDENT INFORMATION
-  const submitEditResident = (e) => {
+  // FUNCTION TO SAVE THE UPDATED RESIDENT INFORMATION
+  const submitEditResident = async (e) => {
     e.preventDefault();
 
     const {
@@ -380,6 +398,12 @@ useEffect(() => {
         return res;
       })
     );
+    await createAuditLog({
+    action: 'UPDATE',
+    module: 'RESIDENTS',
+    recordId: editingResidentId,
+    details: `Updated resident record: ${updatedName}`,
+  });
 
     alert("Resident record updated successfully!");
 
@@ -387,10 +411,10 @@ useEffect(() => {
     setResidentForm(EMPTY_RESIDENT);
     nav('residents');
   };
-  // ── Admin: Complaint / Summons State ──
+  // Admin: Complaint / Summons State
   const [complaint, setComplaint] = useState(INITIAL_COMPLAINT);
 
-  // ── Admin: Beneficiary List ──
+  // Admin: Beneficiary List
   const [beneficiaryDraft, setBeneficiaryDraft] = useState({
     name:    '',
     aidType: 'Rice 5kg',
@@ -541,7 +565,7 @@ const handleStartEditResident = (res) => {
 };
 
 // 2. Function to delete the resident from the list
-const handleDeleteResident = (id, name) => {
+const handleDeleteResident = async (id, name) => {
   // Better for the presentation if the name is asked when deleting
   if (window.confirm(`Sigurado ka ba na gusto mong burahin si ${name} (ID: ${id}) sa system roster?`)) {
     const filteredList = residentsList.filter(res => res.id !== id);
@@ -550,14 +574,19 @@ const handleDeleteResident = (id, name) => {
 
     // Here we will permanently save to the data simulation cache
     localStorage.setItem('bustrac_residents', JSON.stringify(filteredList));
-    
-    // Also remove from the selected checkboxes if present
     setSelectedResidents(prev => prev.filter(selectedId => selectedId !== id));
+    
+     await createAuditLog({
+      action: 'ARCHIVE',
+      module: 'RESIDENTS',
+      recordId: id,
+      details: `Archived resident record: ${name}`,
+    });
 
     alert("✓ Success: Resident record has been completely removed.");
   }
 };
-  const submitAddResident = (e) => {
+  const submitAddResident = async (e) => {
   e.preventDefault();
   const { firstName, middleName, lastName, birthdate, gender, civilStatus, contact, purok, household } = residentForm;
   
@@ -591,6 +620,12 @@ const handleDeleteResident = (id, name) => {
     });
 
     setResidentsList(updatedList);
+    await createAuditLog({
+      action: 'UPDATE',
+      module: 'RESIDENTS',
+      recordId: editingResidentId,
+      details: `Updated resident record: ${fullName}`,
+    });
     alert(`Resident ${editingResidentId} updated successfully!`);
     setEditingResidentId(null); // I-reset ang edit mode
   } else {
@@ -607,6 +642,13 @@ const handleDeleteResident = (id, name) => {
       conflict: false
     };
     setResidentsList([...residentsList, newResident]);
+
+    await createAuditLog({
+      action: 'CREATE',
+      module: 'RESIDENTS',
+      recordId: newResident.id,
+      details: `Added new resident record: ${fullName}`,
+    });
     alert(`Resident added successfully!\n\nName: ${fullName}`);
   }
 
@@ -614,7 +656,7 @@ const handleDeleteResident = (id, name) => {
   nav('residents');
 };
  
- const submitAddHousehold = (e) => {
+ const submitAddHousehold = async (e) => {
   e.preventDefault();
   const { head, address, purok } = householdForm;
 
@@ -640,6 +682,13 @@ const handleDeleteResident = (id, name) => {
 
   setHouseholdsList([...householdsList, newHousehold]);
   
+   await createAuditLog({
+    action: 'CREATE',
+    module: 'HOUSEHOLDS',
+    recordId: newHousehold.id,
+    details: `Registered new household: ${newHousehold.head}`,
+  });
+
   alert(`Household Registered successfully!\n\nID: ${newHousehold.id}\nHead of Family: ${head}`);
   
   setHouseholdForm(EMPTY_HOUSEHOLD);
@@ -815,6 +864,13 @@ const sendSummons = () => {
     };
     await db.put(updatedDoc);
 
+    await createAuditLog({
+    action: 'UPDATE',
+    module: 'CERTIFICATES',
+    recordId: req._id,
+    details: `Issued and printed certificate for ${req.firstName || ''} ${req.lastName || ''}`,
+    });
+
     setSelectedCertificate(updatedDoc); 
 
     setTimeout(() => {
@@ -931,7 +987,7 @@ useEffect(() => {
 }, [currentBeneficiaryId, aidLogs, residentsList, currentProgramId]);
 
 // ── TRANSACTION SUBMIT LOGIC LAYER ──
-const handleLogAidEntry = () => {
+const handleLogAidEntry = async () => {
   if (!currentBeneficiaryId) {
     alert('Mangyaring pumili muna ng residente (Beneficiary).');
     return;
@@ -962,6 +1018,14 @@ const handleLogAidEntry = () => {
 
   // I-salansan sa unahan ng logs array
   setAidLogs([newLogEntry, ...aidLogs]);
+
+  await createAuditLog({
+    action: 'CREATE',
+    module: 'AID_DISTRIBUTION',
+    recordId: newLogEntry.id,
+    details: `Distributed ${newLogEntry.aid} to ${newLogEntry.residentName} under program ${currentProgramId}`,
+  });
+  
   setRemarks(''); // I-clear ang text field control pagkatapos mag-save
 
   // ⚡ BATCH MODE QUEUE MANAGER SHIFTER
@@ -1103,7 +1167,7 @@ const [residentsRegistry, setResidentsRegistry] = useState([
 
 
 // ── UPGRADED SUBMIT METRICS SYSTEM HANDLER ──
-const handleCreateBlotterEntry = (e) => {
+const handleCreateBlotterEntry = async (e) => {
   e.preventDefault();
 
   // Paglikha ng Auto-Incremental ID Tracker Block
@@ -1120,8 +1184,14 @@ const handleCreateBlotterEntry = (e) => {
   const updatedBlotters = [...blotterList, finalCaseData];
   setBlotterList(updatedBlotters);
   localStorage.setItem('bustrac_blotter', JSON.stringify(updatedBlotters));
-
-  // Pag-trigger sa tagumpay na interface metrics modal window
+  
+  await createAuditLog({
+    action: 'CREATE',
+    module: 'BLOTTER',
+    recordId: generatedId,
+    details: `Filed new blotter case: ${blotterForm.type} at ${blotterForm.location}`,
+  });
+  // Triggering the success interface metrics modal window
   setRecentlyFiledId(generatedId);
   setShowSuccessModal(true);
 };
@@ -1215,9 +1285,9 @@ const filteredBlotters = currentBlotterRoster.filter(b => {
 });
 // Dropdown control para sa Residents Submenu
 const [isResidentsOpen, setIsResidentsOpen] = useState(false);
-// ── CERTIFICATE PIPELINE BRIDGE LAYER ──
-// Ang handler na ito ang kukuha ng bagong request mula sa Lifecycle component 
-// at ligtas na isasaksak sa state table ng Issuance & Print
+// CERTIFICATE PIPELINE BRIDGE LAYER 
+// This handler will take the new request from the Lifecycle component 
+// and safely plug it into the state table of Issuance & Print
 const handleNewCertificateRequest = async (newRequestData) => {
   if (!newRequestData) return;
 
@@ -1236,18 +1306,17 @@ const handleNewCertificateRequest = async (newRequestData) => {
 
   try {
     await db.put(formattedPayload);
-    // ここで localStorage に保存する処理は消す（PouchDB 一本に統一）
   } catch (err) {
     console.error('Failed to save certificate request to PouchDB:', err);
   }
 
-  // 画面遷移はそのままでも OK
   if (typeof nav === 'function') {
     nav('cert-print');
   }
 };
 const approvedCertificates = issuedCertificates.filter(cert => cert.step === 4 || cert.status === 'Approved');
 const strictlyIssuedCertificates = issuedCertificates.filter(cert => cert.step === 5 || cert.status === 'Issued');
+
 const handleApproveCertificate = async (currentRequest) => {
   if (!currentRequest) return;
 
@@ -1264,6 +1333,13 @@ const handleApproveCertificate = async (currentRequest) => {
     // I-save ang pinakabagong state transition
     await db.put(formattedPayload);
     
+    await createAuditLog({
+    action: 'APPROVE',
+    module: 'CERTIFICATES',
+    recordId: currentRequest._id,
+    details: `Approved certificate request for ${currentRequest.firstName || ''} ${currentRequest.lastName || ''}`,
+    });
+
     // Lipat sa screen kung saan nandoon ang print features
     if (typeof nav === 'function') {
       nav('cert-print'); 
@@ -1356,7 +1432,7 @@ const [showAnnDeleteModal, setShowAnnDeleteModal] = useState(false);
 const [annIdToDelete, setAnnIdToDelete] = useState(null);
 
 // Function for saving (Combined Create and Edit logic)
-const handleSaveAnnouncement = (e, targetStatus) => {
+const handleSaveAnnouncement = async (e, targetStatus) => {
   e.preventDefault();
   
   if (announcementSubScreen === 'new') {
@@ -1371,12 +1447,25 @@ const handleSaveAnnouncement = (e, targetStatus) => {
       date: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
     };
     setAnnouncementsList([newEntry, ...announcementsList]);
+    await createAuditLog({
+      action: 'CREATE',
+      module: 'ANNOUNCEMENTS',
+      recordId: String(newEntry.id),
+      details: `Published new announcement: ${newEntry.title}`,
+    });
+
   } else if (announcementSubScreen === 'edit') {
     setAnnouncementsList(announcementsList.map(ann => 
       ann.id === editingAnnId 
         ? { ...ann, ...announcementForm, status: targetStatus }
         : ann
     ));
+    await createAuditLog({
+      action: 'UPDATE',
+      module: 'ANNOUNCEMENTS',
+      recordId: String(editingAnnId),
+      details: `Updated announcement: ${announcementForm.title}`,
+    });
   }
   
   // Reset workflow and return to board registry view
@@ -1516,7 +1605,31 @@ const handleSubmitFeedbackAction = (e) => {
   // Clear notification indicator loop after 4 seconds
   setTimeout(() => setShowFbSuccessToast(false), 4000);
 };
+// ── AUDIT LOGS STATE ──
+const [auditLogs, setAuditLogs] = useState([]);
 
+// ── AUDIT FILTER STATES ──
+const [auditSearch, setAuditSearch] = useState('');
+const [auditModuleFilter, setAuditModuleFilter] = useState('ALL');
+const [auditActionFilter, setAuditActionFilter] = useState('ALL');
+
+// ── AUDIT LOGS LOADER ──
+useEffect(() => {
+  if (role === 'admin') {
+    loadAuditLogs();
+  }
+}, [role]);
+
+async function loadAuditLogs() {
+  try {
+    const logs = await getAuditLogs();
+    // Newest first
+    const sorted = logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    setAuditLogs(sorted);
+  } catch (err) {
+    console.error('Failed to load audit logs:', err);
+  }
+}
   // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
@@ -3404,21 +3517,26 @@ const handleSubmitFeedbackAction = (e) => {
                               </>
                             )}
 
-                            {prog.status === 'Completed' && (
-                              <>
-                                <button className="btn btn-p btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#6366f1' }} onClick={() => setViewingProgram(prog)}>👁️ View</button>
-                                <button className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => nav('aid-logs')}>📊 Logs</button>
-                                <button className="btn btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#475569', color: '#cbd5e1' }}
-                                  onClick={() => {
-                                    // SET TO ARCHIVED ACTION ROUTINE
-                                    const updated = programsList.map(p => p.id === prog.id ? {...p, status: 'Archived'} : p);
-                                    setProgramsList(updated);
-                                    alert(`Campaign historical logs archived successfully.`);
-                                  }}>
-                                  📁 Archive
-                                </button>
-                              </>
-                            )}
+                            <button 
+                                    className="btn btn-sm" 
+                                    style={{ padding: '4px 8px', fontSize: '11px', background: '#475569', color: '#cbd5e1' }} 
+                                    onClick={async () => {
+                                      // SET TO ARCHIVED ACTION ROUTINE
+                                      const updated = programsList.map(p => p.id === prog.id ? {...p, status: 'Archived'} : p);
+                                      setProgramsList(updated);
+                                      
+                                      await createAuditLog({
+                                        action: 'ARCHIVE',
+                                        module: 'PROGRAMS',
+                                        recordId: prog.id,
+                                        details: `Archived program: ${prog.title}`,
+                                      });
+                                      
+                                      alert(`Campaign historical logs archived successfully.`);
+                                    }}
+                                  > 
+                                    📁 Archive 
+                                  </button>
 
                             {prog.status === 'Upcoming' && (
                               <>
@@ -3431,7 +3549,7 @@ const handleSubmitFeedbackAction = (e) => {
                                   🚀 Activate
                                 </button>
                                 <button className="btn btn-a btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => setEditingProgram(prog)}>✏️ Edit</button>
-                                <button className="btn btn-r btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => setConfirmDeleteId(prog.id)}>🗑️ Delete</button>
+                                <button className="btn btn-r btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => setConfirmDeleteId(prog.id)}>📁 Archive</button>
                               </>
                             )}
 
@@ -4994,34 +5112,70 @@ const handleSubmitFeedbackAction = (e) => {
                   <div className="tb">
                     <div className="sb-box"><span>🔍</span><input placeholder="Search user, action, module..." /></div>
                     <select className="fc" style={{ width: '150px' }}>
-                      <option>All Modules</option><option>Residents</option>
-                      <option>Certificates</option><option>Aid Distribution</option><option>Blotter</option>
+                      <option>All Modules</option>
+                      <option>Residents</option>
+                      <option>Certificates</option>
+                      <option>Aid Distribution</option>
+                      <option>Blotter</option>
                     </select>
                     <select className="fc" style={{ width: '130px' }}>
-                      <option>All Actions</option><option>CREATE</option><option>UPDATE</option>
-                      <option>APPROVE</option><option>LOGIN</option><option>SYNC</option><option>RESOLVE</option>
+                      <option>All Actions</option>
+                      <option>CREATE</option>
+                      <option>UPDATE</option>
+                      <option>ARCHIVE</option>
+                      <option>APPROVE</option>
+                      <option>LOGIN</option>
+                      <option>SYNC</option>
+                      <option>RESOLVE</option>
                     </select>
                   </div>
-                  {[
-                    { ico: '📝', bg: 'var(--accent-bg)', a: 'APPROVE_CERT — certificates · CERT-2024-088', d: 'User: Juhairo Macabangon (Admin) · Approved for Lim, Ana G.', badge: 'online', bClass: 't', t: 'Apr 7, 09:14' },
-                    { ico: '🔄', bg: 'var(--teal-bg)',   a: 'SYNC_OFFLINE — residents · 14 records',       d: 'User: Jay Napagal (Staff) · CouchDB replication from device 192.168.1.14', badge: 'offline sync', bClass: 'b', t: 'Apr 7, 07:45' },
-                    { ico: '⚠️', bg: 'var(--amber-bg)',  a: 'RESOLVE_CONFLICT — residents · RES-0412',      d: 'User: Juhairo Macabangon (Admin) · Retained Version A (Purok 3)', badge: 'online', bClass: 'g', t: 'Apr 7, 08:20' },
-                    { ico: '🚨', bg: 'var(--red-bg)',    a: 'CREATE_BLOTTER — blotter · BLT-2024-041',      d: 'User: Mark Cortero (Staff) · Noise complaint, Purok 5', badge: 'online', bClass: 'g', t: 'Apr 7, 08:30' },
-                    { ico: '🔑', bg: 'var(--accent-bg)', a: 'LOGIN — system',                               d: 'User: Juhairo Macabangon (Admin) · IP: 192.168.1.12 · Chrome/Windows', badge: 'online', bClass: 'g', t: 'Apr 7, 07:30' },
-                    { ico: '⚡', bg: 'var(--red-bg)',    a: 'FLAG_DUPLICATE — aid_distributions · LOG-0039', d: 'User: Ken Amparado (Staff) · Lopez, Pedro D. flagged under Rice Distribution', badge: 'online', bClass: 'g', t: 'Apr 7, 08:40' },
-                  ].map((row, i) => (
-                    <div key={i} className="al-row">
-                      <div className="al-ico" style={{ background: row.bg }}>{row.ico}</div>
-                      <div style={{ flex: 1 }}>
-                        <div className="al-a">{row.a}</div>
-                        <div className="al-d">{row.d}</div>
-                      </div>
-                      <div>
-                        <span className={`badge ${row.bClass}`} style={{ fontSize: '9px', marginBottom: '3px', display: 'flex' }}>{row.badge}</span>
-                        <div className="al-t">{row.t}</div>
-                      </div>
+
+                  {auditLogs.length === 0 ? (
+                    <div className="al-row" style={{ justifyContent: 'center', color: 'var(--muted)', padding: '24px' }}>
+                      No audit logs found.
                     </div>
-                  ))}
+                  ) : (
+                    auditLogs.map((log) => {
+                      const meta = getActionMeta(log.action);
+                      return (
+                        <div key={log._id} className="al-row">
+                          <div className="al-ico" style={{ background: meta.bg }}>
+                            {meta.ico}
+                          </div>
+                          <div style={{ flex: 1, minWidth: 0 }}>
+                            <div className="al-a">
+                              {log.action}
+                              {log.module ? ` — ${log.module}` : ''}
+                              {log.recordId ? ` · ${log.recordId}` : ''}
+                            </div>
+                            <div className="al-d">
+                              User: {log.actor?.username || 'System'} ({log.actor?.role || 'N/A'})
+                              {log.details ? ` · ${log.details}` : ''}
+                            </div>
+                          </div>
+                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                            <span
+                              className={`badge ${meta.bClass}`}
+                              style={{ fontSize: '9px', marginBottom: '3px', display: 'inline-flex' }}
+                            >
+                              {meta.badge}
+                            </span>
+                            <div className="al-t">
+                              {log.timestamp
+                                ? new Date(log.timestamp).toLocaleString('en-PH', {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: '2-digit',
+                                    minute: '2-digit',
+                                    hour12: true,
+                                  })
+                                : ''}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })
+                  )}
                 </div>
               </div>
             )}

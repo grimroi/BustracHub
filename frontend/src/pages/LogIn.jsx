@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
+import { createAuditLog } from '../utils/auditLog';
 
 const hashPasswordForOffline = async (password) => {
   const encoder = new TextEncoder();
@@ -74,7 +75,13 @@ export default function LogIn() {
           'bustrac_offline_auth',
           JSON.stringify(existingOfflineAuth)
         );
-
+        
+        // Inside login success handler
+        await createAuditLog({
+          action: 'USER_LOGIN',
+          module: 'AUTHENTICATION',
+          details: `User logged in via ${navigator.onLine ? 'Online API' : 'Offline SHA-256 Fallback'}`
+        });
         console.log(`➡️ Auth verified. User Role: ${data.role}`);
 
         if (data.role === 'admin') {
@@ -134,7 +141,11 @@ export default function LogIn() {
   sessionStorage.setItem('bustrac_role', offlineAuth.role);
   sessionStorage.setItem('bustrac_user', JSON.stringify(offlineAuth.user));
   sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
-
+        await createAuditLog({
+        action: 'USER_LOGIN',
+        module: 'AUTHENTICATION',
+        details: `User logged in via ${navigator.onLine ? 'Online API' : 'Offline SHA-256 Fallback'}`
+      });
         console.log(
           `➡️ Offline authentication successful. User Role: ${offlineAuth.role}`
         );
