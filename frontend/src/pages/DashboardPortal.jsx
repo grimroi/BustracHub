@@ -1630,6 +1630,27 @@ async function loadAuditLogs() {
     console.error('Failed to load audit logs:', err);
   }
 }
+const filteredAuditLogs = auditLogs.filter((log) => {
+    const search = auditSearch.toLowerCase();
+
+    const matchesSearch =
+        !search ||
+        log.actor?.username?.toLowerCase().includes(search) ||
+        log.action?.toLowerCase().includes(search) ||
+        log.module?.toLowerCase().includes(search) ||
+        String(log.recordId || '').toLowerCase().includes(search) ||
+        log.details?.toLowerCase().includes(search);
+
+    const matchesModule =
+        auditModuleFilter === 'ALL' ||
+        log.module === auditModuleFilter;
+
+    const matchesAction =
+        auditActionFilter === 'ALL' ||
+        log.action === auditActionFilter;
+
+    return matchesSearch && matchesModule && matchesAction;
+});
   // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
