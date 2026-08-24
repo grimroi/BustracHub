@@ -106,6 +106,41 @@ function getActionMeta(action = '') {
   return ACTION_META[key] || { ico: '📄', bg: 'var(--accent-bg)', badge: 'online', bClass: 'g' };
 }
 
+// Helper mapper function for PouchDB feedback doc -> Admin Feedback Table
+const mapDocToFeedback = (doc) => {
+  const rawTime = doc.timestamp || doc.createdAt || doc.date || new Date().toISOString();
+  
+  return {
+    _id: doc._id,
+    _rev: doc._rev,
+    id: doc.refNumber || doc.id || doc._id,
+    sender: doc.residentName || doc.fullName || doc.username || doc.sender || 'Resident',
+    // Fallback sa mga karaniwang property names ng concern type
+    type: doc.feedbackType || doc.concernType || doc.category || doc.classification || 
+          (doc.type !== 'feedback' && doc.type !== 'feedback_report' ? doc.type : 'Complaint'),
+    priority: doc.priority || 'Medium',
+    subject: doc.subject || doc.title || 'No Subject',
+    message: doc.details || doc.message || doc.description || '',
+    rawTimestamp: rawTime,
+    date: !isNaN(Date.parse(rawTime))
+      ? new Date(rawTime).toLocaleString('en-US', {
+          month: 'short',
+          day: 'numeric',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : rawTime,
+    assignedTo: doc.assignedTo || 'Unassigned',
+    status: doc.status || 'Pending',
+    attachment: doc.attachment || null,
+    response: doc.response || '',
+    handledBy: doc.handledBy || '',
+    dateResolved: doc.dateResolved || '',
+    rawDoc: doc,
+  };
+};
+
 // ─────────────────────────────────────────────
 // COMPONENT
 // ─────────────────────────────────────────────
@@ -561,7 +596,7 @@ const handleStartEditResident = (res) => {
   });
 
   setEditingResidentId(res.id);
-  nav('add-resident'); // Dadalhin ka sa form screen para i-edit ang details
+  nav('add-resident'); 
 };
 
 // 2. Function to delete the resident from the list
@@ -808,50 +843,7 @@ const sendSummons = () => {
     setBeneficiaryList([]);
   };
 
-  useEffect(() => {
-    const loadIssuedCertificates = async () => {
-      try {
-        const result = await db.allDocs({
-        include_docs: true,
-        // You can also use startkey and endkey to efficiently retrieve
-        // only documents with `type: 'certificate_request'`
-      });
-        const docs = result.rows
-        .map(row => row.doc)
-        .filter(
-          doc =>
-            doc.type === 'certificate_request' &&
-          (Number(doc.step) === 3 || Number(doc.step) === 4)
-        );
-
-        setIssuedCertificates(docs);
-    } catch (err) {
-      console.error('Failed to load issued certificates:', err);
-    }
-  };
-
-  loadIssuedCertificates();
-
-   
-// Use a PouchDB changes listener for real-time updates
-  const changes = db.changes({
-    since: 'now',
-    live: true,
-    include_docs: true,
-  }).on('change', (change) => {
-    if (
-      change.doc.type === 'certificate_request' &&
-      (Number(change.doc.step) === 3 || Number(change.doc.step) === 4)
-    ) {
-      setIssuedCertificates(prev => {
-    const filtered = prev.filter(cert => cert._id !== change.doc._id);
-    return [change.doc, ...filtered];
-  });
-}
-  });
-
-  return () => changes.cancel();
-}, []);
+  
 
   const handlePrintRelease = async (req) => {
   try {
@@ -1578,33 +1570,198 @@ const handleOpenFeedbackDetails = (fb) => {
   setFbStaffAssignment(fb.assignedTo);
 };
 
-// Main process submission para sa responses at status workflow mapping
-const handleSubmitFeedbackAction = (e) => {
-  e.preventDefault();
+const mapDocToFeedback = (doc) => {
+    const rawTime = doc.timestamp || doc.createdAt || doc.date || new Date().toISOString();
+    return {
+      _id: doc._id,
+      _rev: doc._rev,
+      id: doc.refNumber || doc.id || doc._id,
+      sender: doc.residentName || doc.fullName || doc.username || doc.sender || 'Resident',
+      type: doc.feedbackType || doc.concernType || doc.category || doc.classification || (doc.type !== 'feedback' && doc.type !== 'feedback_report' ? doc.type : 'Complaint'),
+      priority: doc.priority || 'Medium',
+      subject: doc.subject || doc.title || 'No Subject',
+      message: doc.details || doc.message || doc.description || '',
+      rawTimestamp: rawTime,
+      date: !isNaN(Date.parse(rawTime))
+        ? new Date(rawTime).toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          })
+        : rawTime,
+      assignedTo: doc.assignedTo || 'Unassigned',
+      status: doc.status || 'Pending',
+      attachment: doc.attachment || null,
+      response: doc.response || '',
+      handledBy: doc.handledBy || '',
+      dateResolved: doc.dateResolved || '',
+      rawDoc: doc,
+    };
+  };
   
-  setFeedbackList(feedbackList.map(item => {
-    if (item.id === selectedFeedback.id) {
-      const isNowResolved = fbStatusUpdate === 'Resolved';
-      return {
-        ...item,
+useEffect(() => {
+    if (!db) return;
+
+    const loadIssuedCertificates = async () => {
+      try {
+        const result = await db.allDocs({ include_docs: true });
+        const docs = result.rows
+          .map((row) => row.doc)
+          .filter(
+            (doc) => doc.type === 'certificate_request' && (Number(doc.step) === 3 || Number(doc.step) === 4)
+          );
+        setIssuedCertificates(docs);
+      } catch (err) {
+        console.error('Failed to load issued certificates:', err);
+      }
+    };
+
+    loadIssuedCertificates();
+
+    const changes = db
+      .changes({ since: 'now', live: true, include_docs: true })
+      .on('change', (change) => {
+        if (
+          change.doc &&
+          change.doc.type === 'certificate_request' &&
+          (Number(change.doc.step) === 3 || Number(change.doc.step) === 4)
+        ) {
+          setIssuedCertificates((prev) => {
+            const filtered = prev.filter((cert) => cert._id !== change.doc._id);
+            return [change.doc, ...filtered];
+          });
+        }
+      });
+
+    return () => changes.cancel();
+  }, [db]);
+// ════════════════════════════════════════════════════════════════
+  // 4. EFFECT #2: FEEDBACK & COMPLAINTS POUCHDB LISTENER
+  // ════════════════════════════════════════════════════════════════
+  useEffect(() => {
+    if (!db) return;
+
+    // Initial Load mula sa PouchDB
+    const fetchFeedbacks = async () => {
+      try {
+        const res = await db.allDocs({ include_docs: true });
+        const dbFeedbacks = res.rows
+          .map((row) => row.doc)
+          .filter(
+            (doc) => doc && (doc.type === 'feedback' || doc.type === 'feedback_report')
+          )
+          .map(mapDocToFeedback);
+
+        setFeedbackList((prev) => {
+          const existingDbIds = new Set(dbFeedbacks.map((f) => f._id));
+          const filteredMock = prev.filter(
+            (item) => !item._id && !existingDbIds.has(item.id)
+          );
+          return [...dbFeedbacks, ...filteredMock];
+        });
+      } catch (err) {
+        console.error('Error fetching feedbacks from PouchDB:', err);
+      }
+    };
+
+    fetchFeedbacks();
+
+    // Real-time Live Changes Listener
+    const changes = db
+      .changes({ since: 'now', live: true, include_docs: true })
+      .on('change', (change) => {
+        if (
+          change.doc &&
+          (change.doc.type === 'feedback' || change.doc.type === 'feedback_report')
+        ) {
+          const updatedItem = mapDocToFeedback(change.doc);
+          setFeedbackList((prev) => {
+            const filtered = prev.filter(
+              (f) => f._id !== change.doc._id && f.id !== change.doc.refNumber
+            );
+            return [updatedItem, ...filtered];
+          });
+        }
+      })
+      .on('error', (err) => {
+        console.error('Feedback PouchDB change listener error:', err);
+      });
+
+    return () => changes.cancel();
+  }, [db]);
+
+const handleSubmitFeedbackAction = async (e) => {
+  e.preventDefault();
+  if (!selectedFeedback) return;
+
+  const isNowResolved = fbStatusUpdate === 'Resolved';
+  const resolvedTimestamp = isNowResolved
+    ? new Date().toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      })
+    : selectedFeedback.dateResolved;
+
+  const handlerName =
+    fbStaffAssignment !== 'Unassigned' ? fbStaffAssignment : 'Mark Gian Cortero';
+
+  // 1. Kung galing sa PouchDB ang document, i-update ito sa database
+  const targetId = selectedFeedback._id || (selectedFeedback.rawDoc && selectedFeedback.rawDoc._id);
+
+  if (targetId && db) {
+    try {
+      // Kunin ang latest revision (_rev) para maiwasan ang PouchDB update conflict
+      const latestDoc = await db.get(targetId);
+
+      const updatedDoc = {
+        ...latestDoc,
         status: fbStatusUpdate,
         assignedTo: fbStaffAssignment,
         response: fbResponseText,
-        handledBy: fbStaffAssignment !== 'Unassigned' ? fbStaffAssignment : 'Mark Gian Cortero', //
-        dateResolved: isNowResolved ? new Date().toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : item.dateResolved
+        handledBy: handlerName,
+        dateResolved: resolvedTimestamp,
+        updatedAt: new Date().toISOString(),
       };
-    }
-    return item;
-  }));
 
-  // Trigger local state action success notification
+      await db.put(updatedDoc);
+      // HINDI NA kailangan mag-setFeedbackList dito manual dahil aabutan na ito ng live PouchDB listener mo!
+    } catch (err) {
+      console.error('Failed to update feedback in PouchDB:', err);
+      alert('Unable to save feedback update to offline database.');
+      return;
+    }
+  } else {
+    // 2. Fallback para sa mga static mock items (kung may natitira pa sa initial state)
+    setFeedbackList((prev) =>
+      prev.map((item) => {
+        if (item.id === selectedFeedback.id) {
+          return {
+            ...item,
+            status: fbStatusUpdate,
+            assignedTo: fbStaffAssignment,
+            response: fbResponseText,
+            handledBy: handlerName,
+            dateResolved: resolvedTimestamp,
+          };
+        }
+        return item;
+      })
+    );
+  }
+
+  // Success UI Feedback & Modal Cleanup
   setFbToastMessage(`✓ Action metrics saved for ${selectedFeedback.id}. Resident framework notified.`);
   setShowFbSuccessToast(true);
   setSelectedFeedback(null);
-  
-  // Clear notification indicator loop after 4 seconds
+
   setTimeout(() => setShowFbSuccessToast(false), 4000);
 };
+
 // ── AUDIT LOGS STATE ──
 const [auditLogs, setAuditLogs] = useState([]);
 
@@ -2743,97 +2900,115 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                 </div>
               );
             })()}
+
             {/* ════════════════════════════════════════
                 SCREEN: EDIT RESIDENT
                 ════════════════════════════════════════ */}
-            {screen === 'edit-resident' && (
-              <div className="screen active">
-                <div className="ph">
-                  <div>
-                    <div className="pt">Edit Resident Record</div>
-                    <div className="ps">Updating data for ID: <strong style={{ color: '#3b82f6', fontFamily: 'var(--mono)' }}>{selectedResidentId}</strong></div>
-                  </div>
-                  <button className="btn btn-g" onClick={() => nav('residents')}>← Back</button>
-                </div>
-
-                {/* NAKAKONEKTA NA SA SUBMIT HANDLER NATIN */}
-                <form onSubmit={handleUpdateResidentChanges}>
-                  <div className="fp">
-                    <div className="fg2">
-                      <div className="fg">
-                        <label className="fl">First Name</label>
-                        <input
-                          className="fc" 
-                          required
-                          value={editForm.firstName}
-                          onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })}
-                        />
+                {screen === 'edit-resident' && (
+                  <div className="screen active">
+                    <div className="ph">
+                      <div>
+                        <div className="pt">Edit Resident Record</div>
+                        <div className="ps">
+                          Updating record for ID: {' '}
+                          <strong style={{ color: '#3b82f6', fontFamily: 'var(--mono)' }}>
+                            {selectedResidentId}
+                          </strong>
+                        </div>
                       </div>
-                      <div className="fg">
-                        <label className="fl">Last Name</label>
-                        <input
-                          className="fc" 
-                          required
-                          value={editForm.lastName}
-                          onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })}
-                        />
-                      </div>
+                      <button className="btn btn-g" onClick={() => nav('residents')}>
+                        ← Back to List
+                      </button>
                     </div>
 
-                    <div className="fg2">
-                      <div className="fg">
-                        <label className="fl">Civil Status</label>
-                        <select
-                          className="fc"
-                          required
-                          value={editForm.civilStatus}
-                          onChange={(e) => setEditForm({ ...editForm, civilStatus: e.target.value })}
+                    {/* RESIDENT DATA UPDATE FORM */}
+                    <form onSubmit={handleUpdateResidentChanges}>
+                      <div className="fp">
+                        <div className="fg2">
+                          <div className="fg">
+                            <label className="fl">First Name</label>
+                            <input 
+                              className="fc" 
+                              required 
+                              value={editForm.firstName} 
+                              onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} 
+                            />
+                          </div>
+                          <div className="fg">
+                            <label className="fl">Last Name</label>
+                            <input 
+                              className="fc" 
+                              required 
+                              value={editForm.lastName} 
+                              onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} 
+                            />
+                          </div>
+                        </div>
+
+                        <div className="fg2">
+                          <div className="fg">
+                            <label className="fl">Civil Status</label>
+                            <select 
+                              className="fc" 
+                              required 
+                              value={editForm.civilStatus} 
+                              onChange={(e) => setEditForm({ ...editForm, civilStatus: e.target.value })}
+                            >
+                              <option value="Single">Single</option>
+                              <option value="Married">Married</option>
+                              <option value="Widowed">Widowed</option>
+                              <option value="Separated">Separated</option>
+                            </select>
+                          </div>
+
+                          <div className="fg">
+                            <label className="fl">Purok / Zone</label>
+                            <select 
+                              className="fc" 
+                              required 
+                              value={editForm.purok} 
+                              onChange={(e) => setEditForm({ ...editForm, purok: e.target.value })}
+                            >
+                              <option value="Purok 1">Purok 1</option>
+                              <option value="Purok 2">Purok 2</option>
+                              <option value="Purok 3">Purok 3</option>
+                              <option value="Purok 4">Purok 4</option>
+                              <option value="Purok 5">Purok 5</option>
+                            </select>
+                          </div>
+                        </div>
+
+                        <div className="fg">
+                          <label className="fl">Household Assignment ID</label>
+                          <input 
+                            className="fc" 
+                            placeholder="e.g. HH-0004" 
+                            value={editForm.household} 
+                            onChange={(e) => setEditForm({ ...editForm, household: e.target.value })} 
+                          />
+                        </div>
+                      </div>
+
+                      <div className="fa" style={{ marginTop: '20px' }}>
+                        <button 
+                          type="button" 
+                          className="btn btn-g" 
+                          onClick={() => nav('residents')} 
+                          style={{ marginRight: '10px' }}
                         >
-                          <option value="Single">Single</option>
-                          <option value="Married">Married</option>
-                          <option value="Widowed">Widowed</option>
-                          <option value="Separated">Separated</option>
-                        </select>
+                          Cancel
+                        </button>
+                        <button type="submit" className="btn btn-p">
+                          💾 Save Modifications
+                        </button>
                       </div>
-                      <div className="fg">
-                        <label className="fl">Purok</label>
-                        <select
-                          className="fc"
-                          required
-                          value={editForm.purok}
-                          onChange={(e) => setEditForm({ ...editForm, purok: e.target.value })}
-                        >
-                          <option value="Purok 1">Purok 1</option>
-                          <option value="Purok 2">Purok 2</option>
-                          <option value="Purok 3">Purok 3</option>
-                          <option value="Purok 4">Purok 4</option>
-                          <option value="Purok 5">Purok 5</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="fg">
-                      <label className="fl">Household Assignment</label>
-                      <input
-                        className="fc"
-                        placeholder="e.g. HH-0004"
-                        value={editForm.household}
-                        onChange={(e) => setEditForm({ ...editForm, household: e.target.value })}
-                      />
-                    </div>
+                    </form>
                   </div>
+                )}
+           
+            
+                
 
-                  <div className="fa" style={{ marginTop: '20px' }}>
-                    <button type="button" className="btn btn-g" onClick={() => nav('residents')} style={{ marginRight: '10px' }}>
-                      Cancel
-                    </button>
-                    <button type="submit" className="btn btn-p">
-                      💾 Update Changes
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
             {screen === 'add-household' && (
               <div className="screen active">
                 <div className="ph">
@@ -3111,7 +3286,12 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                 <CertificateLifecycle setIssuedCertificates={setIssuedCertificates} />
               </div>
             )}
-
+            
+            {screen === 'cert-approve' && (
+            <div className="screen active">
+              <CertificateLifecycle />
+            </div>
+          )}
             {/* ════════════════════════════════════════
                 SCREEN: ISSUANCE & PRINT
                 ════════════════════════════════════════ */}
@@ -4877,62 +5057,92 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                         <th>Action</th>
                       </tr>
                     </thead>
-                    <tbody>
-                      {feedbackList
-                        // Sorting Logic Framework Execution
-                        .sort((a, b) => {
-                          if (sortFbBy === 'Oldest') return new Date(a.date) - new Date(b.date);
-                          if (sortFbBy === 'PendingFirst') {
-                            const priorityWeight = { High: 3, Medium: 2, Low: 1 };
-                            return priorityWeight[b.priority] - priorityWeight[a.priority];
-                          }
-                          return new Date(b.date) - new Date(a.date); // Default to Newest
-                        })
-                        // Real-time Complex Search & Filtering Chain
-                        .filter(fb => {
-                          const matchesSearch = fb.sender.toLowerCase().includes(searchFbQuery.toLowerCase()) || 
-                                                fb.id.toLowerCase().includes(searchFbQuery.toLowerCase()) || 
-                                                fb.subject.toLowerCase().includes(searchFbQuery.toLowerCase());
-                          const matchesType = filterFbType === 'All Types' || fb.type === filterFbType;
-                          const matchesStatus = filterFbStatus === 'All Status' || fb.status === filterFbStatus;
-                          const matchesPriority = filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
-                          return matchesSearch && matchesType && matchesStatus && matchesPriority;
-                        })
-                        .map((fb) => (
-                          <tr key={fb.id} style={{ borderBottom: '1px solid #334155' }}>
-                            <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#60a5fa', fontWeight: 'bold' }}>{fb.id}</td>
-                            <td style={{ fontWeight: '500' }}>{fb.sender}</td>
-                            <td>
-                              <span className={`badge ${fb.type === 'Complaint' ? 'r' : fb.type === 'Suggestion' ? 'b' : 'p'}`}>
-                                {fb.type}
-                              </span>
-                            </td>
-                            <td style={{ fontSize: '12px' }}>
-                              {fb.priority === 'High' ? '🔴 High' : fb.priority === 'Medium' ? '🟡 Med' : '🔵 Low'}
-                            </td>
-                            <td style={{ fontSize: '12px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fb.subject}>
-                              {fb.subject}
-                            </td>
-                            <td style={{ fontSize: '11px', color: '#94a3b8' }}>{fb.date}</td>
-                            <td style={{ fontSize: '12px', color: fb.assignedTo === 'Unassigned' ? '#94a3b8' : '#cbd5e1' }}>
-                              👤 {fb.assignedTo}
-                            </td>
-                            <td>
-                              <span className="badge" style={{ 
-                                background: fb.status === 'Pending' ? '#7f1d1d' : fb.status === 'Under Review' ? '#1e3a8a' : fb.status === 'Responded' ? '#78350f' : '#065f46', 
-                                color: fb.status === 'Pending' ? '#fca5a5' : fb.status === 'Under Review' ? '#93c5fd' : fb.status === 'Responded' ? '#fde047' : '#34d399'
-                              }}>
-                                {fb.status}
-                              </span>
-                            </td>
-                            <td>
-                              <button type="button" className={`btn btn-sm ${fb.status === 'Pending' || fb.status === 'Under Review' ? 'btn-p' : 'btn-g'}`} onClick={() => handleOpenFeedbackDetails(fb)}>
-                                {fb.status === 'Pending' || fb.status === 'Under Review' ? '📋 Respond' : '👁️ View Details'}
-                              </button>
-                            </td>
-                          </tr>
-                        ))}
-                    </tbody>
+                      <tbody>
+                       {feedbackList
+  // 1. Reliable Timestamp Sorting Execution
+  .sort((a, b) => {
+    const timeA = new Date(a.rawTimestamp || a.date || 0).getTime();
+    const timeB = new Date(b.rawTimestamp || b.date || 0).getTime();
+
+    if (sortFbBy === 'Oldest') {
+      return timeA - timeB;
+    }
+    if (sortFbBy === 'PendingFirst') {
+      const priorityWeight = { High: 3, Medium: 2, Low: 1 };
+      const weightA = priorityWeight[a.priority] || 0;
+      const weightB = priorityWeight[b.priority] || 0;
+      return weightB - weightA;
+    }
+    return timeB - timeA; // Default to Newest First
+  })
+
+  // 2. Real-time Search & Filtering Chain (Fixed 'All Statuses' mismatch)
+  .filter((fb) => {
+    const query = searchFbQuery.toLowerCase();
+    
+    const matchesSearch =
+      (fb.sender || '').toLowerCase().includes(query) ||
+      (fb.id || '').toLowerCase().includes(query) ||
+      (fb.subject || '').toLowerCase().includes(query);
+
+    const matchesType = 
+      filterFbType === 'All Types' || fb.type === filterFbType;
+
+    // FIX: Handles both 'All Status' and 'All Statuses' safely
+    const matchesStatus =
+      filterFbStatus === 'All Status' ||
+      filterFbStatus === 'All Statuses' ||
+      fb.status === filterFbStatus;
+
+    const matchesPriority =
+      filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
+
+    return matchesSearch && matchesType && matchesStatus && matchesPriority;
+  })
+  .map((fb) => (
+    <tr key={fb._id || fb.id} style={{ borderBottom: '1px solid #334155' }}>
+      <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#60a5fa', fontWeight: 'bold' }}>
+        {fb.id}
+      </td>
+      <td style={{ fontWeight: '500' }}>{fb.sender}</td>
+      <td>
+        <span className={`badge ${fb.type === 'Complaint' ? 'r' : fb.type === 'Suggestion' ? 'b' : 'p'}`}>
+          {fb.type}
+        </span>
+      </td>
+      <td style={{ fontSize: '12px' }}>
+        {fb.priority === 'High' ? '🔴 High' : fb.priority === 'Medium' ? '🟡 Med' : '🔵 Low'}
+      </td>
+      <td style={{ fontSize: '12px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fb.subject}>
+        {fb.subject}
+      </td>
+      <td style={{ fontSize: '11px', color: '#94a3b8' }}>{fb.date}</td>
+      <td style={{ fontSize: '12px', color: fb.assignedTo === 'Unassigned' ? '#94a3b8' : '#cbd5e1' }}>
+        👤 {fb.assignedTo}
+      </td>
+      <td>
+        <span
+          className="badge"
+          style={{
+            background: fb.status === 'Pending' ? '#7f1d1d' : fb.status === 'Under Review' ? '#1e3a8a' : fb.status === 'Responded' ? '#78350f' : '#065f46',
+            color: fb.status === 'Pending' ? '#fca5a5' : fb.status === 'Under Review' ? '#93c5fd' : fb.status === 'Responded' ? '#fde047' : '#34d399',
+          }}
+        >
+          {fb.status}
+        </span>
+      </td>
+      <td>
+        <button
+          type="button"
+          className={`btn btn-sm ${fb.status === 'Pending' || fb.status === 'Under Review' ? 'btn-p' : 'btn-g'}`}
+          onClick={() => handleOpenFeedbackDetails(fb)}
+        >
+          {fb.status === 'Pending' || fb.status === 'Under Review' ? '📋 Respond' : '👁️ View Details'}
+        </button>
+      </td>
+    </tr>
+  ))}
+                      </tbody>
                   </table>
                   
                   {/* NO MATCH ENCOUNTERED BANNER */}

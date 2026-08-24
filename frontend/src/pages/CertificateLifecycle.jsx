@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import PouchDB from 'pouchdb';
+import PouchDB from 'pouchdb-browser';
 
 const db = new PouchDB('bustrac_db');
 const REMOTE_URL = 'http://admin:capstone2026@localhost:5984/bustrachub_db';

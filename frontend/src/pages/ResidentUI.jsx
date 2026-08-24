@@ -26,6 +26,40 @@ const CERT_FORM_INITIAL = {
 
 const REMOTE_DB_URL = 'http://admin:capstone2026@localhost:5984/bustrachub_db';
 
+// Helper mapper function for Resident UI PouchDB docs
+const mapDocToResidentFeedback = (doc) => {
+  const rawTime = doc.timestamp || doc.createdAt || doc.date || new Date().toISOString();
+  return {
+    _id: doc._id,
+    _rev: doc._rev,
+    refNumber: doc.refNumber || doc.id || doc._id || 'FB-LOG',
+    feedbackType: doc.feedbackType || doc.type || doc.concernType || doc.category || 'Complaint',
+    subject: doc.subject || doc.title || 'No Subject',
+    details: doc.details || doc.message || doc.description || '',
+    status: doc.status || 'Pending',
+    timestamp: rawTime,
+    response: doc.response || '',
+    handledBy: doc.handledBy || '',
+    dateResolved: doc.dateResolved || '',
+    residentId: doc.residentId || '',
+    residentName: doc.residentName || doc.fullName || doc.sender || '',
+    rawDoc: doc,
+  };
+};
+
+// Safe Date Formatter - Sumasalo sa Invalid Date para HINDI mag-white screen
+const formatResidentDate = (rawTime) => {
+  if (!rawTime) return 'Recently';
+  const parsed = new Date(rawTime);
+  if (isNaN(parsed.getTime())) return String(rawTime);
+  return parsed.toLocaleDateString('en-US', {
+    month: 'short',
+    day: 'numeric',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+};
 export default function ResidentUI() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -60,7 +94,7 @@ export default function ResidentUI() {
       return { fullName: rawUser, initials };
     }
   }, []);
-  
+
   const greetingText = useMemo(() => {
   const currentHour = new Date().getHours();
   if (currentHour < 12) {
@@ -93,6 +127,54 @@ export default function ResidentUI() {
   // Local data collections
   const [myRequests, setMyRequests] = useState([]);
   const [myFeedbacks, setMyFeedbacks] = useState([]);
+  // ════════════════════════════════════════════════════════════════
+// POUCHDB LIVE LISTENER PARA SA RESIDENT FEEDBACKS
+// ════════════════════════════════════════════════════════════════
+useEffect(() => {
+  if (!db || !loggedInUser) return;
+
+  // ════════════════════════════════════════════════════════════════
+// 1. BULLETPROOF USER MATCHING FILTER
+// ════════════════════════════════════════════════════════════════
+
+
+  // 1. Initial Fetch mula sa Local PouchDB
+  const fetchMyFeedbacks = async () => {
+    try {
+      const res = await db.allDocs({ include_docs: true });
+      const userDocs = res.rows
+        .map((row) => row.doc)
+        .filter(matchesLoggedInUser)
+        .map(mapDocToResidentFeedback);
+      setMyFeedbacks(userDocs);
+    } catch (err) {
+      console.error('Error fetching resident feedbacks:', err);
+    }
+  };
+
+  fetchMyFeedbacks();
+
+  // 2. Real-time Changes Listener
+  const changes = db
+    .changes({ since: 'now', live: true, include_docs: true })
+    .on('change', (change) => {
+      const doc = change.doc;
+      if (doc && matchesLoggedInUser(doc)) {
+        const mappedDoc = mapDocToResidentFeedback(doc);
+        setMyFeedbacks((prev) => {
+          const filtered = prev.filter(
+            (item) => item._id !== doc._id && item.refNumber !== doc.refNumber
+          );
+          return [mappedDoc, ...filtered];
+        });
+      }
+    })
+    .on('error', (err) => console.error('PouchDB resident feedback listener error:', err));
+
+  return () => changes.cancel();
+}, [db, loggedInUser]);
+
+  const [myBlotters, setMyBlotters] = useState([]); 
   const [announcements, setAnnouncements] = useState([]);
 
   // Announcements filter chips (visual only, mirrors original markup)
@@ -100,10 +182,87 @@ export default function ResidentUI() {
 
   // Feedback form
   const [feedbackType, setFeedbackType] = useState('Complaint');
+
+  useEffect(() => {
+    if (!db || !loggedInUser) return;
+
+    const matchesLoggedInUser = (doc) => {
+      if (!doc) return false;
+
+      const validTypes = ['feedback', 'feedback_report', 'feedback_submission'];
+      const isFeedbackDoc =
+        validTypes.includes(doc.type) ||
+        (doc._id && String(doc._id).startsWith('feedback_'));
+      if (!isFeedbackDoc) return false;
+
+      const currentResId = String(
+        loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || ''
+      ).trim();
+      const currentUname = String(
+        loggedInUser?.username || loggedInUser?.email || ''
+      ).trim().toLowerCase();
+      const currentName = String(
+        loggedInUser?.fullName || loggedInUser?.name || loggedInUser?.residentName || ''
+      ).trim().toLowerCase();
+
+      const docResId = String(doc.residentId || doc.userId || '').trim();
+      const docUname = String(doc.username || doc.sender || '').trim().toLowerCase();
+      const docName = String(doc.residentName || doc.sender || doc.fullName || '').trim().toLowerCase();
+
+      const matchId = Boolean(currentResId && docResId === currentResId);
+      const matchUser = Boolean(currentUname && docUname === currentUname);
+      const matchName = Boolean(currentName && docName === currentName);
+
+      if (!currentResId && !currentUname && !currentName) {
+        return true;
+      }
+
+      return matchId || matchUser || matchName;
+    };
+
+    const fetchMyFeedbacks = async () => {
+      try {
+        const res = await db.allDocs({ include_docs: true });
+        const userDocs = res.rows
+          .map((row) => row.doc)
+          .filter(matchesLoggedInUser)
+          .map(mapDocToResidentFeedback);
+        setMyFeedbacks(userDocs);
+      } catch (err) {
+        console.error('Error fetching resident feedbacks:', err);
+      }
+    };
+
+    fetchMyFeedbacks();
+
+    const changes = db
+      .changes({ since: 'now', live: true, include_docs: true })
+      .on('change', (change) => {
+        const doc = change.doc;
+        if (doc && matchesLoggedInUser(doc)) {
+          const mappedDoc = mapDocToResidentFeedback(doc);
+          setMyFeedbacks((prev) => {
+            const filtered = prev.filter(
+              (item) => item._id !== doc._id && item.refNumber !== doc.refNumber
+            );
+            return [mappedDoc, ...filtered];
+          });
+        }
+      })
+      .on('error', (err) => console.error('PouchDB resident feedback listener error:', err));
+
+    return () => changes.cancel();
+  }, [db, loggedInUser]);
   const [feedbackSubject, setFeedbackSubject] = useState('');
   const [feedbackMessage, setFeedbackMessage] = useState('');
 
   const [lastSync, setLastSync] = useState(null);
+
+  // State variables for blotter report form inputs
+  const [blotterSubject, setBlotterSubject] = useState('');
+  const [blotterDetails, setBlotterDetails] = useState('');
+  const [blotterIncidentDate, setBlotterIncidentDate] = useState('');
+  const [blotterLocation, setBlotterLocation] = useState('');
   
   useEffect(() => {
     if (location.state?.activeTab) {
@@ -152,8 +311,8 @@ export default function ResidentUI() {
           .filter(
             (doc) =>
               doc.type === 'certificate_request' ||
-              doc.type === 'feedback_submission' ||
-              doc.type === 'announcement'
+              doc.type === 'announcement' ||
+              doc.type === 'blotter_report'
           );
 
         const sortedRequests = docs
@@ -177,6 +336,16 @@ export default function ResidentUI() {
       new Date(b.timestamp || b.createdAt || 0).getTime() -
       new Date(a.timestamp || a.createdAt || 0).getTime()
   );
+  const sortedBlotters = docs
+  .filter((doc) =>
+    doc.type === 'blotter_report' &&
+    doc.residentId === (loggedInUser.residentId || loggedInUser.username)
+  )
+  .sort(
+    (a, b) =>
+      new Date(b.timestamp || b.createdAt || 0).getTime() -
+      new Date(a.timestamp || a.createdAt || 0).getTime()
+  );
 
         const sortedAnnouncements = docs
         .filter((doc) => doc.type === 'announcement')
@@ -187,7 +356,7 @@ export default function ResidentUI() {
         );
 
         setMyRequests(sortedRequests);
-        setMyFeedbacks(sortedFeedbacks);
+        setMyBlotters(sortedBlotters);
         setAnnouncements(sortedAnnouncements);
       } catch (error) {
         console.error('Unable to load offline data', error);
@@ -390,72 +559,109 @@ sync.on("complete", () => {
   [certForm, db, loggedInUser]
 );
 
+  // Callback handler for submitting resident feedback/complaints offline-first to PouchDB
   const submitFeedback = useCallback(
     async (event) => {
       event.preventDefault();
-
       if (!feedbackSubject.trim() || !feedbackMessage.trim()) {
         alert('Please fill in all required fields.');
         return;
       }
-
       if (!db) {
         alert('Local database is unavailable.');
         return;
       }
 
       try {
-        await db.post({
-          type: 'feedback_submission',
+        const refNumber = 'FB-' + Date.now().toString().slice(-5);
+
+        const currentResId = loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || 'RES-LOCAL';
+        const currentResName = loggedInUser?.fullName || loggedInUser?.name || loggedInUser?.residentName || 'Resident';
+        const currentUsername = loggedInUser?.username || loggedInUser?.email || 'resident';
+
+        const newDocPayload = {
+          _id: `feedback_${Date.now()}`,
+          type: 'feedback_report',
+          refNumber,
           feedbackType,
           subject: feedbackSubject.trim(),
+          details: feedbackMessage.trim(),
           message: feedbackMessage.trim(),
+          priority: 'Medium',
           status: 'Pending',
           timestamp: new Date().toISOString(),
-          residentId: loggedInUser.residentId || loggedInUser.username,
-          residentName: loggedInUser.fullName,
-          username: loggedInUser.username,
-        });
+          residentId: currentResId,
+          residentName: currentResName,
+          username: currentUsername,
+          userId: currentResId,
+          sender: currentResName,
+          response: '',
+          handledBy: '',
+          dateResolved: '',
+        };
 
-        alert('Thank you! Your ' + feedbackType.toLowerCase() + ' has been submitted successfully.');
+        await db.put(newDocPayload);
+
+        alert(`Thank you! Your ${feedbackType.toLowerCase()} report (${refNumber}) has been submitted successfully.`);
+
         setFeedbackSubject('');
         setFeedbackMessage('');
         setFeedbackType('Complaint');
-        goToTab('s-home');
       } catch (error) {
-        console.error('Unable to save feedback', error);
+        console.error('Unable to save feedback report offline:', error);
         alert('Unable to save your feedback offline right now.');
       }
     },
-    [feedbackSubject, feedbackMessage, feedbackType, goToTab, db, loggedInUser]
+    [feedbackSubject, feedbackMessage, feedbackType, db, loggedInUser]
   );
+  
+  const submitBlotter = useCallback(
+  async (event) => {
+    event.preventDefault();
+    if (!blotterSubject.trim() || !blotterDetails.trim()) {
+      alert('Please fill in all required fields.');
+      return;
+    }
+    if (!db) {
+      alert('Local database is unavailable.');
+      return;
+    }
+    try {
+      const refNumber = 'BLTR-' + Date.now().toString().slice(-6);
+      await db.post({
+        type: 'blotter_report',
+        refNumber,
+        subject: blotterSubject.trim(),
+        details: blotterDetails.trim(),
+        incidentDate: blotterIncidentDate,
+        location: blotterLocation.trim(),
+        status: 'Pending',
+        timestamp: new Date().toISOString(),
+        residentId: loggedInUser.residentId || loggedInUser.username,
+        residentName: loggedInUser.fullName,
+        username: loggedInUser.username,
+      });
+      alert('Your blotter report has been submitted.');
+      setBlotterSubject('');
+      setBlotterDetails('');
+      setBlotterIncidentDate('');
+      setBlotterLocation('');
+      goToTab('s-home');
+    } catch (error) {
+      console.error('Unable to save blotter report', error);
+      alert('Unable to save your blotter report offline right now.');
+    }
+  },
+  [blotterSubject, blotterDetails, blotterIncidentDate, blotterLocation, goToTab, db, loggedInUser]
+);
 
   const navItems = [
-  {
-    id:"s-home",
-    label:"Home",
-    icon:<FaHome/>
-  },
-  {
-    id:"s-certificates",
-    label:"Certificates",
-    icon:<FaFileAlt/>
-  },
-  {
-    id:"s-announcements",
-    label:"News",
-    icon:<FaBullhorn/>
-  },
-  {
-    id:"s-feedback",
-    label:"Feedback",
-    icon:<FaCommentDots/>
-  },
-  {
-    id:"s-profile",
-    label:"Profile",
-    icon:<FaUser/>
-  }
+  { id: "s-home", label: "Home", icon: <FaHome /> },
+  { id: "s-certificates", label: "Certificates", icon: <FaFileAlt /> },
+  { id: "s-announcements", label: "News", icon: <FaBullhorn /> },
+  { id: "s-feedback", label: "Feedback", icon: <FaCommentDots /> },
+  { id: "s-blotter", label: "Blotter", icon: "⚖️" },
+  { id: "s-profile", label: "Profile", icon: <FaUser /> }
 ];
 
   const pendingRequestCount = myRequests.filter((request) => {
@@ -512,151 +718,151 @@ sync.on("complete", () => {
         {/* CONTENT */}
         <div className="content">
           {/* HOME SCREEN */}
-<div className={`screen${activeScreen === 's-home' ? ' active' : ''}`}>
-  {isOffline && (
-    <div className="notice notice-offline">
-      <span style={{ fontSize: '16px' }}>📡</span>
-      <div>
-        <strong>You're offline.</strong> You can still browse announcements and submit
-        requests. They'll sync when you reconnect.
-      </div>
-    </div>
-  )}
+        <div className={`screen${activeScreen === 's-home' ? ' active' : ''}`}>
+          {isOffline && (
+            <div className="notice notice-offline">
+              <span style={{ fontSize: '16px' }}>📡</span>
+              <div>
+                <strong>You're offline.</strong> You can still browse announcements and submit
+                requests. They'll sync when you reconnect.
+              </div>
+            </div>
+          )}
 
-  <div className="page-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-    <div>
-      <div className="page-title">{greetingText}, {loggedInUser.fullName}!</div>
-      <div className="page-sub" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-        <span>Barangay Bustrac</span>
-        <span>•</span>
-        <span style={{ 
-          color: isOffline ? 'var(--red)' : 'var(--green)', 
-          fontWeight: '800', 
-          display: 'inline-flex', 
-          alignItems: 'center', 
-          gap: '4px' 
-        }}>
-          {isOffline ? '🔴 Offline (Working Locally)' : '🟢 Connected & Synced'}
-        </span>
-      </div>
-    </div>
-  </div>
-
-  <div className="stat-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-    <div className="stat-card" onClick={() => goToTab('s-certificates')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-      <div style={{ fontSize: '20px', marginBottom: '4px' }}>📄</div>
-      <div className="stat-val" style={{ color: 'var(--primary)' }}>{myRequests.length}</div>
-      <div className="stat-lbl">Certificates</div>
-    </div>
-    
-    <div className="stat-card" onClick={() => goToTab('s-certificates')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-      <div style={{ fontSize: '20px', marginBottom: '4px' }}>⏳</div>
-      <div className="stat-val" style={{ color: 'var(--amber)' }}>{pendingRequestCount}</div>
-      <div className="stat-lbl">Pending Request</div>
-    </div>
-    
-    <div className="stat-card" onClick={() => goToTab('s-announcements')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-      <div style={{ fontSize: '20px', marginBottom: '4px' }}>📢</div>
-      <div className="stat-val" style={{ color: 'var(--green)' }}>{announcements.length}</div>
-      <div className="stat-lbl">Announcements</div>
-    </div>
-    
-    <div className="stat-card" onClick={() => goToTab('s-feedback')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-      <div style={{ fontSize: '20px', marginBottom: '4px' }}>💬</div>
-      <div className="stat-val" style={{ color: 'var(--purple)' }}>{myFeedbacks.length}</div>
-      <div className="stat-lbl">My Feedbacks</div>
-    </div>
-  </div>
-
-  <div className="card">
-    <div className="card-title" style={{ marginBottom: '14px' }}>📌 Latest Announcements</div>
-    {announcements.length ? (
-      announcements.slice(0, 3).map((announcement) => (
-        <div className="list-item" key={announcement._id}>
-          <div className="list-icon" style={{ background: announcement.category === 'Health' ? '#FFFBEB' : announcement.category === 'Governance' ? '#EEF2FF' : '#F3F4F6' }}>📢</div>
-          <div className="list-body">
-            <div className="list-title">{announcement.title}</div>
-            <div className="list-sub">{announcement.category || 'General'} · Posted {announcement.author ? `by ${announcement.author}` : 'recently'}</div>
+          <div className="page-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+            <div>
+              <div className="page-title">{greetingText}, {loggedInUser.fullName}!</div>
+              <div className="page-sub" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
+                <span>Barangay Bustrac</span>
+                <span>•</span>
+                <span style={{ 
+                  color: isOffline ? 'var(--red)' : 'var(--green)', 
+                  fontWeight: '800', 
+                  display: 'inline-flex', 
+                  alignItems: 'center', 
+                  gap: '4px' 
+                }}>
+                  {isOffline ? '🔴 Offline (Working Locally)' : '🟢 Connected & Synced'}
+                </span>
+              </div>
+            </div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')}>View</button>
-        </div>
-      ))
-    ) : (
-      <div style={{ textAlign: 'center', padding: '24px 10px', color: 'var(--muted)' }}>
-        <div style={{ fontSize: '36px', marginBottom: '8px' }}>📭</div>
-        <div style={{ fontWeight: '700', fontSize: '14px', color: 'var(--text)' }}>No announcements yet.</div>
-        <div style={{ fontSize: '12px', marginTop: '2px' }}>Check back later for new updates.</div>
-      </div>
-    )}
-  </div>
 
-  <div className="card">
-    <div className="card-title" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-      🚨 Emergency Hotlines (Nabua)
-    </div>
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '4px' }}>
-      <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div className="list-body">
-          <div className="list-title">MDRRMO Nabua (Rescue)</div>
-          <div className="list-sub">Disaster & Emergency Response</div>
-        </div>
-        <a href="tel:09175060294" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          📞 Call
-        </a>
-      </div>
-      
-      <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div className="list-body">
-          <div className="list-title">PNP Nabua (Police Station)</div>
-          <div className="list-sub">Law Enforcement & Safety Concerns</div>
-        </div>
-        <a href="tel:09985986014" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          📞 Call
-        </a>
-      </div>
-      
-      <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div className="list-body">
-          <div className="list-title">BFP Nabua (Fire Station)</div>
-          <div className="list-sub">Fire Control & Incidents</div>
-        </div>
-        <a href="tel:0542884676" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          📞 Call
-        </a>
-      </div>
-      
-      <div className="list-item" style={{ padding: '8px 0', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div className="list-body">
-          <div className="list-title">Barangay Bustrac Hall</div>
-          <div className="list-sub">Local Desk Command Center</div>
-        </div>
-        <a href="tel:09123456789" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-          📞 Call
-        </a>
-      </div>
-    </div>
-  </div>
+          <div className="stat-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+            <div className="stat-card" onClick={() => goToTab('s-certificates')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+              <div style={{ fontSize: '20px', marginBottom: '4px' }}>📄</div>
+              <div className="stat-val" style={{ color: 'var(--primary)' }}>{myRequests.length}</div>
+              <div className="stat-lbl">Certificates</div>
+            </div>
+            
+            <div className="stat-card" onClick={() => goToTab('s-certificates')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+              <div style={{ fontSize: '20px', marginBottom: '4px' }}>⏳</div>
+              <div className="stat-val" style={{ color: 'var(--amber)' }}>{pendingRequestCount}</div>
+              <div className="stat-lbl">Pending Request</div>
+            </div>
+            
+            <div className="stat-card" onClick={() => goToTab('s-announcements')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+              <div style={{ fontSize: '20px', marginBottom: '4px' }}>📢</div>
+              <div className="stat-val" style={{ color: 'var(--green)' }}>{announcements.length}</div>
+              <div className="stat-lbl">Announcements</div>
+            </div>
+            
+            <div className="stat-card" onClick={() => goToTab('s-feedback')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
+              <div style={{ fontSize: '20px', marginBottom: '4px' }}>💬</div>
+              <div className="stat-val" style={{ color: 'var(--purple)' }}>{myFeedbacks.length}</div>
+              <div className="stat-lbl">My Feedbacks</div>
+            </div>
+          </div>
 
-  <div className="card">
-    <div className="card-title" style={{ marginBottom: '14px' }}>🚀 Quick Actions</div>
-    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
-      <button className="btn btn-outline" onClick={() => goToTab('s-certificates')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
-        <span style={{ fontSize: '24px' }}>📝</span>
-        <span style={{ fontSize: '13px', fontWeight: '800' }}>Request Certificate</span>
-      </button>
-      
-      <button className="btn btn-outline" onClick={() => goToTab('s-feedback')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
-        <span style={{ fontSize: '24px' }}>💬</span>
-        <span style={{ fontSize: '13px', fontWeight: '800' }}>Submit Feedback</span>
-      </button>
-      
-      <button className="btn btn-outline" onClick={() => goToTab('s-announcements')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
-        <span style={{ fontSize: '24px' }}>📢</span>
-        <span style={{ fontSize: '13px', fontWeight: '800' }}>View News</span>
-      </button>
-    </div>
-  </div>
-</div>
+          <div className="card">
+            <div className="card-title" style={{ marginBottom: '14px' }}>📌 Latest Announcements</div>
+            {announcements.length ? (
+              announcements.slice(0, 3).map((announcement) => (
+                <div className="list-item" key={announcement._id}>
+                  <div className="list-icon" style={{ background: announcement.category === 'Health' ? '#FFFBEB' : announcement.category === 'Governance' ? '#EEF2FF' : '#F3F4F6' }}>📢</div>
+                  <div className="list-body">
+                    <div className="list-title">{announcement.title}</div>
+                    <div className="list-sub">{announcement.category || 'General'} · Posted {announcement.author ? `by ${announcement.author}` : 'recently'}</div>
+                  </div>
+                  <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')}>View</button>
+                </div>
+              ))
+            ) : (
+              <div style={{ textAlign: 'center', padding: '24px 10px', color: 'var(--muted)' }}>
+                <div style={{ fontSize: '36px', marginBottom: '8px' }}>📭</div>
+                <div style={{ fontWeight: '700', fontSize: '14px', color: 'var(--text)' }}>No announcements yet.</div>
+                <div style={{ fontSize: '12px', marginTop: '2px' }}>Check back later for new updates.</div>
+              </div>
+            )}
+          </div>
+
+          <div className="card">
+            <div className="card-title" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+               Emergency Hotlines (Nabua)
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '4px' }}>
+              <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div className="list-body">
+                  <div className="list-title">MDRRMO Nabua (Rescue)</div>
+                  <div className="list-sub">Disaster & Emergency Response</div>
+                </div>
+                <a href="tel:09175060294" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  📞 Call
+                </a>
+              </div>
+              
+              <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div className="list-body">
+                  <div className="list-title">PNP Nabua (Police Station)</div>
+                  <div className="list-sub">Law Enforcement & Safety Concerns</div>
+                </div>
+                <a href="tel:09985986014" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  📞 Call
+                </a>
+              </div>
+              
+              <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div className="list-body">
+                  <div className="list-title">BFP Nabua (Fire Station)</div>
+                  <div className="list-sub">Fire Control & Incidents</div>
+                </div>
+                <a href="tel:0542884676" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  📞 Call
+                </a>
+              </div>
+              
+              <div className="list-item" style={{ padding: '8px 0', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div className="list-body">
+                  <div className="list-title">Barangay Bustrac Hall</div>
+                  <div className="list-sub">Local Desk Command Center</div>
+                </div>
+                <a href="tel:09123456789" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  📞 Call
+                </a>
+              </div>
+            </div>
+          </div>
+
+          <div className="card">
+            <div className="card-title" style={{ marginBottom: '14px' }}>🚀 Quick Actions</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
+              <button className="btn btn-outline" onClick={() => goToTab('s-certificates')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
+                <span style={{ fontSize: '24px' }}>📝</span>
+                <span style={{ fontSize: '13px', fontWeight: '800' }}>Request Certificate</span>
+              </button>
+              
+              <button className="btn btn-outline" onClick={() => goToTab('s-feedback')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
+                <span style={{ fontSize: '24px' }}>💬</span>
+                <span style={{ fontSize: '13px', fontWeight: '800' }}>Submit Feedback</span>
+              </button>
+              
+              <button className="btn btn-outline" onClick={() => goToTab('s-announcements')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
+                <span style={{ fontSize: '24px' }}>📢</span>
+                <span style={{ fontSize: '13px', fontWeight: '800' }}>View News</span>
+              </button>
+            </div>
+          </div>
+        </div>
 
           {/* CERTIFICATES */}
           <div className={`screen${activeScreen === 's-certificates' ? ' active' : ''}`}>
@@ -679,7 +885,7 @@ sync.on("complete", () => {
             <div>
               <div className="card" style={{ borderColor: 'var(--primary-light)' }}>
                 <div className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                  ✨ New Certificate Request
+                   New Certificate Request
                 </div>
                 
                 <form onSubmit={(e) => {
@@ -689,7 +895,7 @@ sync.on("complete", () => {
                   {/* Applicant Profile (Auto-Verified) */}
                   <div style={{ marginBottom: '20px', padding: '14px', background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
                     <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--primary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                      👤 Applicant Profile (Auto-Verified)
+                       Applicant Profile (Auto-Verified)
                     </div>
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px', fontSize: '13px' }}>
                       <div><span style={{ color: 'var(--muted)' }}>Name:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.fullName || 'Not Available'}</strong></div>
@@ -706,7 +912,7 @@ sync.on("complete", () => {
                   {/* Certificate Details Section */}
                   <div style={{ marginBottom: '16px' }}>
                     <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '12px', color: 'var(--text)' }}>
-                      📋 Request Specifications
+                       Request Specifications
                     </div>
                     
                     <div className="fg">
@@ -979,7 +1185,7 @@ sync.on("complete", () => {
                   />
                 </div>
                 <div className="notice notice-info" style={{ marginBottom: '14px' }}>
-                  <span>🔒</span>
+                  <span></span>
                   <div style={{ fontSize: '12px' }}>
                     Your concern is linked to your account and will be responded to by barangay staff within
                     3 working days.
@@ -989,136 +1195,345 @@ sync.on("complete", () => {
               </form>
             </div>
 
-            <div style={{ fontSize: '13px', fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '10px' }}>
-              My Submissions
+            {/* MY SUBMISSIONS SECTION */}
+          <div className="card" style={{ marginTop: '16px' }}>
+            <div className="card-title" style={{ marginBottom: '14px' }}>
+              📂 My Submissions ({myFeedbacks.length})
             </div>
-            <div className="card">
-              {myFeedbacks.length ? (
-                myFeedbacks.map((feedback) => (
-                  <div className="list-item" key={feedback._id}>
-                    <div
-                      className="list-icon"
-                      style={{
-                        background:
-                          feedback.feedbackType === 'Suggestion'
-                            ? 'var(--green-bg)'
-                            : feedback.feedbackType === 'Inquiry'
-                              ? 'var(--purple-bg)'
-                              : 'var(--red-bg)',
-                      }}
-                    >
-                      {feedback.feedbackType === 'Suggestion' ? '💡' : feedback.feedbackType === 'Inquiry' ? '❓' : '🗑️'}
+
+            {myFeedbacks.length === 0 ? (
+              <div className="notice notice-info">
+                <span>You have not submitted any feedback or concerns yet.</span>
+              </div>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {myFeedbacks.map((item) => (
+                  <div
+                    key={item._id || item.refNumber}
+                    style={{
+                      background: 'var(--card-bg, #1e293b)',
+                      padding: '14px',
+                      borderRadius: '8px',
+                      border: '1px solid #334155',
+                    }}
+                  >
+                    {/* Header row: Ref & Status Badge */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+                      <span style={{ fontSize: '11px', fontFamily: 'var(--mono)', color: '#60a5fa', fontWeight: 'bold' }}>
+                        {item.refNumber}
+                      </span>
+                      <span
+                        className="badge"
+                        style={{
+                          background:
+                            item.status === 'Resolved' || item.status === 'Resolved & Closed'
+                              ? '#065f46'
+                              : item.status === 'Under Review'
+                              ? '#1e3a8a'
+                              : item.status === 'Responded'
+                              ? '#78350f'
+                              : '#7f1d1d',
+                          color:
+                            item.status === 'Resolved' || item.status === 'Resolved & Closed'
+                              ? '#34d399'
+                              : item.status === 'Under Review'
+                              ? '#93c5fd'
+                              : item.status === 'Responded'
+                              ? '#fde047'
+                              : '#fca5a5',
+                          fontSize: '11px',
+                        }}
+                      >
+                        {item.status || 'Pending'}
+                      </span>
                     </div>
-                    <div className="list-body">
-                      <div className="list-title">{feedback.subject}</div>
-                      <div className="list-sub">{feedback.feedbackType} · Submitted {feedback.timestamp ? new Date(feedback.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'recently'}</div>
+
+                    {/* Subject & Details */}
+                    <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#f8fafc', marginBottom: '4px' }}>
+                      {item.feedbackType === 'Complaint' ? '💬' : item.feedbackType === 'Suggestion' ? '💡' : '❓'} {item.subject}
                     </div>
-                    <span className={`badge ${feedback.status === 'Pending' ? 'b-amber' : 'b-green'}`}>{feedback.status || 'Pending'}</span>
+                    <div style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '8px', lineHeight: '1.4' }}>
+                      "{item.details}"
+                    </div>
+                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                      Submitted on{' '}
+                      {item.timestamp && !isNaN(Date.parse(item.timestamp))
+                        ? new Date(item.timestamp).toLocaleDateString('en-US', {
+                            month: 'short',
+                            day: 'numeric',
+                            year: 'numeric',
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })
+                        : item.timestamp || 'Recently'}
+                    </div>
+
+                    {/* ADMIN OFFICIAL RESPONSE BOX */}
+                    {item.response && (
+                      <div style={{ marginTop: '10px', padding: '10px 12px', background: '#0f172a', borderLeft: '3px solid #10b981', borderRadius: '4px' }}>
+                        <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 'bold', marginBottom: '2px' }}>
+                          🏛️ Official Barangay Response ({item.handledBy || 'Barangay Staff'}):
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#f1f5f9', fontStyle: 'italic' }}>
+                          "{item.response}"
+                        </div>
+                        {item.dateResolved && (
+                          <div style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
+                            Resolved: {item.dateResolved}
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
-                ))
+                ))}
+              </div>
+            )}
+          </div>
+          </div>
+          
+          {/* ════════════════════════════════════════ SCREEN: BLOTTER REPORTING & TRACKING ════════════════════════════════════════ */}
+          <div className={`screen${activeScreen === 's-blotter' ? ' active' : ''}`}>
+            <div className="page-hdr">
+              <div className="page-title">File / View Blotter Reports</div>
+              <div className="page-sub">Submit incident reports or track status of filed complaints</div>
+            </div>
+
+            {/* Form Card for Submitting New Incident Report */}
+            <div className="card">
+              <div className="card-title" style={{ marginBottom: '14px' }}>📝 New Incident Complaint</div>
+              <form onSubmit={submitBlotter}>
+                <div className="fg">
+                  <label className="fl">Incident Subject / Title *</label>
+                  <input 
+                    type="text" 
+                    className="fc" 
+                    placeholder="e.g., Property Dispute, Noise Disturbance, Physical Altercation" 
+                    required 
+                    value={blotterSubject} 
+                    onChange={(e) => setBlotterSubject(e.target.value)} 
+                  />
+                </div>
+
+                <div className="fg" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                  <div>
+                    <label className="fl">Incident Date</label>
+                    <input 
+                      type="date" 
+                      className="fc" 
+                      value={blotterIncidentDate} 
+                      onChange={(e) => setBlotterIncidentDate(e.target.value)} 
+                    />
+                  </div>
+                  <div>
+                    <label className="fl">Location / Purok</label>
+                    <input 
+                      type="text" 
+                      className="fc" 
+                      placeholder="e.g., Near Purok 3 Basketball Court" 
+                      value={blotterLocation} 
+                      onChange={(e) => setBlotterLocation(e.target.value)} 
+                    />
+                  </div>
+                </div>
+
+                <div className="fg">
+                  <label className="fl">Incident Details / Description *</label>
+                  <textarea 
+                    className="fc" 
+                    rows="4" 
+                    placeholder="Provide clear details about what happened, persons involved, etc." 
+                    required 
+                    value={blotterDetails} 
+                    onChange={(e) => setBlotterDetails(e.target.value)} 
+                    style={{ resize: 'vertical' }}
+                  ></textarea>
+                </div>
+
+                <button type="submit" className="btn btn-primary btn-full">
+                  Submit Blotter Report
+                </button>
+              </form>
+            </div>
+
+            {/* List Card for Resident's Submitted Blotters */}
+            <div className="card">
+              <div className="card-title" style={{ marginBottom: '12px' }}>
+                📂 My Filed Blotter Reports ({myBlotters.length})
+              </div>
+
+              {myBlotters.length === 0 ? (
+                <div className="notice notice-info">
+                  <span>No blotter reports filed yet. Submitted complaints will appear here for administrative tracking.</span>
+                </div>
               ) : (
-                <div className="notice notice-info">No feedback submissions have been synced yet.</div>
+                <div>
+                  {myBlotters.map((item) => (
+                    <div className="list-item" key={item._id || item.refNumber}>
+                      <div className="list-icon" style={{ background: 'var(--red-bg)', color: 'var(--red)' }}>
+                        ⚖️
+                      </div>
+                      <div className="list-body">
+                        <div className="list-title">{item.subject}</div>
+                        <div className="list-sub">
+                          Ref: <strong style={{ color: 'var(--primary)' }}>{item.refNumber}</strong> • {new Date(item.timestamp || item.createdAt).toLocaleDateString()}
+                        </div>
+                        {item.location && (
+                          <div className="list-sub" style={{ color: 'var(--muted)' }}>
+                            📍 {item.location}
+                          </div>
+                        )}
+                        <div className="list-sub" style={{ marginTop: '4px', color: 'var(--text)' }}>
+                          {item.details}
+                        </div>
+                      </div>
+                      <div className="list-right" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                        <span className={`badge ${
+                          item.status === 'Resolved' ? 'b-green' :
+                          item.status === 'Under Mediation' ? 'b-purple' :
+                          item.status === 'Under Investigation' ? 'b-blue' : 'b-amber'
+                        }`}>
+                          {item.status || 'Pending'}
+                        </span>
+                        <span style={{ fontSize: '10px', color: 'var(--muted)' }}>
+                          {item._rev?.startsWith('1-') ? 'Local' : 'Synced'}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               )}
             </div>
           </div>
+          {/* ════════════════════════════════════════ SCREEN: RESIDENT PROFILE ════════════════════════════════════════ */}
+          <div className={`screen${activeScreen === 's-profile' ? ' active' : ''}`}>
+            <div className="page-hdr">
+              <div className="page-title">My Profile</div>
+              <div className="page-sub">Your resident information on file</div>
+            </div>
 
-          {/* PROFILE */}
-<div className={`screen${activeScreen === 's-profile' ? ' active' : ''}`}>
-  <div className="page-hdr">
-    <div className="page-title">My Profile</div>
-    <div className="page-sub">Your resident information on file</div>
-  </div>
+            {/* Header Profile Card */}
+            <div className="card" style={{ textAlign: 'center', padding: '28px' }}>
+              <div 
+                style={{
+                  width: '70px',
+                  height: '70px',
+                  background: 'linear-gradient(135deg,#2563EB,#7C3AED)',
+                  borderRadius: '50%',
+                  margin: '0 auto 12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '28px',
+                  fontWeight: 900,
+                  color: 'white',
+                }}
+              >
+                {loggedInUser.initials || 'RES'}
+              </div>
+              <div style={{ fontSize: '18px', fontWeight: 900 }}>{loggedInUser.fullName}</div>
+              <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>
+                Resident ID: {loggedInUser.residentId || 'Not Available'}
+              </div>
+              <span className="badge b-green" style={{ marginTop: '8px' }}>
+                ✓ {loggedInUser.voterStatus || 'Registered Voter'}
+              </span>
+            </div>
 
-  <div className="card" style={{ textAlign: 'center', padding: '28px' }}>
-    <div
-      style={{
-        width: '70px',
-        height: '70px',
-        background: 'linear-gradient(135deg,#2563EB,#7C3AED)',
-        borderRadius: '50%',
-        margin: '0 auto 12px',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        fontSize: '28px',
-        fontWeight: 900,
-        color: 'white',
-      }}
-    >
-      {loggedInUser.initials}
-    </div>
-    <div style={{ fontSize: '18px', fontWeight: 900 }}>{loggedInUser.fullName}</div>
-    <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>
-      Resident ID: {loggedInUser.residentId || 'Not Available'}
-    </div>
-    <span className="badge b-green" style={{ marginTop: '8px' }}>
-      ✓ {loggedInUser.voterStatus || 'Not Available'}
-    </span>
-  </div>
+            {/* Personal Information Details */}
+            <div className="card">
+              <div className="card-title" style={{ marginBottom: '14px' }}>Personal Information</div>
+              
+              <div className="list-item">
+                <div className="list-body">
+                  <div className="list-sub">Birthdate</div>
+                  <div className="list-title">
+                    {loggedInUser.birthdate 
+                      ? new Date(loggedInUser.birthdate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
+                      : 'Not Available'}
+                  </div>
+                </div>
+              </div>
 
-  <div className="card">
-    <div className="card-title" style={{ marginBottom: '14px' }}>Personal Information</div>
-    <div className="list-item">
-      <div className="list-body">
-        <div className="list-sub">Birthdate</div>
-        <div className="list-title">{loggedInUser.birthdate || 'Not Available'}</div>
-      </div>
-    </div>
-    <div className="list-item">
-      <div className="list-body">
-        <div className="list-sub">Age</div>
-        <div className="list-title">{loggedInUser.age ? `${loggedInUser.age} years old` : 'Not Available'}</div>
-      </div>
-    </div>
-    <div className="list-item">
-      <div className="list-body">
-        <div className="list-sub">Gender</div>
-        <div className="list-title">{loggedInUser.gender || 'Not Available'}</div>
-      </div>
-    </div>
-    <div className="list-item">
-      <div className="list-body">
-        <div className="list-sub">Civil Status</div>
-        <div className="list-title">{loggedInUser.civilStatus || 'Not Available'}</div>
-      </div>
-    </div>
-    <div className="list-item">
-      <div className="list-body">
-        <div className="list-sub">Contact Number</div>
-        <div className="list-title">{loggedInUser.contact || 'Not Available'}</div>
-      </div>
-    </div>
-    <div className="list-item">
-      <div className="list-body">
-        <div className="list-sub">Purok</div>
-        <div className="list-title">
-          {loggedInUser.purok ? `Purok ${loggedInUser.purok}, Barangay Bustrac` : 'Not Available'}
+              <div className="list-item">
+                <div className="list-body">
+                  <div className="list-sub">Age</div>
+                  <div className="list-title">
+                    {loggedInUser.age ? `${loggedInUser.age} years old` : 'Not Available'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="list-item">
+                <div className="list-body">
+                  <div className="list-sub">Gender</div>
+                  <div className="list-title">{loggedInUser.gender || 'Not Available'}</div>
+                </div>
+              </div>
+
+              <div className="list-item">
+                <div className="list-body">
+                  <div className="list-sub">Civil Status</div>
+                  <div className="list-title">{loggedInUser.civilStatus || 'Not Available'}</div>
+                </div>
+              </div>
+
+              <div className="list-item">
+                <div className="list-body">
+                  <div className="list-sub">Contact Number</div>
+                  <div className="list-title">{loggedInUser.contact || 'Not Available'}</div>
+                </div>
+              </div>
+
+              <div className="list-item">
+                <div className="list-body">
+                  <div className="list-sub">Purok</div>
+                  <div className="list-title">
+                    {loggedInUser.purok 
+                      ? `${loggedInUser.purok.toString().toLowerCase().startsWith('purok') ? loggedInUser.purok : `Purok ${loggedInUser.purok}`}, Barangay Bustrac` 
+                      : 'Not Available'}
+                  </div>
+                </div>
+              </div>
+
+              <div className="list-item" style={{ border: 'none' }}>
+                <div className="list-body">
+                  <div className="list-sub">Household</div>
+                  <div className="list-title">{loggedInUser.household || 'Not Available'}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sync Status Banner */}
+            <div className="sync-status">
+              <div className={`sync-dot ${isOffline ? 'offline' : ''}`} />
+              CouchDB sync — {isOffline ? 'Offline' : 'Up to date'} · Last sync:{' '}
+              {lastSync 
+                ? lastSync.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) 
+                : 'Never'}
+            </div>
+
+            {/* Clean Sign Out Button */}
+            <button 
+              className="btn btn-ghost btn-full" 
+              onClick={handleLogout} 
+              style={{ color: 'var(--red)', borderColor: '#FECACA', marginTop: '12px' }}
+            >
+              🚪 Sign Out
+            </button>
+          </div>
         </div>
-      </div>
-    </div>
-    <div className="list-item" style={{ border: 'none' }}>
-      <div className="list-body">
-        <div className="list-sub">Household</div>
-        <div className="list-title">{loggedInUser.household || 'Not Available'}</div>
-      </div>
-    </div>
-  </div>
-
-  <div className="sync-status">
-    <div className={`sync-dot ${isOffline ? 'offline' : ''}`} />
-    CouchDB sync — {isOffline ? 'Offline' : 'Up to date'} · Last sync: {lastSync ? lastSync.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' }) : 'Never'}
-  </div>
-
-  <button
-    className="btn btn-ghost btn-full"
-    onClick={handleLogout}
-    style={{ color: 'var(--red)', borderColor: '#FECACA' }}
-  >
-    🚪 Sign Out
-  </button>
-</div>
-        </div>
+        
         {/* /content */}
+        {/* FOOTER */}
+<footer className="resident-footer">
+  <div className="footer-inner">
+    <span className="footer-brand">Bustrac Hub</span>
+    <span className="footer-copy">
+      © {new Date().getFullYear()} Barangay Bustrac. All rights reserved.
+    </span>
+    <span className="footer-version">Resident Portal v1.0</span>
+  </div>
+</footer>
       </div>
 
       {/* LIVE INDICATOR */}

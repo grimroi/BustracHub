@@ -264,23 +264,6 @@ export default function LogIn() {
           </button>
         </form>
 
-        {/* MODERNIZED DEMO BADGES */}
-        <div className="bg-slate-950 p-3 rounded-xl border border-slate-800/60 space-y-2">
-          <span className="block font-semibold text-amber-500/90 text-[10px] uppercase tracking-wider">
-            💡 Quick Demo Accounts
-          </span>
-          <div className="grid grid-cols-2 gap-2 text-[11px] font-mono text-slate-400">
-            <div className="bg-slate-900 p-1.5 rounded border border-slate-800/50 text-center">
-              <span className="text-emerald-400 font-bold block text-[9px] uppercase">Staff</span>
-              mgcortero
-            </div>
-            <div className="bg-slate-900 p-1.5 rounded border border-slate-800/50 text-center">
-              <span className="text-blue-400 font-bold block text-[9px] uppercase">Admin</span>
-              jmacabangon
-            </div>
-          </div>
-        </div>
-
         {/* BACK TO PUBLIC PORTAL & OFFLINE NOTE */}
         <div className="text-center pt-2 space-y-3">
           <button

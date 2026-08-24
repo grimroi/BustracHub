@@ -293,3 +293,35 @@
   font-weight: 700;
   color: var(--green);
 }
+
+/* Back to Public Portal Button — matches login theme */
+.login-root-container .btn-back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 20px;
+  background: var(--surface);
+  border: 2px solid var(--border);
+  border-radius: 20px;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  text-decoration: none;
+  box-shadow: 0 2px 8px rgba(37, 99, 235, 0.04);
+}
+
+.login-root-container .btn-back:hover {
+  border-color: var(--primary);
+  color: var(--primary);
+  background: var(--primary-light);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(37, 99, 235, 0.08);
+}
+
+.login-root-container .btn-back:active {
+  transform: translateY(0);
+}
