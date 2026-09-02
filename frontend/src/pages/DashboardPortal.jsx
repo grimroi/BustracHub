@@ -240,32 +240,72 @@ const initials = displayName
   const [showBulkDropdown, setShowBulkDropdown] = useState(false);
 
   // Multi-select States for the Residents
-const [selectedResidents, setSelectedResidents] = useState([]);
+  const [selectedResidents, setSelectedResidents] = useState([]);
 
-// State for search input text
-const [searchTerm, setSearchTerm] = useState('');
-const [genderFilter, setGenderFilter] = useState('All Gender');
+  // State for search input text
+  const [searchTerm, setSearchTerm] = useState('');
+  const [genderFilter, setGenderFilter] = useState('All Gender');
 
-// New initialization: It will check if localStorage has content; if not, it will use the default.
-const [residentsList, setResidentsList] = useState(() => {
-  const savedResidents = localStorage.getItem('bustrac_residents');
-  return savedResidents ? JSON.parse(savedResidents) : [
-    { id: 'RES-0001', name: 'Santos, Maria D.', purok: 'Purok 3', purokClass: 'b', age: 34, civilStatus: 'Married', voter: true, household: 'HH-0012', conflict: false },
-    { id: 'RES-0002', name: 'Reyes, Juan B.', purok: 'Purok 1', purokClass: 'p', age: 67, civilStatus: 'Widowed', voter: true, household: 'HH-0003', conflict: false },
-    { id: 'RES-0003', name: 'Garcia, Ana L.', purok: 'Purok 2', purokClass: 't', age: 28, civilStatus: 'Single', voter: false, household: 'HH-0007', conflict: false },
-    { id: 'RES-0412', name: 'Dela Cruz, Maria', purok: 'Purok ?', purokClass: 'a', age: 29, civilStatus: 'Married', voter: true, household: 'HH-0015', conflict: true },
-  ];
-});
+  // New initialization: It will check if localStorage has content; if not, it will use the default.
+  const [residentsList, setResidentsList] = useState(() => {
+    const savedResidents = localStorage.getItem('bustrac_residents');
+    return savedResidents ? JSON.parse(savedResidents) : [
+      { id: 'RES-0001', name: 'Santos, Maria D.', purok: 'Purok 3', purokClass: 'b', age: 34, civilStatus: 'Married', voter: true, household: 'HH-0012', conflict: false },
+      { id: 'RES-0002', name: 'Reyes, Juan B.', purok: 'Purok 1', purokClass: 'p', age: 67, civilStatus: 'Widowed', voter: true, household: 'HH-0003', conflict: false },
+      { id: 'RES-0003', name: 'Garcia, Ana L.', purok: 'Purok 2', purokClass: 't', age: 28, civilStatus: 'Single', voter: false, household: 'HH-0007', conflict: false },
+      { id: 'RES-0412', name: 'Dela Cruz, Maria', purok: 'Purok ?', purokClass: 'a', age: 29, civilStatus: 'Married', voter: true, household: 'HH-0015', conflict: true },
+    ];
+  });
 
-// ── DYNAMIC AID PROGRAMS STATE (WITH LOCALSTORAGE CACHING) ──
-const [programsList, setProgramsList] = useState(() => {
-  const savedPrograms = localStorage.getItem('bustrac_programs');
-  return savedPrograms ? JSON.parse(savedPrograms) : [
-    { id: 'PROG-2024-004', title: 'Ayuda Rice Distribution', status: 'Active', dateLabel: 'Apr 2024', current: 387, target: 600, note: '' },
-    { id: 'PROG-2024-003', title: 'Cash Assistance — DSWD', status: 'Completed', dateLabel: 'Mar 2024', current: 312, target: 312, note: 'Completed' },
-    { id: 'PROG-2024-005', title: 'Medical Assistance', status: 'Upcoming', dateLabel: 'May 2024', current: 0, target: 150, note: 'Scheduled May 15' }
-  ];
-});
+  // ── DYNAMIC AID PROGRAMS STATE (2026 REALISTIC INITIAL DATA WITH V2 CACHE) ──
+  const [programsList, setProgramsList] = useState(() => {
+    const savedPrograms = localStorage.getItem('bustrac_programs_v2');
+    if (savedPrograms) return JSON.parse(savedPrograms);
+
+    return [
+      {
+        id: 'PROG-2026-001',
+        title: 'Rice Aid & Food Pack Distribution (Neighborhood 1-7)',
+        status: 'Active',
+        dateLabel: 'Aug 2026',
+        current: 425,
+        target: 600,
+        note: 'Ongoing distribution at Barangay Hall',
+      },
+      {
+        id: 'PROG-2026-002',
+        title: 'Educational Assistance for College Students',
+        status: 'Active',
+        dateLabel: 'Sep 2026',
+        current: 120,
+        target: 150,
+        note: 'Verification phase ongoing',
+      },
+      {
+        id: 'PROG-2026-003',
+        title: 'Senior Citizen Social Pension Aid',
+        status: 'Upcoming',
+        dateLabel: 'Oct 2026',
+        current: 0,
+        target: 250,
+        note: 'Scheduled Oct 12',
+      },
+      {
+        id: 'PROG-2026-004',
+        title: 'DSWD Financial Emergency Assistance',
+        status: 'Completed',
+        dateLabel: 'Jul 2026',
+        current: 310,
+        target: 310,
+        note: 'Completed July 28',
+      },
+    ];
+  });
+
+  // Ensure force save to new key:
+  useEffect(() => {
+    localStorage.setItem('bustrac_programs_v2', JSON.stringify(programsList));
+  }, [programsList]);
 
 // ── NEW ADVANCED PROGRAM MANAGEMENT STATES ──
 const [programSearchQuery, setProgramSearchQuery] = useState('');
@@ -277,6 +317,7 @@ const [editingProgram, setEditingProgram] = useState(null); // Will contain the 
 const [viewingProgram, setViewingProgram] = useState(null); // Will contain the prog object for the full details modal
 const [confirmDeleteId, setConfirmDeleteId] = useState(null); // Target ID for the safe delete prompt
 
+const [selectedProgramId, setSelectedProgramId] = useState('');
 // Auto-save tracker for the programs
 useEffect(() => {
   localStorage.setItem('bustrac_programs', JSON.stringify(programsList));
@@ -899,18 +940,18 @@ useEffect(() => {
     return SCREEN_META[screen] ?? [screen, ''];
   })();
   // Dynamic computing: This looks for a match in the typed input against Name, ID, or Purok
-const filteredResidents = residentsList.filter((res) => {
-  const query = searchTerm.toLowerCase();
-  const matchesSearch =
-    res.name.toLowerCase().includes(query) ||
-    res.id.toLowerCase().includes(query) ||
-    res.purok.toLowerCase().includes(query);
+  const filteredResidents = residentsList.filter((res) => {
+    const query = searchTerm.toLowerCase();
+    const matchesSearch =
+      res.name.toLowerCase().includes(query) ||
+      res.id.toLowerCase().includes(query) ||
+      res.purok.toLowerCase().includes(query);
 
-  const matchesPurok = purokFilter === 'All Puroks' || res.purok === purokFilter;
-  const matchesGender = genderFilter === 'All Gender' || res.gender === genderFilter;
+    const matchesPurok = purokFilter === 'All Puroks' || res.purok === purokFilter;
+    const matchesGender = genderFilter === 'All Gender' || res.gender === genderFilter;
 
-  return matchesSearch && matchesPurok && matchesGender;
-});
+    return matchesSearch && matchesPurok && matchesGender;
+  });
 
 // Dynamic Calculations for the Dashboard Panels
 const totalResidents = residentsList.length;
@@ -943,6 +984,8 @@ const [aidType, setAidType] = useState('Rice — 5kg');
 const [quantity, setQuantity] = useState(1);
 const [remarks, setRemarks] = useState('');
 const [duplicateAlert, setDuplicateAlert] = useState('');
+const [successMessage, setSuccessMessage] = useState('');
+
 
 // Dynamic storage para sa distribution logs (naka-cache sa localStorage)
 const [aidLogs, setAidLogs] = useState(() => {
@@ -1032,6 +1075,97 @@ const handleLogAidEntry = async () => {
   }
 };
 
+const handleEncodeSubmit = async (e) => {
+  if (e) e.preventDefault();
+
+  // 1. Basic Validation
+  if (!selectedProgramId) {
+    alert('Pumili muna ng Active Relief Program.');
+    return;
+  }
+  if (!selectedResidentId) {
+    alert('Pumili muna ng Beneficiary Resident.');
+    return;
+  }
+
+  // 2. Kuhanin ang detalye ng napiling program at residente
+  const targetProg = programsList.find((p) => p.id === selectedProgramId);
+  const targetResident = residentsList.find((r) => r.id === selectedResidentId);
+  const residentName = targetResident ? targetResident.name : 'Unknown Resident';
+
+  // 3. Clean Duplicate Beneficiary Check (Gamit ang aidLogs lamang)
+  const isDuplicate = aidLogs.some(
+    (log) => log.programId === selectedProgramId && log.residentId === selectedResidentId
+  );
+
+  if (isDuplicate) {
+    const errorMsg = `⚠️ Si ${residentName} ay nakatanggap na ng ayuda sa ilalim ng ${targetProg?.title || 'programang ito'}.`;
+    if (typeof setDuplicateAlert === 'function') {
+      setDuplicateAlert(errorMsg);
+    } else {
+      alert(errorMsg);
+    }
+    return;
+  }
+
+  // Clear duplicate alert kung pumasa sa check
+  if (typeof setDuplicateAlert === 'function') setDuplicateAlert('');
+
+  // 4. Capacity Limit Check
+  if (targetProg && (targetProg.current || 0) >= (targetProg.target || 1)) {
+    alert(`⚠️ Puno na ang capacity ng ${targetProg.title} (${targetProg.current}/${targetProg.target}).`);
+    return;
+  }
+
+  // 5. Increment Program Counter
+  const updatedPrograms = programsList.map((prog) => {
+    if (prog.id === selectedProgramId) {
+      return { ...prog, current: Math.min(prog.target, (prog.current || 0) + 1) };
+    }
+    return prog;
+  });
+  setProgramsList(updatedPrograms);
+
+  // 6. Buuin ang Bagong Log Record
+  const now = new Date();
+  const timeStamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  const newLog = {
+    id: `LOG-${Date.now().toString().slice(-4)}`,
+    residentId: selectedResidentId,
+    residentName: residentName,
+    programId: selectedProgramId,
+    aid: aidType || 'Relief Goods',
+    officer: typeof displayName !== 'undefined' ? displayName.split(' ')[0] : 'Mark Gian Cortero',
+    time: timeStamp,
+    status: 'OK',
+  };
+
+  // 7. Update Log State
+  setAidLogs((prev) => [newLog, ...prev]);
+
+  // 8. Audit Trace (PouchDB / System Log)
+  if (typeof createAuditLog === 'function') {
+    await createAuditLog({
+      action: 'CREATE',
+      module: 'AID_DISTRIBUTION',
+      recordId: newLog.id,
+      details: `Distributed ${newLog.aid} to ${newLog.residentName} under program ${selectedProgramId}`,
+    });
+  }
+
+  // 9. Reset Inputs & Success Notification
+  setSelectedProgramId('');
+  setSelectedResidentId('');
+  setResidentSearch('');
+  setQuantity(1);
+  setRemarks('');
+  
+  if (typeof setSuccessMessage === 'function') {
+    setSuccessMessage(`Matagumpay na na-record ang ayuda para kay ${residentName}!`);
+    setTimeout(() => setSuccessMessage(''), 4000);
+  }
+};
+
 // ── LIVE HOUSEHOLD DETECTOR ENGINE ──
 
 // Finds the complete details of the selected household head
@@ -1046,6 +1180,19 @@ const activeFamilyMembers = residentsList.filter(
 const [viewingHouseholdId, setViewingHouseholdId] = useState(null); 
 const [viewingResidentId, setViewingResidentId] = useState(null);
 const [selectedResidentId, setSelectedResidentId] = useState(null);
+
+const [residentSearch, setResidentSearch] = useState('');
+
+const safeResidentsList = residentsList || [];
+const filteredBeneficiaries = safeResidentsList.filter((res) => {
+  const query = (residentSearch || '').toLowerCase().trim();
+  if (!query) return true;
+  return (
+    (res.name && res.name.toLowerCase().includes(query)) ||
+    (res.id && res.id.toLowerCase().includes(query)) ||
+    (res.purok && res.purok.toString().toLowerCase().includes(query))
+  );
+});
 // ── STATE BUFFER PARA SA EDIT FORM ──
 const [editForm, setEditForm] = useState({
   firstName: '',
@@ -1134,6 +1281,74 @@ const [blotterForm, setBlotterForm] = useState({
   status: 'Open',
   nextHearingDate: ''
 });
+
+useEffect(() => {
+    if (!db) return;
+
+    // Mapper function para sa Blotter records
+    const mapDocToBlotter = (doc) => ({
+      _id: doc._id,
+      _rev: doc._rev,
+      id: doc.refNumber || doc.caseNo || doc.id || doc._id,
+      caseNo: doc.refNumber || doc.caseNo || doc.id || 'BLTR-LOG',
+      type: doc.incidentType || doc.type || 'Incident',
+      complainant: doc.complainant || doc.residentName || doc.fullName || doc.sender || 'Resident',
+      respondent: doc.respondent || doc.respondentName || 'Under Investigation',
+      location: doc.location || doc.purok || 'Barangay Bustrac',
+      date: doc.incidentDate || doc.date || doc.timestamp || 'Recently',
+      status: doc.status || 'Pending',
+      details: doc.details || doc.description || doc.message || '',
+      rawDoc: doc,
+    });
+
+    // 1. Initial Fetch mula sa local PouchDB
+    const fetchBlotters = async () => {
+      try {
+        const res = await db.allDocs({ include_docs: true });
+        const blotterDocs = res.rows
+          .map((row) => row.doc)
+          .filter(
+            (doc) =>
+              doc &&
+              (doc.type === 'blotter' ||
+                doc.type === 'blotter_report' ||
+                doc.type === 'blotter_record' ||
+                (doc._id && String(doc._id).startsWith('blotter_')))
+          )
+          .map(mapDocToBlotter);
+        setBlotterList(blotterDocs);
+      } catch (err) {
+        console.error('Error fetching blotter records from PouchDB:', err);
+      }
+    };
+
+    fetchBlotters();
+
+    // 2. Real-time changes listener
+    const changes = db
+      .changes({ since: 'now', live: true, include_docs: true })
+      .on('change', (change) => {
+        const doc = change.doc;
+        if (
+          doc &&
+          (doc.type === 'blotter' ||
+            doc.type === 'blotter_report' ||
+            doc.type === 'blotter_record' ||
+            (doc._id && String(doc._id).startsWith('blotter_')))
+        ) {
+          const mappedDoc = mapDocToBlotter(doc);
+          setBlotterList((prev) => {
+            const filtered = prev.filter(
+              (item) => item._id !== doc._id && item.id !== mappedDoc.id
+            );
+            return [mappedDoc, ...filtered];
+          });
+        }
+      })
+      .on('error', (err) => console.error('PouchDB blotter change listener error:', err));
+
+    return () => changes.cancel();
+  }, [db]);
 
 // ── 3. LOOKUP TEXT INPUT QUERIES (Eksaktong tugma sa variable ng JSX mo!) ──
 const [complainantQuery, setComplainantQuery] = useState('');
@@ -1569,37 +1784,6 @@ const handleOpenFeedbackDetails = (fb) => {
   setFbStatusUpdate(fb.status);
   setFbStaffAssignment(fb.assignedTo);
 };
-
-const mapDocToFeedback = (doc) => {
-    const rawTime = doc.timestamp || doc.createdAt || doc.date || new Date().toISOString();
-    return {
-      _id: doc._id,
-      _rev: doc._rev,
-      id: doc.refNumber || doc.id || doc._id,
-      sender: doc.residentName || doc.fullName || doc.username || doc.sender || 'Resident',
-      type: doc.feedbackType || doc.concernType || doc.category || doc.classification || (doc.type !== 'feedback' && doc.type !== 'feedback_report' ? doc.type : 'Complaint'),
-      priority: doc.priority || 'Medium',
-      subject: doc.subject || doc.title || 'No Subject',
-      message: doc.details || doc.message || doc.description || '',
-      rawTimestamp: rawTime,
-      date: !isNaN(Date.parse(rawTime))
-        ? new Date(rawTime).toLocaleString('en-US', {
-            month: 'short',
-            day: 'numeric',
-            year: 'numeric',
-            hour: '2-digit',
-            minute: '2-digit',
-          })
-        : rawTime,
-      assignedTo: doc.assignedTo || 'Unassigned',
-      status: doc.status || 'Pending',
-      attachment: doc.attachment || null,
-      response: doc.response || '',
-      handledBy: doc.handledBy || '',
-      dateResolved: doc.dateResolved || '',
-      rawDoc: doc,
-    };
-  };
   
 useEffect(() => {
     if (!db) return;
@@ -1808,237 +1992,388 @@ const filteredAuditLogs = auditLogs.filter((log) => {
 
     return matchesSearch && matchesModule && matchesAction;
 });
+const [isAidOpen, setIsAidOpen] = useState(true);
+// ════════════════════════════════════════════════════════════════
+// HELPER FUNCTION (Ilagay sa itaas bago ang return statement)
+// ════════════════════════════════════════════════════════════════
+const getStatusBadgeClass = (status) => {
+  switch (status) {
+    case 'Active':
+      return 'badge-success'; // Emerald Green
+    case 'Upcoming':
+      return 'badge-warning'; // Amber / Yellow
+    case 'Completed':
+      return 'badge-secondary'; // Cool Gray / Slate
+    case 'Archived':
+      return 'badge-danger'; // Muted Red
+    default:
+      return 'badge-info';
+  }
+};
   // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
   return (
     <div className="dashboard-shell-container">
       <div className="app">
-
         {/* ════════════════ SIDEBAR ════════════════ */}
         <aside className="sidebar">
-          {/* Logo / App Name */}
-          <div className="sb-logo">
-            <img src={logo} alt="Barangay Bustrac Official Seal" className="sb-logo-img" />
-            <div>
-              <div className="sb-title">Bustrac Hub</div>
-              <div className="sb-sub">
-                {role === 'admin' ? 'Administrator Portal' : 'Staff Portal'}
-              </div>
-            </div>
+        {/* Logo / App Name */}
+        <div className="sb-logo">
+          <img src={logo} alt="Barangay Bustrac Official Seal" className="sb-logo-img" />
+          <div>
+            <div className="sb-title">Bustrac Hub</div>
+            <div className="sb-sub">{role === 'admin' ? 'Administrator Portal' : 'Staff Portal'}</div>
           </div>
+        </div>
 
-          {/* Navigation */}
-          <nav className="sb-nav">
+        {/* Navigation */}
+        <nav className="sb-nav">
+          {/* OVERVIEW */}
+          <div className="sb-sec">Overview</div>
+          <button
+            className={`nav-btn${screen === 'dashboard' ? ' active' : ''}`}
+            onClick={() => nav('dashboard')}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 3h8v8H3z" />
+                <path d="M3 13h6v8H3z" />
+                <path d="M13 3h8v6h-8z" />
+                <path d="M13 13h8v8h-8z" />
+              </svg>
+            </span>
+            Dashboard
+          </button>
 
-            {/* OVERVIEW */}
-            <div className="sb-sec">Overview</div>
-            <button
-              className={`nav-btn${screen === 'dashboard' ? ' active' : ''}`}
-              onClick={() => nav('dashboard')}
-            >
-              <span className="nav-ico">📊</span>Dashboard
-            </button>
-
-            {/* RESIDENTS */}
-            <div className="sb-sec">Residents Management</div>
-
-{/* Main Dropdown Header Controller */}
-<button 
-  type="button"
-  className={`nav-btn toggle-parent ${['residents', 'households', 'add-resident'].includes(screen) ? 'active-parent' : ''}`}
-  onClick={() => setIsResidentsOpen(!isResidentsOpen)}
->
-  <span className="nav-ico">👥</span>
-  <span style={{ flex: 1 }}>Residents Profile</span>
-  <span className="submenu-arrow" style={{ fontSize: '10px', color: 'var(--hint)' }}>
-    {isResidentsOpen ? '▼' : '▶'}
-  </span>
-</button>
-
-{/* Nested Animated Dropdown Content Track */}
-{isResidentsOpen && (
-  <div className="sb-submenu-zone" style={{ paddingLeft: '12px', background: 'rgba(0,0,0,0.15)' }}>
-    
-    <button
-      className={`nav-btn sub-btn${screen === 'residents' ? ' active' : ''}`}
-      onClick={() => nav('residents')}
-    >
-      <span className="nav-ico">📋</span>Manage Ledger
-    </button>
-    
-    <button
-      className={`nav-btn sub-btn${screen === 'households' ? ' active' : ''}`}
-      onClick={() => nav('households')}
-    >
-      <span className="nav-ico">🏠</span>Manage Households
-    </button>
-    
-    <button
-      className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`}
-      onClick={() => nav('add-resident')}
-    >
-      <span className="nav-ico">➕</span>Add Resident Record
-    </button>
-    
-  </div>
-)}
-
-            {/* CERTIFICATES */}
-            <div className="sb-sec">Certificates</div>
-            <button
-              className={`nav-btn${screen === 'cert-req' ? ' active' : ''}`}
-              onClick={() => nav('cert-req')}
-            >
-              <span className="nav-ico">📝</span>Request &amp; Approval
-              <span className="nb nb-amber">3</span>
-            </button>
-            <button
-              className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`}
-              onClick={() => nav('cert-print')}
-            >
-              <span className="nav-ico">🖨️</span>Issuance &amp; Print
-            </button>
-
-            {/* AID DISTRIBUTION */}
-            <div className="sb-sec">Aid Distribution</div>
-            <button
-              className={`nav-btn${screen === 'programs' ? ' active' : ''}`}
-              onClick={() => nav('programs')}
-            >
-              <span className="nav-ico">📦</span>Programs
-            </button>
-            <button
-              className={`nav-btn${screen === 'aid-encode' ? ' active' : ''}`}
-              onClick={() => nav('aid-encode')}
-            >
-              <span className="nav-ico">➕</span>Encode Distribution
-            </button>
-            <button
-              className={`nav-btn${screen === 'aid-logs' ? ' active' : ''}`}
-              onClick={() => nav('aid-logs')}
-            >
-              <span className="nav-ico">📋</span>Distribution Logs
-            </button>
-            {role === 'admin' && (
+          {/* RESIDENTS */}
+          <div className="sb-sec">Residents Management</div>
+          <button
+            type="button"
+            className={`nav-btn toggle-parent ${['residents', 'households', 'add-resident'].includes(screen) ? 'active-parent' : ''}`}
+            onClick={() => setIsResidentsOpen(!isResidentsOpen)}
+            aria-expanded={isResidentsOpen}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                <circle cx="9" cy="7" r="4" />
+                <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+              </svg>
+            </span>
+            <span style={{ flex: 1 }}>Residents Profile</span>
+            <span className="submenu-arrow">▶</span>
+          </button>
+          {isResidentsOpen && (
+            <div className="sb-submenu-zone">
               <button
-                className={`nav-btn${screen === 'add-beneficiary' ? ' active' : ''}`}
-                onClick={() => nav('add-beneficiary')}
+                className={`nav-btn sub-btn${screen === 'residents' ? ' active' : ''}`}
+                onClick={() => nav('residents')}
               >
-                <span className="nav-ico">➕</span>Add Beneficiary
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6" />
+                    <path d="M12 18v-6" />
+                    <path d="M9 15h6" />
+                  </svg>
+                </span>
+                Manage Ledger
               </button>
-            )}
-
-            {/* BLOTTER */}
-            <div className="sb-sec">Blotter</div>
-            <button
-              className={`nav-btn${screen === 'blotter-new' ? ' active' : ''}`}
-              onClick={() => nav('blotter-new')}
-            >
-              <span className="nav-ico">🚨</span>File Blotter Entry
-            </button>
-            <button
-              className={`nav-btn${screen === 'blotter-manage' ? ' active' : ''}`}
-              onClick={() => nav('blotter-manage')}
-            >
-              <span className="nav-ico">📂</span>Manage Blotter
-              <span className="nb nb-red">2</span>
-            </button>
-            {role === 'staff' && (
               <button
-                className={`nav-btn${screen === 'blotter-detail' ? ' active' : ''}`}
-                onClick={() => nav('blotter-detail')}
+                className={`nav-btn sub-btn${screen === 'households' ? ' active' : ''}`}
+                onClick={() => nav('households')}
               >
-                <span className="nav-ico">📨</span>Blotter Summon
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                    <path d="M9 22V12h6v10" />
+                  </svg>
+                </span>
+                Manage Households
               </button>
-            )}
-
-            {/* COMMUNITY */}
-            <div className="sb-sec">Community</div>
-            <button
-              className={`nav-btn${screen === 'announcements' ? ' active' : ''}`}
-              onClick={() => nav('announcements')}
-            >
-              <span className="nav-ico">📢</span>Announcements
-            </button>
-            <button
-              className={`nav-btn${screen === 'feedback' ? ' active' : ''}`}
-              onClick={() => nav('feedback')}
-            >
-              <span className="nav-ico">💬</span>Feedback
-              <span className="nb nb-red">5</span>
-            </button>
-
-            {/* ADMIN-ONLY SECTION */}
-            {role === 'admin' && (
-              <>
-                <div className="sb-sec">Admin Only</div>
-                <button
-                  className={`nav-btn${screen === 'conflicts' ? ' active' : ''}`}
-                  onClick={() => nav('conflicts')}
-                >
-                  <span className="nav-ico">⚠️</span>Conflict Resolution
-                  <span className="nb nb-red">2</span>
-                </button>
-                <button
-                  className={`nav-btn${screen === 'audit' ? ' active' : ''}`}
-                  onClick={() => nav('audit')}
-                >
-                  <span className="nav-ico">🔍</span>Audit Log
-                </button>
-                <button
-                  className={`nav-btn${screen === 'users' ? ' active' : ''}`}
-                  onClick={() => nav('users')}
-                >
-                  <span className="nav-ico">🔐</span>Manage Users
-                </button>
-              </>
-            )}
-
-            {/* REPORTS */}
-            <div className="sb-sec">Reports</div>
-            <button
-              className={`nav-btn${screen === 'reports' ? ' active' : ''}`}
-              onClick={() => nav('reports')}
-            >
-              <span className="nav-ico">📈</span>Generate Reports
-            </button>
-          </nav>
-
-          {/* Sidebar Footer — Dynamic Name */}
-          <div className="sb-foot">
-            <div className="sb-ava">{initials}</div>
-            <div>
-              <div className="sb-uname">{displayName}</div>
-              <div className="sb-urole">
-                {role === 'admin' ? 'Administrator' : 'Staff'}
-              </div>
+              <button
+                className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`}
+                onClick={() => nav('add-resident')}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </span>
+                Add Resident
+              </button>
             </div>
-            <div
-              className="online-dot"
-              title={
-                syncState === 'offline'
-                  ? 'Offline — changes saved locally'
-                  : syncState === 'syncing'
-                    ? 'Connecting and syncing'
-                    : 'Online — changes synced'
-              }
-              style={{
-                background:
-                  syncState === 'offline'
-                    ? 'var(--red)'
-                    : syncState === 'syncing'
-                      ? 'var(--amber)'
-                      : 'var(--green)',
-                boxShadow:
-                  syncState === 'offline'
-                    ? '0 0 0 2px var(--red-bg)'
-                    : syncState === 'syncing'
-                      ? '0 0 0 2px var(--amber-bg)'
-                      : '0 0 0 2px var(--green-bg)',
-              }}
-            />
+          )}
+
+          {/* CERTIFICATES */}
+          <div className="sb-sec">Certificates</div>
+          <button
+            className={`nav-btn${screen === 'cert-req' ? ' active' : ''}`}
+            onClick={() => nav('cert-req')}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M12 18v-6" />
+                <path d="M9 15h6" />
+              </svg>
+            </span>
+            Request & Approval
+            <span className="nb nb-amber">3</span>
+          </button>
+          <button
+            className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`}
+            onClick={() => nav('cert-print')}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
+                <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
+                <path d="M12 7V5" />
+                <path d="M10 19h4" />
+                <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+              </svg>
+            </span>
+            Issuance & Print
+          </button>
+
+          {/* AID DISTRIBUTION */}
+          <div className="sb-sec">Aid Distribution</div>
+          <button
+            type="button"
+            className={`nav-btn toggle-parent ${['programs', 'aid-encode', 'aid-logs', 'add-beneficiary'].includes(screen) ? 'active-parent' : ''}`}
+            onClick={() => setIsAidOpen(!isAidOpen)}
+            aria-expanded={isAidOpen}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                <path d="M3.27 6.96L12 12.01l8.73-5.05" />
+                <path d="M12 22.08V12" />
+              </svg>
+            </span>
+            <span style={{ flex: 1 }}>Aid Distribution</span>
+            <span className="submenu-arrow">▶</span>
+          </button>
+          {isAidOpen && (
+            <div className="sb-submenu-zone">
+              <button
+                className={`nav-btn sub-btn${screen === 'programs' ? ' active' : ''}`}
+                onClick={() => nav('programs')}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                  </svg>
+                </span>
+                Programs
+              </button>
+              <button
+                className={`nav-btn sub-btn${screen === 'aid-encode' ? ' active' : ''}`}
+                onClick={() => nav('aid-encode')}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 5v14M5 12h14" />
+                  </svg>
+                </span>
+                Encode Distribution
+              </button>
+              <button
+                className={`nav-btn sub-btn${screen === 'aid-logs' ? ' active' : ''}`}
+                onClick={() => nav('aid-logs')}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <path d="M14 2v6h6" />
+                    <path d="M12 18v-6" />
+                    <path d="M9 15h6" />
+                  </svg>
+                </span>
+                Distribution Logs
+              </button>
+              {role === 'admin' && (
+                <button
+                  className={`nav-btn sub-btn${screen === 'add-beneficiary' ? ' active' : ''}`}
+                  onClick={() => nav('add-beneficiary')}
+                >
+                  <span className="nav-ico">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                  </span>
+                  Add Beneficiary
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* BLOTTER */}
+          <div className="sb-sec">Blotter</div>
+          <button
+            className={`nav-btn${screen === 'blotter-new' ? ' active' : ''}`}
+            onClick={() => nav('blotter-new')}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+              </svg>
+            </span>
+            File Blotter Entry
+          </button>
+          <button
+            className={`nav-btn${screen === 'blotter-manage' ? ' active' : ''}`}
+            onClick={() => nav('blotter-manage')}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M12 18v-6" />
+                <path d="M9 15h6" />
+              </svg>
+            </span>
+            Manage Blotter
+            <span className="nb nb-red">2</span>
+          </button>
+          {role === 'staff' && (
+            <button
+              className={`nav-btn${screen === 'blotter-detail' ? ' active' : ''}`}
+              onClick={() => nav('blotter-detail')}
+            >
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </span>
+              Blotter Summon
+            </button>
+          )}
+
+          {/* COMMUNITY */}
+          <div className="sb-sec">Community</div>
+          <button
+            className={`nav-btn${screen === 'announcements' ? ' active' : ''}`}
+            onClick={() => nav('announcements')}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+            </span>
+            Announcements
+          </button>
+          <button
+            className={`nav-btn${screen === 'feedback' ? ' active' : ''}`}
+            onClick={() => nav('feedback')}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+            </span>
+            Feedback
+            <span className="nb nb-red">5</span>
+          </button>
+
+          {/* ADMIN-ONLY SECTION */}
+          {role === 'admin' && (
+            <>
+              <div className="sb-sec">Admin Only</div>
+              <button
+                className={`nav-btn${screen === 'conflicts' ? ' active' : ''}`}
+                onClick={() => nav('conflicts')}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                    <path d="M12 9v4" />
+                    <path d="M12 17h.01" />
+                  </svg>
+                </span>
+                Conflict Resolution
+                <span className="nb nb-red">2</span>
+              </button>
+              <button
+                className={`nav-btn${screen === 'audit' ? ' active' : ''}`}
+                onClick={() => nav('audit')}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" />
+                  </svg>
+                </span>
+                Audit Log
+              </button>
+              <button
+                className={`nav-btn${screen === 'users' ? ' active' : ''}`}
+                onClick={() => nav('users')}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                    <circle cx="12" cy="7" r="4" />
+                  </svg>
+                </span>
+                Manage Users
+              </button>
+            </>
+          )}
+
+          {/* REPORTS */}
+          <div className="sb-sec">Reports</div>
+          <button
+            className={`nav-btn${screen === 'reports' ? ' active' : ''}`}
+            onClick={() => nav('reports')}
+          >
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M3 3h18v18H3z" />
+                <path d="M3 9h18" />
+                <path d="M9 21V9" />
+              </svg>
+            </span>
+            Generate Reports
+          </button>
+        </nav>
+
+        {/* Sidebar Footer */}
+        <div className="sb-foot">
+          <div className="sb-ava">{initials}</div>
+          <div>
+            <div className="sb-uname">{displayName}</div>
+            <div className="sb-urole">{role === 'admin' ? 'Administrator' : 'Staff'}</div>
           </div>
+          <div
+            className="online-dot"
+            title={
+              syncState === 'offline'
+                ? 'Offline — changes saved locally'
+                : syncState === 'syncing'
+                ? 'Connecting and syncing'
+                : 'Online — changes synced'
+            }
+            style={{
+              background: syncState === 'offline'
+                ? 'var(--red)'
+                : syncState === 'syncing'
+                ? 'var(--amber)'
+                : 'var(--green)',
+              boxShadow: syncState === 'offline'
+                ? '0 0 0 2px var(--red-bg)'
+                : syncState === 'syncing'
+                ? '0 0 0 2px var(--amber-bg)'
+                : '0 0 0 2px var(--green-bg)',
+            }}
+          />
+        </div>
         </aside>
 
         {/* ════════════════ MAIN CONTENT ════════════════ */}
@@ -2106,7 +2441,6 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                 ════════════════════════════════════════ */}
             {screen === 'dashboard' && (
               <div className="screen active">
-                
                 {/* ── HEADER PANEL ── */}
                 <div className="ph">
                   <div>
@@ -2115,41 +2449,76 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                   </div>
                 </div>
 
-                {/* ── 1. DYNAMIC METRICS CARDS GRID ── */}
-                <div className="sg" style={{ marginBottom: '24px' }}>
+                {/* =============================================
+                    📈 1. DYNAMIC METRICS CARDS GRID (SVG Icons)
+                  ============================================= */}
+                <div className="sg">
                   {/* TOTAL RESIDENTS */}
-                  <div className="sc" style={{ borderLeft: '4px solid #3b82f6' }}>
-                    <div className="si">👥</div>
+                  <div className="sc residents">
+                    <div className="si">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 2a5 5 0 1 0 0 10 5 5 0 0 0 0-10z" />
+                        <path d="M12 12c-2.21 0-4 1.79-4 4v2h8v-2c0-2.21-1.79-4-4-4z" />
+                        <path d="M12 6V4" />
+                        <path d="M8 10l2 2 4-4" />
+                      </svg>
+                    </div>
                     <div className="sl">Total Residents</div>
-                    <div className="sv" style={{ color: 'var(--accent)' }}>{totalResidents}</div>
+                    <div className="sv">{totalResidents}</div>
                   </div>
 
                   {/* TOTAL HOUSEHOLDS */}
-                  <div className="sc" style={{ borderLeft: '4px solid #10b981' }}>
-                    <div className="si">🏠</div>
+                  <div className="sc households">
+                    <div className="si">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        <path d="M9 22V12h6v10" />
+                      </svg>
+                    </div>
                     <div className="sl">Households</div>
                     <div className="sv" style={{ color: 'var(--green)' }}>{totalHouseholds}</div>
                   </div>
 
                   {/* REGISTERED VOTERS */}
-                  <div className="sc" style={{ borderLeft: '4px solid #f59e0b' }}>
-                    <div className="si">🗳️</div>
+                  <div className="sc voters">
+                    <div className="si">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M9 12l2 2 4-4" />
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                      </svg>
+                    </div>
                     <div className="sl">Reg. Voters</div>
                     <div className="sv" style={{ color: 'var(--amber)' }}>
-                      {totalVoters} <span style={{ fontSize: '11px', color: 'var(--muted)' }}>({totalResidents > 0 ? (totalVoters / totalResidents * 100).toFixed(0) : 0}%)</span>
+                      {totalVoters}
+                      <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                        ({totalResidents > 0 ? (totalVoters / totalResidents * 100).toFixed(0) : 0}%)
+                      </span>
                     </div>
                   </div>
 
                   {/* PENDING CERTIFICATES */}
-                  <div className="sc" style={{ borderLeft: '4px solid #a855f7' }}>
-                    <div className="si">📝</div>
+                  <div className="sc certs">
+                    <div className="si">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                    </div>
                     <div className="sl">Pending Certs</div>
                     <div className="sv" style={{ color: 'var(--purple)' }}>8</div>
                   </div>
 
                   {/* OPEN BLOTTER CASES */}
-                  <div className="sc" style={{ borderLeft: '4px solid #ef4444' }}>
-                    <div className="si">🚨</div>
+                  <div className="sc blotter">
+                    <div className="si">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <path d="M12 9v4" />
+                        <path d="M12 17h.01" />
+                      </svg>
+                    </div>
                     <div className="sl">Open Blotter</div>
                     <div className="sv" style={{ color: 'var(--red)' }}>
                       {typeof blotterList !== 'undefined' ? blotterList.filter(b => b.status === 'Open' || b.status === 'Under Mediation').length : 4}
@@ -2158,35 +2527,61 @@ const filteredAuditLogs = auditLogs.filter((log) => {
 
                   {/* SYSTEM CONFLICTS (ADMIN ONLY) */}
                   {role === 'admin' && (
-                    <div className="sc" style={{ borderLeft: '4px solid var(--orange)' }}>
-                      <div className="si">⚠️</div>
+                    <div className="sc conflicts">
+                      <div className="si">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                          <path d="M12 9v4" />
+                          <path d="M12 17h.01" />
+                        </svg>
+                      </div>
                       <div className="sl">Sync Conflicts</div>
                       <div className="sv" style={{ color: 'var(--orange)' }}>{totalConflicts}</div>
                     </div>
                   )}
 
                   {/* RESIDENT FEEDBACK */}
-                  <div className="sc" style={{ borderLeft: '4px solid var(--teal)' }}>
-                    <div className="si">💬</div>
+                  <div className="sc feedback">
+                    <div className="si">
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                      </svg>
+                    </div>
                     <div className="sl">{role === 'admin' ? 'Feedback' : 'Unread Feedback'}</div>
                     <div className="sv" style={{ color: 'var(--teal)' }}>5</div>
                   </div>
                 </div>
 
-                {/* ── 2. MIDDLE ROW: OPERATIONS & AUDIT TRAIL (TWO-COLUMN INTERFACE) ── */}
+                {/* =============================================
+                    📋 2. MIDDLE ROW: OPERATIONS & AUDIT TRAIL (2-COLUMN)
+                  ============================================= */}
                 <div className="tc" style={{ marginBottom: '24px' }}>
-                  
-                  {/* KALIWANG COLUMN: PENDING ACTIONS */}
+                  {/* LEFT COLUMN: PENDING ACTIONS */}
                   <div>
-                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    <div style={{
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      color: 'var(--muted)',
+                      marginBottom: '12px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px'
+                    }}>
                       {role === 'admin' ? 'Pending Admin Actions' : 'Pending Actions'}
                     </div>
-                    
+
+                    {/* SYNC CONFLICTS (Admin Only) */}
                     {role === 'admin' && totalConflicts > 0 && (
                       <div className="card">
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                           <div>
-                            <div className="ct">⚠️ Sync Conflicts ({totalConflicts})</div>
+                            <div className="ct">
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                <path d="M12 9v4" />
+                                <path d="M12 17h.01" />
+                              </svg>
+                              Sync Conflicts ({totalConflicts})
+                            </div>
                             <div className="cm">CouchDB revision conflicts need resolution</div>
                           </div>
                           <button className="btn btn-d btn-sm" onClick={() => nav('conflicts')}>Resolve Now</button>
@@ -2194,30 +2589,59 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                       </div>
                     )}
 
+                    {/* CERTIFICATE REQUESTS */}
                     <div className="card">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                          <div className="ct">📝 Certificate Requests {role === 'admin' ? '(3)' : ''}</div>
-                          <div className="cm">{role === 'admin' ? 'Pending approval by authorized officer' : '3 pending approval'}</div>
+                          <div className="ct">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <path d="M14 2v6h6" />
+                              <path d="M12 18v-6" />
+                              <path d="M9 15h6" />
+                            </svg>
+                            Certificate Requests {role === 'admin' ? '(3)' : ''}
+                          </div>
+                          <div className="cm">
+                            {role === 'admin' ? 'Pending approval by authorized officer' : '3 pending approval'}
+                          </div>
                         </div>
                         <button className="btn btn-p btn-sm" onClick={() => nav('cert-approve')}>Review</button>
                       </div>
                     </div>
 
+                    {/* FEEDBACK */}
                     <div className="card">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                          <div className="ct">💬 {role === 'admin' ? 'Unread Feedback (5)' : 'Resident Feedback'}</div>
-                          <div className="cm">{role === 'admin' ? 'Resident submissions awaiting response' : '5 unread submissions'}</div>
+                          <div className="ct">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            {role === 'admin' ? 'Unread Feedback (5)' : 'Resident Feedback'}
+                          </div>
+                          <div className="cm">
+                            {role === 'admin' ? 'Resident submissions awaiting response' : '5 unread submissions'}
+                          </div>
                         </div>
-                        <button className="btn btn-g btn-sm" onClick={() => nav('feedback')}>{role === 'admin' ? 'View All' : 'Review'}</button>
+                        <button className="btn btn-g btn-sm" onClick={() => nav('feedback')}>
+                          {role === 'admin' ? 'View All' : 'Review'}
+                        </button>
                       </div>
                     </div>
 
+                    {/* OPEN BLOTTER CASES */}
                     <div className="card">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
-                          <div className="ct">🚨 Open Blotter Cases {role === 'admin' ? '(4)' : ''}</div>
+                          <div className="ct">
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
+                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                              <path d="M12 9v4" />
+                              <path d="M12 17h.01" />
+                            </svg>
+                            Open Blotter Cases {role === 'admin' ? '(4)' : ''}
+                          </div>
                           <div className="cm">Active incident cases requiring mediation tracking</div>
                         </div>
                         <button className="btn btn-g btn-sm" onClick={() => nav('blotter-manage')}>Manage</button>
@@ -2225,32 +2649,65 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                     </div>
                   </div>
 
-                  {/* KANANG COLUMN: AUDIT TRAIL LOGS */}
+                  {/* RIGHT COLUMN: AUDIT TRAIL / ACTIVITY LOGS */}
                   <div>
-                    <div style={{ fontSize: '12px', fontWeight: 700, color: 'var(--muted)', marginBottom: '12px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                    <div style={{
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      color: 'var(--muted)',
+                      marginBottom: '12px',
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.5px'
+                    }}>
                       {role === 'admin' ? 'Recent Audit Trail' : 'Recent Activity'}
                     </div>
+
+                    {/* ACTIVITY LOGS (SVG Icons) */}
                     <div className="tw">
                       {role === 'staff' ? (
                         <>
+                          {/* CERTIFICATE ISSUED */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--accent-bg)' }}>📝</div>
+                            <div className="al-ico" style={{ background: 'var(--accent-bg)' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <path d="M14 2v6h6" />
+                                <path d="M12 18v-6" />
+                                <path d="M9 15h6" />
+                              </svg>
+                            </div>
                             <div className="al-body">
                               <div className="al-act">Certificate Issued — Clearance</div>
                               <div className="al-det">Lim, Ana G. · CERT-2024-088</div>
                             </div>
                             <div className="al-t">09:14</div>
                           </div>
+
+                          {/* AID ENTRY */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--green-bg)' }}>📦</div>
+                            <div className="al-ico" style={{ background: 'var(--green-bg)' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                <path d="M3.27 6.96L12 12.01l8.73-5.05" />
+                                <path d="M12 22.08V12" />
+                              </svg>
+                            </div>
                             <div className="al-body">
                               <div className="al-act">Aid Entry — Rice Distribution</div>
                               <div className="al-det">Cruz, Ramon P. · Purok 2</div>
                             </div>
                             <div className="al-t">09:02</div>
                           </div>
+
+                          {/* BLOTTER FILED */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--red-bg)' }}>🚨</div>
+                            <div className="al-ico" style={{ background: 'var(--red-bg)' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                <path d="M12 9v4" />
+                                <path d="M12 17h.01" />
+                              </svg>
+                            </div>
                             <div className="al-body">
                               <div className="al-act">Blotter Filed — Noise Complaint</div>
                               <div className="al-det">Case BLT-2024-041 · Purok 5</div>
@@ -2260,24 +2717,48 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                         </>
                       ) : (
                         <>
+                          {/* ADMIN ACTIONS */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--accent-bg)' }}>📝</div>
+                            <div className="al-ico" style={{ background: 'var(--accent-bg)' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <path d="M14 2v6h6" />
+                                <path d="M12 18v-6" />
+                                <path d="M9 15h6" />
+                              </svg>
+                            </div>
                             <div style={{ flex: 1 }}>
                               <div className="al-a">APPROVE_CERT — CERT-2024-088</div>
                               <div className="al-d">Juhairo Macabangon · Approved for Lim, Ana G.</div>
                             </div>
                             <div className="al-t">09:14</div>
                           </div>
+
+                          {/* SYNC OFFLINE */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--teal-bg)' }}>🔄</div>
+                            <div className="al-ico" style={{ background: 'var(--teal-bg)' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9 9 9 0 0 1 9 9z" />
+                                <path d="M12 12L12 12.01" />
+                                <path d="M12 6v6l4 4" />
+                              </svg>
+                            </div>
                             <div style={{ flex: 1 }}>
                               <div className="al-a">SYNC_OFFLINE — 14 records</div>
                               <div className="al-d">Jay Napagal · CouchDB sync completed</div>
                             </div>
                             <div className="al-t">07:45</div>
                           </div>
+
+                          {/* CONFLICT FLAGGED */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--amber-bg)' }}>⚠️</div>
+                            <div className="al-ico" style={{ background: 'var(--amber-bg)' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                <path d="M12 9v4" />
+                                <path d="M12 17h.01" />
+                              </svg>
+                            </div>
                             <div style={{ flex: 1 }}>
                               <div className="al-a">CONFLICT_FLAGGED — RES-0412</div>
                               <div className="al-d">2 device revisions conflict on purok field</div>
@@ -2287,82 +2768,235 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                         </>
                       )}
                     </div>
+
+                    {/* VIEW FULL AUDIT LOG (Admin Only) */}
                     {role === 'admin' && (
-                      <button className="btn btn-g btn-sm" onClick={() => nav('audit')} style={{ width: '100%', justifyContent: 'center', marginTop: '8px' }}>
-                        View Full Audit Log →
+                      <button
+                        className="btn btn-g btn-sm"
+                        onClick={() => nav('audit')}
+                        style={{ width: '100%', justifyContent: 'center', marginTop: '8px' }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}>
+                          <path d="M5 12h14" />
+                          <path d="M12 5l7 7-7 7" />
+                        </svg>
+                        View Full Audit Log
                       </button>
                     )}
                   </div>
                 </div>
 
-                {/* ── 3. BOTTOM ROW: GEOGRAPHIC POPULATION GRAPH & LOCAL STORAGE SPECS ── */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))', gap: '24px' }}>
-                  
-                  {/* KALIWA: PUROK POPULATION DISTRIBUTION GRAPH */}
-                  <div style={{ background: '#1e293b', padding: '24px', borderRadius: '8px' }}>
-                    <h3 style={{ color: '#f8fafc', fontSize: '16px', marginBottom: '16px', fontWeight: '600' }}>Population Distribution per Purok</h3>
+                {/* =============================================
+                    📊 3. BOTTOM ROW: PUROK DISTRIBUTION + SYSTEM LOGS
+                  ============================================= */}
+                <div style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(350px, 1fr))',
+                  gap: '24px'
+                }}>
+                  {/* LEFT: PUROK POPULATION DISTRIBUTION GRAPH */}
+                  <div style={{
+                    background: '#1e293b',
+                    padding: '24px',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(79, 142, 247, 0.1)'
+                  }}>
+                    <h3 style={{
+                      color: '#f8fafc',
+                      fontSize: '16px',
+                      marginBottom: '16px',
+                      fontWeight: '600',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                      </svg>
+                      Population Distribution per Purok
+                    </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                      
                       {/* PUROK 1 */}
                       <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8', fontSize: '13px', marginBottom: '4px' }}>
+                        <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          color: '#94a3b8',
+                          fontSize: '13px',
+                          marginBottom: '4px'
+                        }}>
                           <span>Purok 1</span>
                           <span>{p1Count} Residente</span>
                         </div>
-                        <div style={{ background: '#0f172a', height: '10px', borderRadius: '5px', overflow: 'hidden' }}>
-                          <div style={{ background: '#a855f7', height: '100%', width: `${totalResidents > 0 ? (p1Count / totalResidents * 100) : 0}%`, transition: 'width 0.5s ease-in-out' }}></div>
+                        <div style={{
+                          background: '#0f172a',
+                          height: '10px',
+                          borderRadius: '5px',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{
+                            background: '#a855f7',
+                            height: '100%',
+                            width: `${totalResidents > 0 ? (p1Count / totalResidents * 100) : 0}%`,
+                            transition: 'width 0.5s ease-in-out'
+                          }}></div>
                         </div>
                       </div>
 
                       {/* PUROK 2 */}
                       <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8', fontSize: '13px', marginBottom: '4px' }}>
+                        <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          color: '#94a3b8',
+                          fontSize: '13px',
+                          marginBottom: '4px'
+                        }}>
                           <span>Purok 2</span>
                           <span>{p2Count} Residente</span>
                         </div>
-                        <div style={{ background: '#0f172a', height: '10px', borderRadius: '5px', overflow: 'hidden' }}>
-                          <div style={{ background: '#10b981', height: '100%', width: `${totalResidents > 0 ? (p2Count / totalResidents * 100) : 0}%`, transition: 'width 0.5s ease-in-out' }}></div>
+                        <div style={{
+                          background: '#0f172a',
+                          height: '10px',
+                          borderRadius: '5px',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{
+                            background: '#10b981',
+                            height: '100%',
+                            width: `${totalResidents > 0 ? (p2Count / totalResidents * 100) : 0}%`,
+                            transition: 'width 0.5s ease-in-out'
+                          }}></div>
                         </div>
                       </div>
 
                       {/* PUROK 3 */}
                       <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8', fontSize: '13px', marginBottom: '4px' }}>
+                        <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          color: '#94a3b8',
+                          fontSize: '13px',
+                          marginBottom: '4px'
+                        }}>
                           <span>Purok 3</span>
                           <span>{p3Count} Residente</span>
                         </div>
-                        <div style={{ background: '#0f172a', height: '10px', borderRadius: '5px', overflow: 'hidden' }}>
-                          <div style={{ background: '#3b82f6', height: '100%', width: `${totalResidents > 0 ? (p3Count / totalResidents * 100) : 0}%`, transition: 'width 0.5s ease-in-out' }}></div>
+                        <div style={{
+                          background: '#0f172a',
+                          height: '10px',
+                          borderRadius: '5px',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{
+                            background: '#3b82f6',
+                            height: '100%',
+                            width: `${totalResidents > 0 ? (p3Count / totalResidents * 100) : 0}%`,
+                            transition: 'width 0.5s ease-in-out'
+                          }}></div>
                         </div>
                       </div>
 
                       {/* PUROK 5 */}
                       <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', color: '#94a3b8', fontSize: '13px', marginBottom: '4px' }}>
+                        <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          color: '#94a3b8',
+                          fontSize: '13px',
+                          marginBottom: '4px'
+                        }}>
                           <span>Purok 5</span>
                           <span>{p5Count} Residente</span>
                         </div>
-                        <div style={{ background: '#0f172a', height: '10px', borderRadius: '5px', overflow: 'hidden' }}>
-                          <div style={{ background: '#f59e0b', height: '100%', width: `${totalResidents > 0 ? (p5Count / totalResidents * 100) : 0}%`, transition: 'width 0.5s ease-in-out' }}></div>
+                        <div style={{
+                          background: '#0f172a',
+                          height: '10px',
+                          borderRadius: '5px',
+                          overflow: 'hidden'
+                        }}>
+                          <div style={{
+                            background: '#f59e0b',
+                            height: '100%',
+                            width: `${totalResidents > 0 ? (p5Count / totalResidents * 100) : 0}%`,
+                            transition: 'width 0.5s ease-in-out'
+                          }}></div>
                         </div>
                       </div>
                     </div>
                   </div>
 
-                  {/* KANAN: SYSTEM REPLICATION CONFIGURATION ARCHITECTURE */}
-                  <div style={{ background: '#1e293b', padding: '24px', borderRadius: '8px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                  {/* RIGHT: SYSTEM ACTIVITY LOGS */}
+                  <div style={{
+                    background: '#1e293b',
+                    padding: '24px',
+                    borderRadius: '8px',
+                    border: '1px solid rgba(79, 142, 247, 0.1)',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    justifyContent: 'space-between'
+                  }}>
                     <div>
-                      <h3 style={{ color: '#f8fafc', fontSize: '16px', marginBottom: '12px', fontWeight: '600' }}>Local System Activity Logs</h3>
-                      <p style={{ color: '#94a3b8', fontSize: '13px', lineHeight: '1.5' }}>
+                      <h3 style={{
+                        color: '#f8fafc',
+                        fontSize: '16px',
+                        marginBottom: '12px',
+                        fontWeight: '600',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                          <path d="M3.27 6.96L12 12.01l8.73-5.05" />
+                          <path d="M12 22.08V12" />
+                        </svg>
+                        Local System Activity Logs
+                      </h3>
+                      <p style={{
+                        color: '#94a3b8',
+                        fontSize: '13px',
+                        lineHeight: '1.5'
+                      }}>
                         Ang local PouchDB instance mo ay kasalukuyang nakikipag-ugnayan sa backend Node.js core endpoint. Ang lahat ng mga pagbabagong isinasagawa sa client layer ay ligtas na naka-queue para sa global CouchDB cluster replication stream.
                       </p>
                     </div>
-                    <div style={{ borderTop: '1px solid #334155', paddingTop: '12px', marginTop: '16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                      <span style={{ fontSize: '12px', color: '#10b981' }}>● Local synchronization active</span>
-                      <button className="btn btn-g btn-sm" onClick={() => nav('residents')}>View Masterlist →</button>
+                    <div style={{
+                      borderTop: '1px solid #334155',
+                      paddingTop: '12px',
+                      marginTop: '16px',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <span style={{
+                        fontSize: '12px',
+                        color: '#10b981',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px'
+                      }}>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="10" />
+                        </svg>
+                        Local synchronization active
+                      </span>
+                      <button
+                        className="btn btn-g btn-sm"
+                        onClick={() => nav('residents')}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        View Masterlist
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M5 12h14" />
+                          <path d="M12 5l7 7-7 7" />
+                        </svg>
+                      </button>
                     </div>
                   </div>
-
                 </div>
               </div>
             )}
@@ -2371,164 +3005,294 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                 ════════════════════════════════════════ */}
             {screen === 'residents' && (
               <div className="screen active">
+                {/* =============================================
+                    📌 HEADER PANEL (Modern + Clean)
+                    ============================================= */}
                 <div className="ph">
                   <div>
-                    <div className="pt">Resident Masterlist</div>
-                    <div className="ps">1,248 registered residents in Barangay Bustrac</div>
+                    <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                      </svg>
+                      Resident Masterlist
+                    </div>
+                    <div className="ps">
+                      <span style={{ color: 'var(--muted)' }}>1,248 registered residents</span>
+                      <span style={{ color: 'var(--hint)' }}> · Barangay Bustrac</span>
+                    </div>
                   </div>
-                  <button className="btn btn-p" onClick={() => nav('add-resident')}>
-                    ＋ Add Resident
+                  <button
+                    className="btn btn-p"
+                    onClick={() => nav('add-resident')}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 5v14M5 12h14" />
+                    </svg>
+                    Add Resident
                   </button>
                 </div>
-                
-                <div className="tw">
+
+                {/* =============================================
+                    🔍 SEARCH & FILTER BAR (Glass-Morphism)
+                    ============================================= */}
+                <div
+                  className="tw"
+                  style={{
+                    background: 'rgba(26, 29, 36, 0.4)',
+                    backdropFilter: 'blur(8px)',
+                    border: '1px solid rgba(79, 142, 247, 0.2)',
+                    marginBottom: '16px'
+                  }}
+                >
                   <div className="tb">
+                    {/* Search Box (SVG Icon) */}
                     <div className="sb-box">
-                      <span>🔍</span>
-                      <input placeholder="Search by name, purok, ID..." value={searchTerm}
-                       onChange={(e) => setSearchTerm(e.target.value)} // Naka-konekta na sa React state!
-                       />
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="11" cy="11" r="8" />
+                        <path d="M21 21l-4.35-4.35" />
+                      </svg>
+                      <input
+                        placeholder="Search by name, purok, or ID..."
+                        value={searchTerm}
+                        onChange={(e) => setSearchTerm(e.target.value)}
+                        style={{ color: 'var(--text)' }}
+                      />
                     </div>
-                    <select 
-  className="fc" 
-  style={{ width: '130px' }}
-  value={purokFilter}
-  onChange={(e) => setPurokFilter(e.target.value)}
->
-                      <option>All Puroks</option>
-                      <option>Purok 1</option><option>Purok 2</option>
-                      <option>Purok 3</option><option>Purok 4</option><option>Purok 5</option><option>Purok 6</option>
+
+                    {/* Purok Filter (SVG Icon) */}
+                    <select
+                      className="fc"
+                      style={{ width: '130px' }}
+                      value={purokFilter}
+                      onChange={(e) => setPurokFilter(e.target.value)}
+                    >
+                      <option value="">All Puroks</option>
+                      <option value="Purok 1">Purok 1</option>
+                      <option value="Purok 2">Purok 2</option>
+                      <option value="Purok 3">Purok 3</option>
+                      <option value="Purok 4">Purok 4</option>
+                      <option value="Purok 5">Purok 5</option>
+                      <option value="Purok 6">Purok 6</option>
                     </select>
+
+                    {/* Gender Filter (SVG Icon) */}
                     <select className="fc" style={{ width: '110px' }}>
-                      <option>All Gender</option><option>Male</option><option>Female</option>
+                      <option value="">All Gender</option>
+                      <option value="Male">Male</option>
+                      <option value="Female">Female</option>
                     </select>
                   </div>
+                </div>
 
-                  {/* SELECTED BUTTON / BULK ACTION BAR (Lalabas lang kapag may naka-check) */}
-                  {/* SELECTED BUTTON / BULK ACTION BAR WITH DROPDOWN */}
-                  {selectedResidents.length > 0 && (
-                    <div style={{
+                {selectedResidents.length > 0 && (
+                  <div
+                    style={{
                       display: 'flex',
                       alignItems: 'center',
                       justifyContent: 'space-between',
-                      background: '#1e293b', 
-                      border: '1px solid #3b82f6', 
-                      padding: '10px 16px',
-                      borderRadius: '6px',
-                      marginBottom: '14px',
+                      background: 'rgba(30, 41, 59, 0.8)',
+                      border: '1px solid rgba(59, 130, 246, 0.3)',
+                      padding: '12px 16px',
+                      borderRadius: '8px',
+                      marginBottom: '16px',
                       fontSize: '13px',
-                      position: 'relative' 
-                    }}>
-                      <div>
-                        Naka-select: <strong style={{ color: '#3b82f6' }}>{selectedResidents.length}</strong> {selectedResidents.length === 1 ? 'residente' : 'mga residente'}
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'relative' }}>
-                        
-                        {/* BULK ACTION BUTTON */}
-                        <button 
-                          className="btn btn-p btn-sm"
-                          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                          onClick={() => setShowBulkDropdown(!showBulkDropdown)}
-                        >
-                          ⚙️ Bulk Action <span style={{ fontSize: '10px' }}>{showBulkDropdown ? '▲' : '▼'}</span>
-                        </button>
+                      position: 'relative',
+                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                      </svg>
+                      <span>
+                        Selected: <strong style={{ color: 'var(--accent)' }}>{selectedResidents.length}</strong>
+                        {selectedResidents.length === 1 ? ' resident' : ' residents'}
+                      </span>
+                    </div>
 
-                        <button 
-                          className="btn btn-g btn-sm"
-                          onClick={() => {
-                            setSelectedResidents([]);
-                            setShowBulkDropdown(false);
-                          }}
-                        >
-                          Cancel
-                        </button>
+                    <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'relative' }}>
+                      {/* Bulk Action Button (SVG Icon) */}
+                      <button
+                        className="btn btn-p btn-sm"
+                        onClick={() => setShowBulkDropdown(!showBulkDropdown)}
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
+                          <path d="M12 2v2" />
+                          <path d="M12 18v2" />
+                          <path d="M4.93 4.93l2.83 2.83" />
+                          <path d="M16.24 16.24l2.83 2.83" />
+                          <path d="M2 12h2" />
+                          <path d="M20 12h2" />
+                          <path d="M4.93 19.07l2.83-2.83" />
+                          <path d="M16.24 7.76l2.83-2.83" />
+                        </svg>
+                        Bulk Actions
+                        <span style={{ fontSize: '10px' }}>{showBulkDropdown ? '▲' : '▼'}</span>
+                      </button>
 
-                        {/* FLOATING DROPDOWN MENU FOR STAFF */}
-                        {showBulkDropdown && (
-                          <div style={{
+                      {/* Cancel Button */}
+                      <button
+                        className="btn btn-g btn-sm"
+                        onClick={() => {
+                          setSelectedResidents([]);
+                          setShowBulkDropdown(false);
+                        }}
+                      >
+                        Cancel
+                      </button>
+
+                      {/* Floating Dropdown Menu (SVG Icons) */}
+                      {showBulkDropdown && (
+                        <div
+                          style={{
                             position: 'absolute',
-                            top: '35px',
-                            right: '75px',
-                            background: '#111827', 
-                            border: '1px solid #374151',
-                            borderRadius: '6px',
+                            top: '40px',
+                            right: '0',
+                            background: '#111827',
+                            border: '1px solid rgba(79, 142, 247, 0.2)',
+                            borderRadius: '8px',
                             boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)',
                             zIndex: 50,
                             minWidth: '240px',
-                            overflow: 'hidden'
-                          }}>
-                            
-                            {/* ACTION 1: KONEKTADO SA AID DISTRIBUTION */}
-                            <button
-      style={dropdownItemStyle}
-      onClick={() => {
-        nav('aid-encode'); // Itatapon na siya sa totoong Encode Distribution screen mo!
-        setShowBulkDropdown(false);
-      }}
-      onMouseEnter={(e) => e.target.style.background = '#1f2937'}
-      onMouseLeave={(e) => e.target.style.background = 'transparent'}
-    >
-      📦 Encode to Aid Program (Ayuda)
-    </button>
+                            overflow: 'hidden',
+                            animation: 'dp-fadeIn 0.2s ease-out'
+                          }}
+                        >
+                          {/* Encode to Aid Program */}
+                          <button
+                            style={{
+                              width: '100%',
+                              padding: '10px 12px',
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text)',
+                              fontSize: '13px',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onClick={() => {
+                              nav('aid-encode');
+                              setShowBulkDropdown(false);
+                            }}
+                            onMouseEnter={(e) => (e.target.style.background = 'rgba(79, 142, 247, 0.1)')}
+                            onMouseLeave={(e) => (e.target.style.background = 'transparent')}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                            </svg>
+                            Encode to Aid Program
+                          </button>
 
-                            {/* ACTION 2: KONEKTADO SA CERTIFICATES */}
-                            <button
-                              style={dropdownItemStyle}
-                              onClick={() => {
-                                nav('cert-print'); // <--- Itinama sa 'cert-print'
-                                setShowBulkDropdown(false);
-                              }}
-                              onMouseEnter={(e) => e.target.style.background = '#1f2937'}
-                              onMouseLeave={(e) => e.target.style.background = 'transparent'}
-                            >
-                              📄 Prepare Bulk Clearance / Indigency
-                            </button>
+                          {/* Prepare Bulk Certificates */}
+                          <button
+                            style={{
+                              width: '100%',
+                              padding: '10px 12px',
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--text)',
+                              fontSize: '13px',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onClick={() => {
+                              nav('cert-print');
+                              setShowBulkDropdown(false);
+                            }}
+                            onMouseEnter={(e) => (e.target.style.background = 'rgba(79, 142, 247, 0.1)')}
+                            onMouseLeave={(e) => (e.target.style.background = 'transparent')}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <path d="M14 2v6h6" />
+                              <path d="M12 18v-6" />
+                              <path d="M9 15h6" />
+                            </svg>
+                            Prepare Bulk Certificates
+                          </button>
 
-                            {/* Divider Line */}
-                            <div style={{ height: '1px', background: '#374151', margin: '4px 0' }}></div>
+                          {/* Divider */}
+                          <div style={{ height: '1px', background: 'rgba(79, 142, 247, 0.2)', margin: '4px 0' }} />
 
-                            {/* ACTION 3: TOTOONG CSV EXPORT */}
-                            <button
-                              style={{ ...dropdownItemStyle, color: '#10b981' }} 
-                              onClick={() => {
-                                const selectedData = residentsList.filter(r => selectedResidents.includes(r.id));
-                                const csvHeaders = "Resident ID,Name,Purok,Age,Civil Status,Voter\n";
-                                const csvRows = selectedData.map(r => 
-                                  `"${r.id}","${r.name}","${r.purok}",${r.age},"${r.civilStatus}","${r.voter ? 'Yes' : 'No'}"`
-                                ).join("\n");
-                                
-                                const blob = new Blob([csvHeaders + csvRows], { type: 'text/csv;charset=utf-8;' });
-                                const url = URL.createObjectURL(blob);
-                                const link = document.createElement("a");
-                                link.setAttribute("href", url);
-                                link.setAttribute("download", `Bustrac_Selected_Residents.csv`);
-                                document.body.appendChild(link);
-                                link.click();
-                                document.body.removeChild(link);
-
-                                setShowBulkDropdown(false);
-                                setSelectedResidents([]); 
-                              }}
-                              onMouseEnter={(e) => e.target.style.background = 'rgba(16, 185, 129, 0.1)'}
-                              onMouseLeave={(e) => e.target.style.background = 'transparent'}
-                            >
-                              📊 Export Selection to CSV (Excel)
-                            </button>
-
-                          </div>
-                        )}
-
-                      </div>
+                          {/* Export to CSV */}
+                          <button
+                            style={{
+                              width: '100%',
+                              padding: '10px 12px',
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--green)',
+                              fontSize: '13px',
+                              textAlign: 'left',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              transition: 'all 0.2s ease'
+                            }}
+                            onClick={() => {
+                              const selectedData = residentsList.filter(r => selectedResidents.includes(r.id));
+                              const csvHeaders = "Resident ID,Name,Purok,Age,Civil Status,Voter\n";
+                              const csvRows = selectedData
+                                .map(r => `"${r.id}","${r.name}","${r.purok}",${r.age},"${r.civilStatus}","${r.voter ? 'Yes' : 'No'}"`)
+                                .join("\n");
+                              const blob = new Blob([csvHeaders + csvRows], { type: 'text/csv;charset=utf-8;' });
+                              const url = URL.createObjectURL(blob);
+                              const link = document.createElement("a");
+                              link.setAttribute("href", url);
+                              link.setAttribute("download", `Bustrac_Selected_Residents_${new Date().toISOString().slice(0, 10)}.csv`);
+                              document.body.appendChild(link);
+                              link.click();
+                              document.body.removeChild(link);
+                              setShowBulkDropdown(false);
+                              setSelectedResidents([]);
+                            }}
+                            onMouseEnter={(e) => (e.target.style.background = 'rgba(16, 185, 129, 0.1)')}
+                            onMouseLeave={(e) => (e.target.style.background = 'transparent')}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <path d="M7 10l5 5 5-5" />
+                              <path d="M12 15v-6" />
+                            </svg>
+                            Export to CSV
+                          </button>
+                        </div>
+                      )}
                     </div>
-                  )}
-
+                  </div>
+                )}
+                <div
+                  className="tw"
+                  style={{
+                    background: 'rgba(26, 29, 36, 0.4)',
+                    backdropFilter: 'blur(8px)',
+                    border: '1px solid rgba(79, 142, 247, 0.2)',
+                    borderRadius: '8px'
+                  }}
+                >
                   <table>
                     <thead>
                       <tr>
-                        {/* MASTER CHECKBOX COLUMN */}
+                        {/* Master Checkbox */}
                         <th style={{ width: '40px', textAlign: 'center' }}>
-                          <input 
-                            type="checkbox" 
+                          <input
+                            type="checkbox"
                             style={{ cursor: 'pointer' }}
                             checked={residentsList.length > 0 && selectedResidents.length === residentsList.length}
                             onChange={(e) => {
@@ -2540,91 +3304,169 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                             }}
                           />
                         </th>
-                        <th>Resident ID</th><th>Full Name</th><th>Purok</th>
-                        <th>Age</th><th>Civil Status</th><th>Voter</th>
+                        <th>Resident ID</th>
+                        <th>Full Name</th>
+                        <th>Purok</th>
+                        <th>Age</th>
+                        <th>Civil Status</th>
+                        <th>Voter</th>
                         {role === 'admin' && <th>Household</th>}
                         <th>Actions</th>
                       </tr>
                     </thead>
                     <tbody>
-  {filteredResidents.map((res) => {
-    const isChecked = selectedResidents.includes(res.id);
-    return (
-      <tr 
-        key={res.id} 
-        style={isChecked ? { background: 'rgba(16, 185, 129, 0.08)' } : undefined}
-      >
-        {/* CHECKBOX COLUMN */}
-        <td style={{ textAlign: 'center' }}>
-          <input 
-            type="checkbox" 
-            checked={isChecked}
-            onChange={(e) => {
-              if (e.target.checked) {
-                setSelectedResidents([...selectedResidents, res.id]);
-              } else {
-                setSelectedResidents(selectedResidents.filter(id => id !== res.id));
-              }
-            }}
-          />
-        </td>
-        <td style={monoMuted}>{res.id}</td>
-        <td>
-          <strong>{res.name}</strong>
-          {res.conflict && (
-            <> {' '}<span className="badge r" style={{ fontSize: '9px' }}>⚠ Conflict</span></>
-          )}
-        </td>
-        <td><span className={`badge ${res.purokClass}`}>{res.purok}</span></td>
-        <td>{res.age}</td>
-        <td>{res.civilStatus}</td>
-        <td>
-          <span className={`badge ${res.voter ? 'g' : 'gr'}`}>
-            {res.voter ? '✓ Yes' : '✗ No'}
-          </span>
-        </td>
-        {role === 'admin' && <td>{res.household}</td>}
-        
-        {/* ── DYNAMIC ACTIONS COLUMN SECTION ── */}
-        <td>
-          {/* 1. VIEW PROFILE ACTION */}
-          <span 
-            style={{ color: '#3b82f6', cursor: 'pointer', marginRight: '10px', fontSize: '12px', fontWeight: 'bold' }}
-            onClick={() => {
-              console.log("Viewing Resident ID:", res.id);
-              setSelectedResidentId(res.id); // Siguraduhing may state ka na ganito sa itaas ng return
-              nav('view-resident');
-            }}
-          >
-            View
-          </span>
+                      {filteredResidents.map((res) => {
+                        const isChecked = selectedResidents.includes(res.id);
+                        return (
+                          <tr
+                            key={res.id}
+                            style={
+                              isChecked
+                                ? {
+                                    background: 'rgba(16, 185, 129, 0.08)',
+                                    borderLeft: '3px solid var(--green)'
+                                  }
+                                : {}
+                            }
+                          >
+                            {/* Checkbox Column */}
+                            <td style={{ textAlign: 'center' }}>
+                              <input
+                                type="checkbox"
+                                checked={isChecked}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setSelectedResidents([...selectedResidents, res.id]);
+                                  } else {
+                                    setSelectedResidents(selectedResidents.filter(id => id !== res.id));
+                                  }
+                                }}
+                              />
+                            </td>
 
-          {/* 2. EDIT PROFILE ACTION */}
-          <span 
-            style={{ color: '#eab308', cursor: 'pointer', marginRight: '10px', fontSize: '12px', fontWeight: 'bold' }}
-            onClick={() => {
-              setSelectedResidentId(res.id);
-              // Dito mo rin pwedeng i-prefill yung local edit form buffer mo kung mayroon na
-              nav('edit-resident');
-            }}
-          >
-            Edit
-          </span>
+                            {/* Resident ID */}
+                            <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{res.id}</td>
 
-          {/* 3. DELETE DANGER ACTION (ADMIN ONLY GUARD) */}
-{role === 'admin' && (
-  <span 
-    style={{ color: '#ef4444', cursor: 'pointer', fontSize: '12px', fontWeight: 'bold' }}
-    onClick={() => handleDeleteResident(res.id, res.name)} // DITO TINAWAG ANG REAL DELETION FUNCTION!
-  >
-    Delete
-  </span>
-)}
-        </td>
-      </tr>
-    );
-  })}
-</tbody>
+                            {/* Full Name */}
+                            <td>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <strong>{res.name}</strong>
+                                {res.conflict && (
+                                  <span className="badge r" style={{ fontSize: '9px' }}>
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                      <path d="M12 9v4" />
+                                      <path d="M12 17h.01" />
+                                    </svg>
+                                    Conflict
+                                  </span>
+                                )}
+                              </div>
+                            </td>
+
+                            {/* Purok */}
+                            <td>
+                              <span className={`badge ${res.purokClass}`}>{res.purok}</span>
+                            </td>
+
+                            {/* Age */}
+                            <td>{res.age}</td>
+
+                            {/* Civil Status */}
+                            <td>{res.civilStatus}</td>
+
+                            {/* Voter Status */}
+                            <td>
+                              <span className={`badge ${res.voter ? 'g' : 'gr'}`}>
+                                {res.voter ? (
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                    <path d="M22 4L12 14.01l-3-3" />
+                                  </svg>
+                                ) : (
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <circle cx="12" cy="12" r="10" />
+                                    <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+                                    <line x1="9" y1="9" x2="9.01" y2="9" />
+                                    <line x1="15" y1="9" x2="15.01" y2="9" />
+                                  </svg>
+                                )}
+                                {res.voter ? 'Yes' : 'No'}
+                              </span>
+                            </td>
+
+                            {/* Household (Admin Only) */}
+                            {role === 'admin' && <td style={{ fontFamily: 'var(--mono)' }}>{res.household}</td>}
+
+                            {/* Actions */}
+                            <td style={{ whiteSpace: 'nowrap' }}>
+                              {/* View */}
+                              <button
+                                className="btn btn-g btn-sm"
+                                onClick={() => {
+                                  setSelectedResidentId(res.id);
+                                  nav('view-resident');
+                                }}
+                                style={{
+                                  padding: '4px 8px',
+                                  marginRight: '4px',
+                                  color: 'var(--accent)',
+                                  background: 'transparent',
+                                  border: '1px solid rgba(79, 142, 247, 0.3)'
+                                }}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <path d="M14 2v6h6" />
+                                  <path d="M12 18v-6" />
+                                  <path d="M9 15h6" />
+                                </svg>
+                              </button>
+
+                              {/* Edit */}
+                              <button
+                                className="btn btn-g btn-sm"
+                                onClick={() => {
+                                  setSelectedResidentId(res.id);
+                                  nav('edit-resident');
+                                }}
+                                style={{
+                                  padding: '4px 8px',
+                                  marginRight: '4px',
+                                  color: 'var(--amber)',
+                                  background: 'transparent',
+                                  border: '1px solid rgba(251, 191, 36, 0.3)'
+                                }}
+                              >
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                </svg>
+                              </button>
+
+                              {/* Delete (Admin Only) */}
+                              {role === 'admin' && (
+                                <button
+                                  className="btn btn-g btn-sm"
+                                  onClick={() => handleDeleteResident(res.id, res.name)}
+                                  style={{
+                                    padding: '4px 8px',
+                                    color: 'var(--red)',
+                                    background: 'transparent',
+                                    border: '1px solid rgba(248, 113, 113, 0.3)'
+                                  }}
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M3 6h18" />
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                  </svg>
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
                   </table>
                 </div>
               </div>
@@ -2637,19 +3479,51 @@ const filteredAuditLogs = auditLogs.filter((log) => {
               <div className="screen active">
                 <div className="ph">
                   <div>
-                    <div className="pt">Add New Resident</div>
+                    <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                      Add New Resident
+                    </div>
                     <div className="ps">Fill in the resident's complete profile</div>
                   </div>
-                  <button className="btn btn-g" onClick={() => nav('residents')}>← Back</button>
+                  <button
+                    className="btn btn-g"
+                    onClick={() => nav('residents')}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M19 12H5" />
+                      <path d="M12 19l-7-7 7-7" />
+                    </svg>
+                    Back
+                  </button>
                 </div>
+
+                {/* =============================================
+                    📋 FORM PANEL (Glass-Morphism + SVG Icons)
+                    ============================================= */}
                 <form onSubmit={role === 'admin' ? submitAddResident : (e) => e.preventDefault()}>
-                  <div className="fp">
-                    <div className="fp-t">📋 Personal Information</div>
+                  <div className="fp" style={{
+                    background: 'rgba(26, 29, 36, 0.4)',
+                    backdropFilter: 'blur(8px)',
+                    border: '1px solid rgba(79, 142, 247, 0.2)'
+                  }}>
+                    <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      Personal Information
+                    </div>
+
+                    {/* Name Fields (3-Column Grid) */}
                     <div className="fg3">
                       <div className="fg">
                         <label className="fl">First Name</label>
                         <input
-                          className="fc" placeholder="e.g. Maria" required
+                          className="fc"
+                          placeholder="e.g. Maria"
+                          required
                           value={role === 'admin' ? residentForm.firstName : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('firstName', e.target.value) : undefined}
                         />
@@ -2657,7 +3531,9 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                       <div className="fg">
                         <label className="fl">Middle Name</label>
                         <input
-                          className="fc" placeholder="e.g. Dela Cruz" required
+                          className="fc"
+                          placeholder="e.g. Dela Cruz"
+                          required
                           value={role === 'admin' ? residentForm.middleName : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('middleName', e.target.value) : undefined}
                         />
@@ -2665,17 +3541,23 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                       <div className="fg">
                         <label className="fl">Last Name</label>
                         <input
-                          className="fc" placeholder="e.g. Santos" required
+                          className="fc"
+                          placeholder="e.g. Santos"
+                          required
                           value={role === 'admin' ? residentForm.lastName : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('lastName', e.target.value) : undefined}
                         />
                       </div>
                     </div>
+
+                    {/* Birthdate & Gender (2-Column Grid) */}
                     <div className="fg2">
                       <div className="fg">
                         <label className="fl">Birthdate</label>
                         <input
-                          className="fc" type="date" required
+                          className="fc"
+                          type="date"
+                          required
                           value={role === 'admin' ? residentForm.birthdate : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('birthdate', e.target.value) : undefined}
                         />
@@ -2683,88 +3565,141 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                       <div className="fg">
                         <label className="fl">Gender</label>
                         <select
-                          className="fc" required
+                          className="fc"
+                          required
                           value={role === 'admin' ? residentForm.gender : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('gender', e.target.value) : undefined}
                         >
                           <option value="">-- Select --</option>
-                          <option>Male</option><option>Female</option>
+                          <option value="Male">Male</option>
+                          <option value="Female">Female</option>
                         </select>
                       </div>
                     </div>
+
+                    {/* Civil Status & Contact (2-Column Grid) */}
                     <div className="fg2">
                       <div className="fg">
                         <label className="fl">Civil Status</label>
                         <select
-                          className="fc" required
+                          className="fc"
+                          required
                           value={role === 'admin' ? residentForm.civilStatus : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('civilStatus', e.target.value) : undefined}
                         >
                           <option value="">-- Select --</option>
-                          <option>Single</option><option>Married</option>
-                          <option>Widowed</option><option>Separated</option>
+                          <option value="Single">Single</option>
+                          <option value="Married">Married</option>
+                          <option value="Widowed">Widowed</option>
+                          <option value="Separated">Separated</option>
                         </select>
                       </div>
                       <div className="fg">
                         <label className="fl">Contact Number</label>
                         <input
-                          className="fc" placeholder="09XX-XXX-XXXX" required
+                          className="fc"
+                          placeholder="09XX-XXX-XXXX"
+                          required
                           value={role === 'admin' ? residentForm.contact : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('contact', e.target.value) : undefined}
                         />
                       </div>
                     </div>
+
+                    {/* Purok & Household (2-Column Grid) */}
                     <div className="fg2">
                       <div className="fg">
                         <label className="fl">Purok</label>
                         <select
-                          className="fc" required
+                          className="fc"
+                          required
                           value={role === 'admin' ? residentForm.purok : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('purok', e.target.value) : undefined}
                         >
                           <option value="">-- Select --</option>
-                          <option>Purok 1</option><option>Purok 2</option>
-                          <option>Purok 3</option><option>Purok 4</option><option>Purok 5</option>
+                          <option value="Purok 1">Purok 1</option>
+                          <option value="Purok 2">Purok 2</option>
+                          <option value="Purok 3">Purok 3</option>
+                          <option value="Purok 4">Purok 4</option>
+                          <option value="Purok 5">Purok 5</option>
                         </select>
                       </div>
                       <div className="fg">
                         <label className="fl">Household</label>
                         <select
-                          className="fc" required
+                          className="fc"
+                          required
                           value={role === 'admin' ? residentForm.household : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('household', e.target.value) : undefined}
                         >
                           <option value="">-- Select Household --</option>
-                        {householdsList.map((hh) => {
-      // Gagawa ng awtomatikong "Family Name" sa pamamagitan ng pagkuha ng Last Name sa hh.head
-      const lastName = hh.head.split(',')[0].trim();
-      
-      return (
-        <option key={hh.id} value={hh.id}>
-          {hh.id} — {lastName} Family ({hh.purok})
-        </option>
-      );
-    })}
+                          {householdsList.map((hh) => {
+                            const lastName = hh.head.split(',')[0].trim();
+                            return (
+                              <option key={hh.id} value={hh.id}>
+                                {hh.id} — {lastName} Family ({hh.purok})
+                              </option>
+                            );
+                          })}
                         </select>
                       </div>
                     </div>
+
+                    {/* Voter Checkbox */}
                     <div className="fg">
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
+                      <label style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px',
+                        fontSize: '13px',
+                        cursor: 'pointer'
+                      }}>
                         <input
                           type="checkbox"
                           checked={role === 'admin' ? residentForm.voter : undefined}
                           onChange={role === 'admin' ? (e) => updateResidentField('voter', e.target.checked) : undefined}
-                        />{' '}
+                        />
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M9 12l2 2 4-4" />
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                        </svg>
                         Registered Voter
                       </label>
                     </div>
                   </div>
+
+                  {/* Offline Mode Notice */}
                   <div className="note note-i" style={{ marginBottom: '14px' }}>
-                    🔄 <strong>Offline mode ready:</strong> Record saved to local CouchDB and synced on reconnect.
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9 9 9 0 0 1 9 9z" />
+                      <path d="M12 12L12 12.01" />
+                      <path d="M12 6v6l4 4" />
+                    </svg>
+                    <strong>Offline mode ready:</strong> Record saved to local CouchDB and synced on reconnect.
                   </div>
+
+                  {/* Action Buttons */}
                   <div className="fa">
-                    <button type="submit" className="btn btn-p">💾 Save Resident</button>
-                    <button type="button" className="btn btn-g" onClick={() => nav('residents')}>Cancel</button>
+                    <button type="submit" className="btn btn-p" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M19 21H5" />
+                        <path d="M19 3H5" />
+                        <path d="M19 12H5" />
+                        <path d="M5 21V3" />
+                      </svg>
+                      Save Resident
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-g"
+                      onClick={() => nav('residents')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 15l-6-6-6 6" />
+                      </svg>
+                      Cancel
+                    </button>
                   </div>
                 </form>
               </div>
@@ -2773,11 +3708,7 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                 SCREEN: VIEW RESIDENT PROFILE
                 ════════════════════════════════════════ */}
             {screen === 'view-resident' && (() => {
-              // Hahanapin ang impormasyon ng residente
               const res = residentsList.find(r => r.id === selectedResidentId);
-              
-              // Hahanapin ang kasaysayan ng kanyang mga natanggap na ayuda sa distribution system
-              // Gagamit ng fallback array kung sakaling wala pang laman ang aidLogs
               const personalAidHistory = (typeof aidLogs !== 'undefined' ? aidLogs : [])
                 .filter(log => log.residentId === selectedResidentId);
 
@@ -3006,9 +3937,6 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                   </div>
                 )}
            
-            
-                
-
             {screen === 'add-household' && (
               <div className="screen active">
                 <div className="ph">
@@ -3077,8 +4005,8 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                 <div>
                   <div className="pt">Manage Households</div>
                   <div className="ps">
-  {householdsList ? householdsList.length : 0} households registered
-</div>
+                  {householdsList ? householdsList.length : 0} households registered
+                </div>
                 </div>
                 <button className="btn btn-p" onClick={() => nav('add-household')}>＋ Add Household </button>
               </div>
@@ -3087,26 +4015,26 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                   <div className="sb-box">
                     <span>🔍</span>
                     <input 
-  type="text"
-  className="fc" 
-  placeholder="Search household..." 
-  value={householdSearch}
-  onChange={(e) => setHouseholdSearch(e.target.value)}
-/>
+                          type="text"
+                          className="fc" 
+                          placeholder="Search household..." 
+                          value={householdSearch}
+                          onChange={(e) => setHouseholdSearch(e.target.value)}
+                        />
                   </div>
                   <select 
-  className="fc" 
-  style={{ width: '130px' }} 
-  value={purokFilter}
-  onChange={(e) => setPurokFilter(e.target.value)}
->
-  <option value="All Puroks">All Puroks</option>
-  {uniquePuroks.map((purok) => (
-    <option key={purok} value={purok}>
-      {purok}
-    </option>
-  ))}
-</select>
+                    className="fc" 
+                    style={{ width: '130px' }} 
+                    value={purokFilter}
+                    onChange={(e) => setPurokFilter(e.target.value)}
+                  >
+                    <option value="All Puroks">All Puroks</option>
+                    {uniquePuroks.map((purok) => (
+                      <option key={purok} value={purok}>
+                        {purok}
+                      </option>
+                    ))}
+                  </select>
                 </div>
                 <table>
                   <thead>
@@ -3131,7 +4059,6 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                     </tr>
                   </thead>
                   
-                  {/* DITO NANGYARI ANG MAGIC: Pinalitan ng dynamic map ang mga hardcoded rows */}
                   <tbody>
             {filteredHouseholds.map((h) => (
               <tr key={h.id}>
@@ -3296,735 +4223,1809 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                 SCREEN: ISSUANCE & PRINT
                 ════════════════════════════════════════ */}
             {screen === 'cert-print' && (
-              <div className="screen active">
-              <div className="ph">
-              <div>
-                <div className="pt">Certificate Issuance &amp; Print</div>
-                <div className="ps">Generate, track, and print approved local community clearances</div>
-              </div>
-              </div>
-
-              <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'start' }}>
-              {/* KALIWANG BAHAGI: ANG TRANSACTION LIST TABLE */}
-              <div>
-                <div className="tw">
-                  <table>
-                    <thead>
-                      <tr><th>Cert #</th><th>Resident</th><th>Type</th><th>Status</th><th>Actions</th></tr>
-                    </thead>
-                    <tbody>
-  {approvedCertificates.length === 0 ? (
-    <tr>
-      <td colSpan="5" style={{ textAlign: 'center', color: 'var(--muted)' }}>
-        No approved certificates awaiting issuance preview.
-      </td>
-    </tr>
-  ) : (
-    // 💡 DYNAMIC FOCUS: approvedCertificates na ang ginagamit natin dito ngayon!
-    approvedCertificates.map((req) => {
-      const residentName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
-      const certificateType = req.certificateType || req.certType || 'Certificate';
-      const status = req.status || 'Approved';
-      const isIssued = status === 'Issued';
-      const isSelected = selectedCertificate?._id === req._id;
-
-      return (
-        <tr
-          key={req._id}
-          onClick={() => setSelectedCertificate(req)}
-          style={{ 
-            cursor: 'pointer',
-            background: isSelected ? 'rgba(59, 130, 246, 0.12)' : undefined,
-            borderLeft: isSelected ? '3px solid #3b82f6' : 'none'
-          }}
-        >
-          <td style={{ fontFamily: 'monospace', color: '#94a3b8' }}>{req._id}</td>
-          <td><strong>{residentName || 'Unnamed Resident'}</strong></td>
-          <td><span className="badge t">{certificateType}</span></td>
-          <td>
-            <span className="badge g">Approved</span>
-          </td>
-          <td>
-            <button
-              className="btn btn-p btn-sm"
-              onClick={(event) => {
-                event.stopPropagation();
-                handlePrintRelease(req); // Tatakbo na ang state transition papuntang step 4
-              }}
-            >
-              🖨️ Print &amp; Issue
-            </button>
-          </td>
-        </tr>
-      );
-    })
-  )}
-</tbody>
-                  </table>
-                </div>
-              </div>
-
-              {/* KANANG BAHAGI: ANG AKTWAL NA DOKUMENTO (DASHBOARD SCREEN & PRINT VISUALIZATION) */}
-              <div>
-              {selectedCertificate ? (
-              <div 
-              className="cert-p" 
-              id="printable-certificate-card" 
-              style={{ 
-                position: 'relative',
-                padding: '40px', 
-                background: '#ffffff',       /* Pwersahing puti ang papel sa screen */
-                borderRadius: '8px', 
-                boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
-                color: '#1e293b',            /* Base dark text para sa buong papel */
-                overflow: 'hidden'
-              }}
-              >
-                {Number(selectedCertificate.step) === 5 && (
-        <div 
-          className="non-printable-watermark" // Lalagyan ng CSS class para pwedeng itago sa physical print kung kailangan
-          style={{ 
-            position: 'absolute',
-            top: '40%',
-            left: '50%',
-            transform: 'translate(-50%, -50%) rotate(-25deg)',
-            fontSize: '75px',
-            fontWeight: '900',
-            color: 'rgba(22, 163, 74, 0.09)', // Napakalamlam na berdeng watermark para sa background registry visualization
-            border: '8px double rgba(22, 163, 74, 0.15)',
-            padding: '10px 40px',
-            borderRadius: '16px',
-            letterSpacing: '6px',
-            pointerEvents: 'none',
-            userSelect: 'none',
-            whiteSpace: 'nowrap',
-            zIndex: 1
-          }}
-        >
-          RELEASED / ISSUED
+  <div className="screen active">
+    {/* =============================================
+         📜 HEADER PANEL (SVG + Modern)
+         ============================================= */}
+    <div className="ph">
+      <div>
+        <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+            <path d="M12 18v-6" />
+            <path d="M9 15h6" />
+          </svg>
+          Certificate Issuance & Print
         </div>
-      )}
-              {/* LETTERHEAD HEADERS */}
-              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-                <h2 style={{ fontSize: '14px', margin: 0, color: '#475569', fontWeight: 'normal', textTransform: 'uppercase' }}>
-                  Republic of the Philippines
-                </h2>
-                <h2 style={{ fontSize: '18px', margin: '4px 0', color: '#0f172a', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                  Barangay Bustrac
-                </h2>
-                <h3 style={{ fontSize: '13px', margin: 0, color: '#64748b', fontStyle: 'italic' }}>
-                  Municipality of Nabua, Camarines Sur
-                </h3>
-              </div>
+        <div className="ps">Generate, track, and print approved local community clearances</div>
+      </div>
+    </div>
 
-              <hr style={{ borderColor: '#0f172a', borderWidth: '1.5px', margin: '12px 0' }} />
-
-              {/* DYNAMIC CERTIFICATE TITLE */}
-              <h2 style={{ textAlign: 'center', margin: '24px 0', color: '#2563eb', letterSpacing: '1.5px', fontSize: '22px', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                {((selectedCertificate.certificateType || 'CERTIFICATE').toString()).toUpperCase()}
-              </h2>
-
-              <hr style={{ borderColor: '#0f172a', borderWidth: '1.5px', margin: '12px 0' }} />
-
-              {/* BODY PARAGRAPHS (DARK & READABLE CONTRAST) */}
-              <p style={{ marginTop: '28px', lineHeight: '2', color: '#1e293b', textIndent: '40px', textAlign: 'justify', fontSize: '15px' }}>
-                This is to certify that <strong>{`${selectedCertificate.firstName || ''} ${selectedCertificate.lastName || ''}`.trim().toUpperCase()}</strong>, 
-                of legal age, a <em>bona fide</em> resident of <strong>
-                  {selectedCertificate.purok || 
-                    (typeof residentsList !== 'undefined' && residentsList.find(r => r.name?.toLowerCase().includes(selectedCertificate.lastName?.toLowerCase() || ''))?.purok) || 
-                    'Purok 1'}
-                </strong>, Barangay Bustrac, Nabua, Camarines Sur, 
-                has been found to be of <strong>good moral character</strong> and has no derogatory record or pending criminal case on file in this jurisdiction as of this date.
-              </p>
-
-              <p style={{ marginTop: '20px', lineHeight: '2', color: '#1e293b', textIndent: '40px', textAlign: 'justify', fontSize: '15px' }}>
-                This certification is issued upon the request of the above-named person for <strong>{selectedCertificate.purpose || 'any legal purpose'}</strong> and for whatever legal intent it may serve.
-              </p>
-
-              {/* SIGNATORY BLOCK GROUP */}
-              <div style={{ marginTop: '60px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                <div style={{ textAlign: 'center', marginRight: '20px' }}>
-                  <div style={{ color: '#475569', fontSize: '13px', marginBottom: '35px' }}>
-                    Issued on: {selectedCertificate.date_issued || selectedCertificate.updatedAt || selectedCertificate.createdAt || 'Today'}
-                  </div>
-                  
-                  {/* 💡 TINANGGAL NA ANG MAHABANG TRACKING CODE ROW DITO PARA MALINIS PANOORIN */}
-                  
-                  <strong style={{ color: '#0f172a', display: 'block', borderTop: '1px solid #0f172a', paddingTop: '8px', minWidth: '240px', fontSize: '15px', textTransform: 'uppercase' }}>
-                    HON. MARK GIAN CORTERO
-                  </strong>
-                  <div style={{ fontSize: '13px', color: '#475569', marginTop: '2px' }}>Barangay Captain</div>
-                </div>
-              </div>
-              </div>
+    {/* =============================================
+         📄 TWO-COLUMN LAYOUT (Glass-Morphism)
+         ============================================= */}
+    <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'start' }}>
+      {/* LEFT COLUMN: TRANSACTION LIST TABLE (Glass-Morphism) */}
+      <div>
+        <div className="tw" style={{
+          background: 'rgba(26, 29, 36, 0.4)',
+          backdropFilter: 'blur(8px)',
+          border: '1px solid rgba(79, 142, 247, 0.2)',
+          borderRadius: '8px'
+        }}>
+          <div className="tb" style={{ borderBottom: '1px solid rgba(79, 142, 247, 0.2)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontWeight: '700', fontSize: '13px', color: 'var(--text)' }}>Approved Certificates</span>
+            </div>
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>Cert #</th>
+                <th>Resident</th>
+                <th>Type</th>
+                <th>Status</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {approvedCertificates.length === 0 ? (
+                <tr>
+                  <td colSpan="5" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginRight: '6px' }}>
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                      <path d="M12 9v4" />
+                      <path d="M12 17h.01" />
+                    </svg>
+                    No approved certificates awaiting issuance.
+                  </td>
+                </tr>
               ) : (
-              <div style={{ 
-              background: '#1e293b', 
-              borderRadius: '8px', 
-              padding: '40px', 
-              textAlign: 'center', 
-              color: '#64748b',
-              border: '2px dashed #334155' 
-              }}>
-              👈 Select an approved request from the table to preview and issue the certificate document view.
-              </div>
+                approvedCertificates.map((req) => {
+                  const residentName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
+                  const certificateType = req.certificateType || req.certType || 'Certificate';
+                  const isSelected = selectedCertificate?._id === req._id;
+                  return (
+                    <tr
+                      key={req._id}
+                      onClick={() => setSelectedCertificate(req)}
+                      style={{
+                        cursor: 'pointer',
+                        background: isSelected ? 'rgba(59, 130, 246, 0.12)' : undefined,
+                        borderLeft: isSelected ? '3px solid var(--accent)' : 'none'
+                      }}
+                    >
+                      <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{req._id}</td>
+                      <td><strong>{residentName || 'Unnamed Resident'}</strong></td>
+                      <td><span className="badge t">{certificateType}</span></td>
+                      <td><span className="badge g">Approved</span></td>
+                      <td>
+                        <button
+                          className="btn btn-p btn-sm"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            handlePrintRelease(req);
+                          }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
+                            <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
+                            <path d="M12 7V5" />
+                            <path d="M10 19h4" />
+                            <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+                          </svg>
+                          Print & Issue
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })
               )}
-              </div>
-              </div>
+            </tbody>
+          </table>
+        </div>
+      </div>
 
-              <div style={{ marginTop: '35px' }}>
-              {/* ════════════════════════════════════════════════════════════════
-                   ARCHIVED / ISSUED HISTORY LOG (STEP 4 / ISSUED CERTIFICATES)
-                  ════════════════════════════════════════════════════════════════ */}
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-                    <div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--text)' }}>📜 Issued History Log</div>
-                      <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Official registry of previously printed and released community certificates</div>
-                    </div>
-                    <span className="badge gr" style={{ padding: '6px 12px' }}>
-                      Total Issued: {strictlyIssuedCertificates.length}
-                    </span>
-                  </div>
-
-  <div className="tw">
-    <table>
-      <thead>
-        <tr>
-          <th>Cert #</th>
-          <th>Resident</th>
-          <th>Type</th>
-          <th>Date Issued</th>
-          <th>Actions</th>
-        </tr>
-      </thead>
-      <tbody>
-        {strictlyIssuedCertificates.length === 0 ? (
-          <tr>
-            <td colSpan="5" style={{ textAlign: 'center', color: 'var(--muted)' }}>
-              No historical issuance records found in local registry.
-            </td>
-          </tr>
-        ) : (
-          strictlyIssuedCertificates.map((req) => {
-            const residentName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
-            const certificateType = req.certificateType || req.certType || 'Certificate';
-            const isSelected = selectedCertificate?._id === req._id;
-
-            return (
-              <tr
-                key={req._id}
-                onClick={() => setSelectedCertificate(req)}
-                style={{ 
-                  cursor: 'pointer',
-                  background: isSelected ? 'rgba(59, 130, 246, 0.12)' : undefined,
-                  borderLeft: isSelected ? '3px solid #3b82f6' : 'none'
+      {/* RIGHT COLUMN: CERTIFICATE PREVIEW (White Background for Print) */}
+      <div>
+        {selectedCertificate ? (
+          <div
+            className="cert-p"
+            id="printable-certificate-card"
+            style={{
+              position: 'relative',
+              padding: '40px',
+              background: '#ffffff',
+              borderRadius: '8px',
+              boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
+              color: '#1e293b',
+              overflow: 'hidden'
+            }}
+          >
+            {Number(selectedCertificate.step) === 5 && (
+              <div
+                className="non-printable-watermark"
+                style={{
+                  position: 'absolute',
+                  top: '40%',
+                  left: '50%',
+                  transform: 'translate(-50%, -50%) rotate(-25deg)',
+                  fontSize: '75px',
+                  fontWeight: '900',
+                  color: 'rgba(22, 163, 74, 0.09)',
+                  border: '8px double rgba(22, 163, 74, 0.15)',
+                  padding: '10px 40px',
+                  borderRadius: '16px',
+                  letterSpacing: '6px',
+                  pointerEvents: 'none',
+                  userSelect: 'none',
+                  whiteSpace: 'nowrap',
+                  zIndex: 1
                 }}
               >
-                <td style={{ fontFamily: 'monospace', color: '#94a3b8' }}>{req._id}</td>
-                <td><strong>{residentName || 'Unnamed Resident'}</strong></td>
-                <td><span className="badge t">{certificateType}</span></td>
-                <td style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                  {req.issuedAt ? new Date(req.issuedAt).toLocaleDateString() : 'Recent'}
-                </td>
-                <td>
-                  <button 
-                    className="btn btn-g btn-sm" 
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      setSelectedCertificate(req);
-                      setTimeout(() => {
-        window.print();
-      }, 350);
-                    }}
-                  >
-                    Reprint
-                  </button>
+                RELEASED / ISSUED
+              </div>
+            )}
+
+            {/* LETTERHEAD HEADERS */}
+            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+              <h2 style={{ fontSize: '14px', margin: 0, color: '#475569', fontWeight: 'normal', textTransform: 'uppercase' }}>
+                Republic of the Philippines
+              </h2>
+              <h2 style={{ fontSize: '18px', margin: '4px 0', color: '#0f172a', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                Barangay Bustrac
+              </h2>
+              <h3 style={{ fontSize: '13px', margin: 0, color: '#64748b', fontStyle: 'italic' }}>
+                Municipality of Nabua, Camarines Sur
+              </h3>
+            </div>
+            <hr style={{ borderColor: '#0f172a', borderWidth: '1.5px', margin: '12px 0' }} />
+
+            {/* DYNAMIC CERTIFICATE TITLE */}
+            <h2 style={{
+              textAlign: 'center',
+              margin: '24px 0',
+              color: '#2563eb',
+              letterSpacing: '1.5px',
+              fontSize: '22px',
+              fontWeight: 'bold',
+              textTransform: 'uppercase'
+            }}>
+              {((selectedCertificate.certificateType || 'CERTIFICATE').toString()).toUpperCase()}
+            </h2>
+            <hr style={{ borderColor: '#0f172a', borderWidth: '1.5px', margin: '12px 0' }} />
+
+            {/* BODY PARAGRAPHS */}
+            <p style={{
+              marginTop: '28px',
+              lineHeight: '2',
+              color: '#1e293b',
+              textIndent: '40px',
+              textAlign: 'justify',
+              fontSize: '15px'
+            }}>
+              This is to certify that <strong>{`${selectedCertificate.firstName || ''} ${selectedCertificate.lastName || ''}`.trim().toUpperCase()}</strong>, of legal age, a <em>bona fide</em> resident of <strong>
+                {selectedCertificate.purok || (typeof residentsList !== 'undefined' && residentsList.find(r => r.name?.toLowerCase().includes(selectedCertificate.lastName?.toLowerCase() || ''))?.purok) || 'Purok 1'}
+              </strong>, Barangay Bustrac, Nabua, Camarines Sur, has been found to be of <strong>good moral character</strong> and has no derogatory record or pending criminal case on file in this jurisdiction as of this date.
+            </p>
+            <p style={{
+              marginTop: '20px',
+              lineHeight: '2',
+              color: '#1e293b',
+              textIndent: '40px',
+              textAlign: 'justify',
+              fontSize: '15px'
+            }}>
+              This certification is issued upon the request of the above-named person for <strong>{selectedCertificate.purpose || 'any legal purpose'}</strong> and for whatever legal intent it may serve.
+            </p>
+
+            {/* SIGNATORY BLOCK */}
+            <div style={{ marginTop: '60px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+              <div style={{ textAlign: 'center', marginRight: '20px' }}>
+                <div style={{ color: '#475569', fontSize: '13px', marginBottom: '35px' }}>
+                  Issued on: {selectedCertificate.date_issued || selectedCertificate.updatedAt || selectedCertificate.createdAt || 'Today'}
+                </div>
+                <strong style={{
+                  color: '#0f172a',
+                  display: 'block',
+                  borderTop: '1px solid #0f172a',
+                  paddingTop: '8px',
+                  minWidth: '240px',
+                  fontSize: '15px',
+                  textTransform: 'uppercase'
+                }}>
+                  HON. MARK GIAN CORTERO
+                </strong>
+                <div style={{ fontSize: '13px', color: '#475569', marginTop: '2px' }}>Barangay Captain</div>
+              </div>
+            </div>
+          </div>
+        ) : (
+          <div style={{
+            background: '#1e293b',
+            borderRadius: '8px',
+            padding: '40px',
+            textAlign: 'center',
+            color: '#64748b',
+            border: '2px dashed #334155',
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            gap: '12px'
+          }}>
+            <span>Select an approved request from the table to preview the certificate.</span>
+          </div>
+        )}
+      </div>
+    </div>
+
+    {/* =============================================
+         📜 ISSUED HISTORY LOG (Glass-Morphism)
+         ============================================= */}
+    <div style={{ marginTop: '35px' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+        <div>
+          <div style={{
+            fontSize: '16px',
+            fontWeight: 'bold',
+            color: 'var(--text)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
+          }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M12 18v-6" />
+              <path d="M9 15h6" />
+            </svg>
+            Issued History Log
+          </div>
+          <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+            Official registry of previously printed and released community certificates
+          </div>
+        </div>
+        <span className="badge gr" style={{ padding: '6px 12px' }}>
+          Total Issued: {strictlyIssuedCertificates.length}
+        </span>
+      </div>
+      <div className="tw" style={{
+        background: 'rgba(26, 29, 36, 0.4)',
+        backdropFilter: 'blur(8px)',
+        border: '1px solid rgba(79, 142, 247, 0.2)',
+        borderRadius: '8px'
+      }}>
+        <table>
+          <thead>
+            <tr>
+              <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>Cert #</th>
+              <th>Resident</th>
+              <th>Type</th>
+              <th>Date Issued</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {strictlyIssuedCertificates.length === 0 ? (
+              <tr>
+                <td colSpan="5" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
+                  No historical issuance records found.
                 </td>
               </tr>
-            );
-          })
-        )}
-      </tbody>
-    </table>
+            ) : (
+              strictlyIssuedCertificates.map((req) => {
+                const residentName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
+                const certificateType = req.certificateType || req.certType || 'Certificate';
+                const isSelected = selectedCertificate?._id === req._id;
+                return (
+                  <tr
+                    key={req._id}
+                    onClick={() => setSelectedCertificate(req)}
+                    style={{
+                      cursor: 'pointer',
+                      background: isSelected ? 'rgba(59, 130, 246, 0.12)' : undefined,
+                      borderLeft: isSelected ? '3px solid var(--accent)' : 'none'
+                    }}
+                  >
+                    <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{req._id}</td>
+                    <td><strong>{residentName || 'Unnamed Resident'}</strong></td>
+                    <td><span className="badge t">{certificateType}</span></td>
+                    <td style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                      {req.issuedAt ? new Date(req.issuedAt).toLocaleDateString() : 'Recent'}
+                    </td>
+                    <td>
+                      <button
+                        className="btn btn-g btn-sm"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setSelectedCertificate(req);
+                          setTimeout(() => {
+                            window.print();
+                          }, 350);
+                        }}
+                        style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
+                          <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
+                          <path d="M12 7V5" />
+                          <path d="M10 19h4" />
+                          <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+                        </svg>
+                        Reprint
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })
+            )}
+          </tbody>
+        </table>
+      </div>
+    </div>
   </div>
-              </div>
-              </div>
-              )}
+)}
              
             {/* ════════════════════════════════════════
                 SCREEN: DISTRIBUTION PROGRAMS
                 ════════════════════════════════════════ */}
             {screen === 'programs' && (
-              <div className="screen active">
-                {/* SYSTEM ROW INTERFACE HEADER */}
-                <div className="ph">
-                  <div>
-                    <div className="pt">Distribution Programs</div>
-                    <div className="ps">Manage aid distribution programs, targets, lifecycle configurations, and logs</div>
+            <div className="screen active">
+              <div className="ph">
+                <div>
+                  <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                    </svg>
+                    Distribution Programs
                   </div>
-                  <button 
-                    className="btn btn-p" 
-                    onClick={() => setShowNewProgramForm(!showNewProgramForm)}
-                  >
-                    {showNewProgramForm ? '✕ Close Form' : '＋ New Program'}
-                  </button>
+                  <div className="ps">Manage aid distribution programs, targets, lifecycle configurations, and logs</div>
                 </div>
+                <button
+                  className="btn btn-p"
+                  onClick={() => setShowNewProgramForm(!showNewProgramForm)}
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  {showNewProgramForm ? (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 15l-6-6-6 6" />
+                      </svg>
+                      Close Form
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                      New Program
+                    </>
+                  )}
+                </button>
+              </div>
 
-                {/* DYNAMIC PROGRAM CREATION FORM INTERFACE LAYER */}
-                {showNewProgramForm && (
-                  <form onSubmit={handleCreateProgram} style={{
-                    background: '#1e293b',
-                    border: '1px solid #334155',
+              {/* =============================================
+                  📝 PROGRAM CREATION FORM (Glass-Morphism + SVG)
+                  ============================================= */}
+              {showNewProgramForm && (
+                <form
+                  onSubmit={handleCreateProgram}
+                  style={{
+                    background: 'rgba(30, 41, 59, 0.6)',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(79, 142, 247, 0.2)',
                     padding: '16px',
                     borderRadius: '8px',
                     marginBottom: '20px'
+                  }}
+                >
+                  <div style={{
+                    fontSize: '14px',
+                    fontWeight: 'bold',
+                    marginBottom: '12px',
+                    color: 'var(--accent)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
                   }}>
-                    <div style={{ fontSize: '14px', fontWeight: 'bold', marginBottom: '12px', color: '#3b82f6' }}>
-                      🛠️ Register New Distribution Campaign
-                    </div>
-                    <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
-                      <div style={{ flex: 2, minWidth: '200px' }}>
-                        <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Program Title</label>
-                        <input 
-                          className="fc" 
-                          required
-                          placeholder="e.g., Senior Citizen Cash Subsidy" 
-                          value={newProgramTitle}
-                          onChange={(e) => setNewProgramTitle(e.target.value)}
-                        />
-                      </div>
-                      <div style={{ flex: 1, minWidth: '100px' }}>
-                        <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Target Beneficiaries</label>
-                        <input 
-                          className="fc" 
-                          type="number" 
-                          required
-                          min="1"
-                          value={newProgramTarget}
-                          onChange={(e) => setNewProgramTarget(e.target.value)}
-                        />
-                      </div>
-                      <div style={{ flex: 1, minWidth: '120px' }}>
-                        <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Initial Status</label>
-                        <select 
-                          className="fc"
-                          value={newProgramStatus}
-                          onChange={(e) => setNewProgramStatus(e.target.value)}
-                        >
-                          <option value="Active">Active</option>
-                          <option value="Upcoming">Upcoming</option>
-                        </select>
-                      </div>
-                      <div>
-                        <button type="submit" className="btn btn-p" style={{ height: '38px' }}>Save Program</button>
-                      </div>
-                    </div>
-                  </form>
-                )}
-
-                {/* 🔍 PRODUCTION-GRADE SEARCH, FILTER, AND SORT RADAR BAR */}
-                <div className="tb" style={{ marginBottom: '20px', gap: '10px', flexWrap: 'wrap' }}>
-                  <div className="sb-box" style={{ flex: 2, minWidth: '220px' }}>
-                    <span>🔍</span>
-                    <input 
-                      placeholder="Search campaign name, ID, or aid type..." 
-                      value={programSearchQuery}
-                      onChange={(e) => setProgramSearchQuery(e.target.value)}
-                    />
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                    </svg>
+                    Register New Distribution Campaign
                   </div>
-                  
-                  <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
-                    {/* Status Filtering Select Deck */}
-                    <select className="fc" style={{ width: '130px' }} value={programStatusFilter} onChange={(e) => setProgramStatusFilter(e.target.value)}>
-                      <option value="All">All Status</option>
-                      <option value="Active">🟢 Active</option>
-                      <option value="Upcoming">🟡 Upcoming</option>
-                      <option value="Completed">🔵 Completed</option>
-                      <option value="Archived">📁 Archived</option>
-                    </select>
 
-                    {/* Sorting Execution Deck */}
-                    <select className="fc" style={{ width: '160px' }} value={programSortOption} onChange={(e) => setProgramSortOption(e.target.value)}>
-                      <option value="Newest">📅 Newest Created</option>
-                      <option value="Oldest">📆 Oldest Created</option>
-                      <option value="Alphabetical">🔤 Alphabetical (A-Z)</option>
-                      <option value="MostBeneficiaries">👥 Target Capacity</option>
-                    </select>
+                  <div style={{
+                    display: 'flex',
+                    gap: '12px',
+                    flexWrap: 'wrap',
+                    alignItems: 'flex-end'
+                  }}>
+                    <div style={{ flex: 2, minWidth: '200px' }}>
+                      <label style={{
+                        fontSize: '11px',
+                        color: '#cbd5e1',
+                        display: 'block',
+                        marginBottom: '4px'
+                      }}>
+                        Program Title
+                      </label>
+                      <input
+                        className="fc"
+                        required
+                        placeholder="e.g., Senior Citizen Cash Subsidy"
+                        value={newProgramTitle}
+                        onChange={(e) => setNewProgramTitle(e.target.value)}
+                      />
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: '100px' }}>
+                      <label style={{
+                        fontSize: '11px',
+                        color: '#cbd5e1',
+                        display: 'block',
+                        marginBottom: '4px'
+                      }}>
+                        Target Beneficiaries
+                      </label>
+                      <input
+                        className="fc"
+                        type="number"
+                        required
+                        min="1"
+                        value={newProgramTarget}
+                        onChange={(e) => setNewProgramTarget(e.target.value)}
+                      />
+                    </div>
+
+                    <div style={{ flex: 1, minWidth: '120px' }}>
+                      <label style={{
+                        fontSize: '11px',
+                        color: '#cbd5e1',
+                        display: 'block',
+                        marginBottom: '4px'
+                      }}>
+                        Initial Status
+                      </label>
+                      <select
+                        className="fc"
+                        value={newProgramStatus}
+                        onChange={(e) => setNewProgramStatus(e.target.value)}
+                      >
+                        <option value="Active">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10" />
+                          </svg>
+                          Active
+                        </option>
+                        <option value="Upcoming">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2">
+                            <circle cx="12" cy="12" r="10" />
+                          </svg>
+                          Upcoming
+                        </option>
+                      </select>
+                    </div>
+
+                    <div>
+                      <button
+                        type="submit"
+                        className="btn btn-p"
+                        style={{ height: '38px', display: 'flex', alignItems: 'center', gap: '4px' }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M19 21H5" />
+                          <path d="M19 3H5" />
+                          <path d="M19 12H5" />
+                          <path d="M5 21V3" />
+                        </svg>
+                        Save Program
+                      </button>
+                    </div>
                   </div>
+                </form>
+              )}
+
+              {/* =============================================
+                  🔍 SEARCH, FILTER & SORT BAR (Glass-Morphism + SVG)
+                  ============================================= */}
+              <div
+                className="tb"
+                style={{
+                  background: 'rgba(26, 29, 36, 0.4)',
+                  backdropFilter: 'blur(8px)',
+                  border: '1px solid rgba(79, 142, 247, 0.2)',
+                  marginBottom: '20px',
+                  gap: '10px',
+                  flexWrap: 'wrap',
+                  padding: '12px',
+                  borderRadius: '8px'
+                }}
+              >
+                <div className="sb-box" style={{ flex: 2, minWidth: '220px' }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <circle cx="11" cy="11" r="8" />
+                    <path d="M21 21l-4.35-4.35" />
+                  </svg>
+                  <input
+                    placeholder="Search campaign name, ID, or aid type..."
+                    value={programSearchQuery}
+                    onChange={(e) => setProgramSearchQuery(e.target.value)}
+                  />
                 </div>
 
-                {/* DYNAMIC PROGRAMS GRID LIST LAYOUT ROW */}
-                {processedPrograms.length === 0 ? (
-                  <div style={{ textAlign: 'center', padding: '40px', background: '#1e293b', borderRadius: '8px', color: '#94a3b8', border: '1px dashed #334155' }}>
-                    Walang nakitang distribution programs na tumutugma sa iyong query o filter settings.
-                  </div>
-                ) : (
-                  <div className="thc" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))', gap: '16px' }}>
-                    {processedPrograms.map((prog) => {
-                      const percent = Math.min(100, Math.round((prog.current / prog.target) * 100)) || 0;
-                      
-                      let statusBadgeClass = "badge g"; 
-                      if (prog.status === 'Completed') statusBadgeClass = "badge t";
-                      if (prog.status === 'Upcoming') statusBadgeClass = "badge a";
-                      if (prog.status === 'Archived') statusBadgeClass = "badge r";
+                <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  {/* Status Filter */}
+                  <select
+                    className="fc"
+                    style={{ width: '130px' }}
+                    value={programStatusFilter}
+                    onChange={(e) => setProgramStatusFilter(e.target.value)}
+                  >
+                    <option value="All">All Status</option>
+                    <option value="Active">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                      </svg>
+                      Active
+                    </option>
+                    <option value="Upcoming">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                      </svg>
+                      Upcoming
+                    </option>
+                    <option value="Completed">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                      </svg>
+                      Completed
+                    </option>
+                    <option value="Archived">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                      </svg>
+                      Archived
+                    </option>
+                  </select>
 
-                      return (
-                        <div className="card" key={prog.id} style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', border: '1px solid #334155', position: 'relative' }}>
-                          <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
-                              <span className={statusBadgeClass}>{prog.status}</span>
-                              <span className="badge gr">{prog.dateLabel || 'Campaign'}</span>
-                            </div>
-                            <div className="ct" style={{ fontWeight: 'bold', fontSize: '15px', color: '#f8fafc' }}>{prog.title}</div>
-                            <div className="cm" style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#94a3b8', margin: '2px 0 10px 0' }}>{prog.id}</div>
-                            
-                            {/* MATHEMATICAL PROGRESS LINE FILL */}
-                            <div className="prog" style={{ margin: '10px 0', background: '#334155', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-                              <div 
-                                className="prog-b" 
-                                style={{ 
-                                  width: `${percent}%`, 
-                                  height: '100%',
-                                  background: prog.status === 'Completed' 
-                                    ? 'linear-gradient(90deg, #10b981, #14b8a6)' 
-                                    : prog.status === 'Upcoming' ? '#64748b' : '#3b82f6',
-                                  transition: 'width 0.4s ease-in-out'
-                                }} 
-                              />
-                            </div>
-                            
-                            <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', justifyContent: 'space-between' }}>
-                              <span>{prog.current} / {prog.target} targets</span>
-                              <strong>{percent}%</strong>
-                            </div>
-                          </div>
-
-                          {/* CONTEXTUAL ACTION BUTTON TRACK BLOCK */}
-                          <div style={{ display: 'flex', gap: '6px', marginTop: '16px', borderTop: '1px solid #334155', paddingTop: '12px', flexWrap: 'wrap' }}>
-                            {prog.status === 'Active' && (
-                              <>
-                                <button className="btn btn-p btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => nav('aid-encode')}>📦 Encode</button>
-                                <button className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => nav('aid-logs')}>📊 Logs</button>
-                                <button className="btn btn-a btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#d97706' }} onClick={() => setEditingProgram(prog)}>✏️ Edit</button>
-                                <button className="btn btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#10b981', color: 'white' }} 
-                                  onClick={() => {
-                                    // SET TO COMPLETED STATUS ACTION ROUTINE
-                                    const updated = programsList.map(p => p.id === prog.id ? {...p, status: 'Completed'} : p);
-                                    setProgramsList(updated); 
-                                    alert(`Program campaign ${prog.title} has been successfully closed and marked as Completed.`);
-                                  }}>
-                                  ✓ Complete
-                                </button>
-                              </>
-                            )}
-
-                            <button 
-                                    className="btn btn-sm" 
-                                    style={{ padding: '4px 8px', fontSize: '11px', background: '#475569', color: '#cbd5e1' }} 
-                                    onClick={async () => {
-                                      // SET TO ARCHIVED ACTION ROUTINE
-                                      const updated = programsList.map(p => p.id === prog.id ? {...p, status: 'Archived'} : p);
-                                      setProgramsList(updated);
-                                      
-                                      await createAuditLog({
-                                        action: 'ARCHIVE',
-                                        module: 'PROGRAMS',
-                                        recordId: prog.id,
-                                        details: `Archived program: ${prog.title}`,
-                                      });
-                                      
-                                      alert(`Campaign historical logs archived successfully.`);
-                                    }}
-                                  > 
-                                    📁 Archive 
-                                  </button>
-
-                            {prog.status === 'Upcoming' && (
-                              <>
-                                <button className="btn btn-p btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} 
-                                  onClick={() => {
-                                    // SET TO ACTIVE STATUS ACTION ROUTINE
-                                    const updated = programsList.map(p => p.id === prog.id ? {...p, status: 'Active'} : p);
-                                    setProgramsList(updated);
-                                  }}>
-                                  🚀 Activate
-                                </button>
-                                <button className="btn btn-a btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => setEditingProgram(prog)}>✏️ Edit</button>
-                                <button className="btn btn-r btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => setConfirmDeleteId(prog.id)}>📁 Archive</button>
-                              </>
-                            )}
-
-                            {prog.status === 'Archived' && (
-                              <>
-                                <button className="btn btn-p btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#6366f1' }} onClick={() => setViewingProgram(prog)}>👁️ View</button>
-                                <button className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} 
-                                  onClick={() => {
-                                    // RESTORE FROM ARCHIVE
-                                    const updated = programsList.map(p => p.id === prog.id ? {...p, status: 'Active'} : p);
-                                    setProgramsList(updated);
-                                  }}>
-                                  ↩️ Restore
-                                </button>
-                              </>
-                            )}
-                          </div>
-                        </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* 📋 MODAL COMPONENT LAYER 1: VIEW DETAILS DIALOG BLOCK */}
-                {viewingProgram && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-                    <div style={{ background: '#1e293b', border: '1px solid #334155', padding: '24px', borderRadius: '8px', width: '90%', maxWidth: '450px' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '4px' }}>📊 Campaign Insights</div>
-                      <div style={{ fontSize: '12px', color: '#3b82f6', marginBottom: '16px', fontFamily: 'var(--mono)' }}>{viewingProgram.id}</div>
-                      
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px', color: '#cbd5e1' }}>
-                        <div><strong>Campaign Title:</strong> <span style={{ color: 'white' }}>{viewingProgram.title}</span></div>
-                        <div><strong>Distribution Phase Status:</strong> <span className="badge g">{viewingProgram.status}</span></div>
-                        <div><strong>Aid Classification Matrix:</strong> <span>{viewingProgram.aidType || 'Rice Support — 5kg'}</span></div>
-                        <hr style={{ borderColor: '#334155' }} />
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Total Expected Targets:</span> <strong>{viewingProgram.target}</strong></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Encoded Beneficiaries:</span> <strong style={{ color: '#10b981' }}>{viewingProgram.current}</strong></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Remaining Queue Space:</span> <strong style={{ color: '#ef4444' }}>{viewingProgram.target - viewingProgram.current}</strong></div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}><span>Completion Execution Rate:</span> <strong style={{ color: '#3b82f6' }}>{Math.round((viewingProgram.current / viewingProgram.target) * 100)}%</strong></div>
-                        <hr style={{ borderColor: '#334155' }} />
-                        <div><strong>Log Audit Remarks:</strong><p style={{ fontStyle: 'italic', background: '#0f172a', padding: '8px', borderRadius: '4px', fontSize: '12px', marginTop: '4px' }}>{viewingProgram.remarks || 'No recorded admin overhead remarks for this log asset.'}</p></div>
-                      </div>
-                      
-                      <button className="btn btn-g" style={{ width: '100%', marginTop: '20px' }} onClick={() => setViewingProgram(null)}>Close Viewport</button>
-                    </div>
-                  </div>
-                )}
-
-                {/* ✏️ MODAL COMPONENT LAYER 2: INTERACTIVE EDIT CAMPAIGN FORM BLOCK */}
-                {editingProgram && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999 }}>
-                    <div style={{ background: '#1e293b', border: '1px solid #334155', padding: '24px', borderRadius: '8px', width: '90%', maxWidth: '450px' }}>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '16px' }}>✏️ Edit Distribution Configuration</div>
-                      
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div>
-                          <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Program Title</label>
-                          <input className="fc" value={editingProgram.title} onChange={(e) => setEditingProgram({...editingProgram, title: e.target.value})} />
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Target Capacity Capacity</label>
-                          <input className="fc" type="number" value={editingProgram.target} onChange={(e) => setEditingProgram({...editingProgram, target: Number(e.target.value)})} />
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Aid Material Type</label>
-                          <input className="fc" value={editingProgram.aidType || ''} placeholder="e.g., Rice 5kg / Financial Cash P1000" onChange={(e) => setEditingProgram({...editingProgram, aidType: e.target.value})} />
-                        </div>
-                        <div>
-                          <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Campaign Schedule Label</label>
-                          <input className="fc" value={editingProgram.dateLabel || ''} placeholder="e.g., Q3 2026 / July 2026" onChange={(e) => setEditingProgram({...editingProgram, dateLabel: e.target.value})} />
-                        </div>
-                      </div>
-
-                      <div style={{ display: 'flex', gap: '8px', marginTop: '20px' }}>
-                        <button className="btn btn-g" style={{ flex: 1 }} onClick={() => setEditingProgram(null)}>Cancel</button>
-                        <button className="btn btn-p" style={{ flex: 1 }} 
-                          onClick={() => {
-                            // UPDATE COMPILATION STATE SUBMIT ENGINE
-                            const updated = programsList.map(p => p.id === editingProgram.id ? editingProgram : p);
-                            setProgramsList(updated);
-                            setEditingProgram(null);
-                            alert('Distribution details synchronized updated.');
-                          }}>
-                          Save Modifications
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-
-                {/* 🗑️ MODAL COMPONENT LAYER 3: CRITICAL DELETION SAFETY DECK */}
-                {confirmDeleteId && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
-                    <div style={{ background: '#1e293b', border: '1px solid #ef4444', padding: '24px', borderRadius: '8px', width: '90%', maxWidth: '38px', textAlign: 'center' }}>
-                      <div style={{ fontSize: '28px', marginBottom: '10px' }}>⚠️</div>
-                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '6px' }}>Delete this program?</div>
-                      <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '20px' }}>Ang aksyong ito ay hindi na mababawi. Mawawala ang core program registration block na ito mula sa system registry.</div>
-                      
-                      <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                        <button className="btn btn-g" style={{ minWidth: '100px' }} onClick={() => setConfirmDeleteId(null)}>Cancel</button>
-                        <button className="btn btn-r" style={{ minWidth: '100px' }} 
-                          onClick={() => {
-                            const updated = programsList.filter(p => p.id !== confirmDeleteId);
-                            setProgramsList(updated);
-                            setConfirmDeleteId(null);
-                            alert('Program template completely purged from current state registry.');
-                          }}>
-                          Delete
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                  {/* Sorting Options */}
+                  <select
+                    className="fc"
+                    style={{ width: '160px' }}
+                    value={programSortOption}
+                    onChange={(e) => setProgramSortOption(e.target.value)}
+                  >
+                    <option value="Newest">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 6h18" />
+                        <path d="M7 12h10" />
+                        <path d="M12 2v20" />
+                      </svg>
+                      Newest Created
+                    </option>
+                    <option value="Oldest">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 6h18" />
+                        <path d="M7 12h10" />
+                      </svg>
+                      Oldest Created
+                    </option>
+                    <option value="Alphabetical">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                      Alphabetical (A-Z)
+                    </option>
+                    <option value="MostBeneficiaries">
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                        <circle cx="9" cy="7" r="4" />
+                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                      </svg>
+                      Target Capacity
+                    </option>
+                  </select>
+                </div>
               </div>
-            )}
+
+              {/* =============================================
+                  📊 PROGRAMS GRID (Glass-Morphism + SVG)
+                  ============================================= */}
+              {processedPrograms.length === 0 ? (
+                <div style={{
+                  textAlign: 'center',
+                  padding: '40px',
+                  background: 'rgba(30, 41, 59, 0.4)',
+                  borderRadius: '8px',
+                  color: '#94a3b8',
+                  border: '1px dashed rgba(79, 142, 247, 0.2)',
+                  backdropFilter: 'blur(8px)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '12px'
+                }}>
+                  <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                  </svg>
+                  Walang nakitang distribution programs na tumutugma sa iyong query o filter settings.
+                </div>
+              ) : (
+                <div className="thc" style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fill, minmax(300px, 1fr))',
+                  gap: '16px'
+                }}>
+                  {processedPrograms.map((prog) => {
+                    const percent = Math.min(100, Math.round((prog.current / prog.target) * 100)) || 0;
+
+                    // Status badge styling
+                    let statusBadgeClass = "badge g";
+                    let statusIcon = (
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 2v4" />
+                        <path d="M12 18v4" />
+                        <path d="M4.93 4.93l2.83 2.83" />
+                        <path d="M16.24 16.24l2.83 2.83" />
+                        <path d="M2 12h2" />
+                        <path d="M20 12h2" />
+                        <path d="M4.93 19.07l2.83-2.83" />
+                        <path d="M16.24 7.76l2.83-2.83" />
+                      </svg>
+                    );
+
+                    if (prog.status === 'Completed') {
+                      statusBadgeClass = "badge t";
+                      statusIcon = (
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                          <path d="M22 4L12 14.01l-3-3" />
+                        </svg>
+                      );
+                    } else if (prog.status === 'Upcoming') {
+                      statusBadgeClass = "badge a";
+                      statusIcon = (
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="10" />
+                        </svg>
+                      );
+                    } else if (prog.status === 'Archived') {
+                      statusBadgeClass = "badge r";
+                      statusIcon = (
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                        </svg>
+                      );
+                    }
+
+                    return (
+  <div
+    className="card"
+    key={prog.id}
+    style={{
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between',
+      border: '1px solid rgba(79, 142, 247, 0.2)',
+      position: 'relative',
+      background: 'rgba(30, 41, 59, 0.4)',
+      backdropFilter: 'blur(8px)',
+      borderRadius: '8px',
+      padding: '16px',
+      transition: 'all 0.3s ease'
+    }}
+    onMouseEnter={(e) => {
+      e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+      e.currentTarget.style.background = 'rgba(30, 41, 59, 0.6)';
+    }}
+    onMouseLeave={(e) => {
+      e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.2)';
+      e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)';
+    }}
+  >
+    <div>
+      <div style={{
+        display: 'flex',
+        justifyContent: 'space-between',
+        marginBottom: '8px',
+        alignItems: 'center'
+      }}>
+        <span className={statusBadgeClass} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          {statusIcon}
+          {prog.status}
+        </span>
+        <span className="badge gr" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <path d="M14 2v6h6" />
+            <path d="M12 18v-6" />
+            <path d="M9 15h6" />
+          </svg>
+          {prog.dateLabel || 'Campaign'}
+        </span>
+      </div>
+
+      <div className="ct" style={{
+        fontWeight: 'bold',
+        fontSize: '15px',
+        color: '#f8fafc',
+        marginBottom: '4px'
+      }}>
+        {prog.title}
+      </div>
+
+      <div className="cm" style={{
+        fontFamily: 'var(--mono)',
+        fontSize: '11px',
+        color: '#94a3b8',
+        marginBottom: '10px'
+      }}>
+        {prog.id}
+      </div>
+
+      {/* Progress Bar */}
+      <div className="prog" style={{
+        margin: '10px 0',
+        background: '#334155',
+        borderRadius: '4px',
+        height: '8px',
+        overflow: 'hidden'
+      }}>
+        <div
+          className="prog-b"
+          style={{
+            width: `${percent}%`,
+            height: '100%',
+            background: prog.status === 'Completed'
+              ? 'linear-gradient(90deg, #10b981, #14b8a6)'
+              : prog.status === 'Upcoming'
+                ? '#64748b'
+                : '#3b82f6',
+            transition: 'width 0.4s ease-in-out'
+          }}
+        />
+      </div>
+
+      <div style={{
+        fontSize: '11px',
+        color: '#94a3b8',
+        display: 'flex',
+        justifyContent: 'space-between'
+      }}>
+        <span>{prog.current} / {prog.target} targets</span>
+        <strong>{percent}%</strong>
+      </div>
+    </div>
+
+    {/* Action Buttons */}
+    <div style={{
+      display: 'flex',
+      gap: '6px',
+      marginTop: '16px',
+      borderTop: '1px solid rgba(79, 142, 247, 0.2)',
+      paddingTop: '12px',
+      flexWrap: 'wrap'
+    }}>
+      {prog.status === 'Active' && (
+        <>
+          <button
+            className="btn btn-p btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => nav('aid-encode')}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            </svg>
+            Encode
+          </button>
+
+          <button
+            className="btn btn-g btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => nav('aid-logs')}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M12 18v-6" />
+              <path d="M9 15h6" />
+            </svg>
+            Logs
+          </button>
+
+          <button
+            className="btn btn-a btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              background: '#d97706',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => setEditingProgram(prog)}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+            Edit
+          </button>
+
+          <button
+            className="btn btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              background: '#10b981',
+              color: 'white',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => {
+              const updated = programsList.map(p =>
+                p.id === prog.id ? { ...p, status: 'Completed' } : p
+              );
+              setProgramsList(updated);
+              alert(`Program campaign ${prog.title} has been successfully closed and marked as Completed.`);
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+              <path d="M22 4L12 14.01l-3-3" />
+            </svg>
+            Complete
+          </button>
+        </>
+      )}
+
+      <button
+        className="btn btn-sm"
+        style={{
+          padding: '4px 8px',
+          fontSize: '11px',
+          background: '#475569',
+          color: '#cbd5e1',
+          display: 'flex',
+          alignItems: 'center',
+          gap: '4px'
+        }}
+        onClick={async () => {
+          const updated = programsList.map(p =>
+            p.id === prog.id ? { ...p, status: 'Archived' } : p
+          );
+          setProgramsList(updated);
+          await createAuditLog({
+            action: 'ARCHIVE',
+            module: 'PROGRAMS',
+            recordId: prog.id,
+            details: `Archived program: ${prog.title}`,
+          });
+          alert(`Campaign historical logs archived successfully.`);
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+        </svg>
+        Archive
+      </button>
+
+      {prog.status === 'Upcoming' && (
+        <>
+          <button
+            className="btn btn-p btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => {
+              const updated = programsList.map(p =>
+                p.id === prog.id ? { ...p, status: 'Active' } : p
+              );
+              setProgramsList(updated);
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v4" />
+              <path d="M12 18v4" />
+              <path d="M4.93 4.93l2.83 2.83" />
+              <path d="M16.24 16.24l2.83 2.83" />
+              <path d="M2 12h2" />
+              <path d="M20 12h2" />
+              <path d="M4.93 19.07l2.83-2.83" />
+              <path d="M16.24 7.76l2.83-2.83" />
+            </svg>
+            Activate
+          </button>
+
+          <button
+            className="btn btn-a btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => setEditingProgram(prog)}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+            </svg>
+            Edit
+          </button>
+
+          <button
+            className="btn btn-r btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => setConfirmDeleteId(prog.id)}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+            </svg>
+            Archive
+          </button>
+        </>
+      )}
+
+      {prog.status === 'Archived' && (
+        <>
+          <button
+            className="btn btn-p btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              background: '#6366f1',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => setViewingProgram(prog)}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M12 18v-6" />
+              <path d="M9 15h6" />
+            </svg>
+            View
+          </button>
+
+          <button
+            className="btn btn-g btn-sm"
+            style={{
+              padding: '4px 8px',
+              fontSize: '11px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '4px'
+            }}
+            onClick={() => {
+              const updated = programsList.map(p =>
+                p.id === prog.id ? { ...p, status: 'Active' } : p
+              );
+              setProgramsList(updated);
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 2v4" />
+              <path d="M12 18v4" />
+              <path d="M4.93 4.93l2.83 2.83" />
+              <path d="M16.24 16.24l2.83 2.83" />
+              <path d="M2 12h2" />
+              <path d="M20 12h2" />
+              <path d="M4.93 19.07l2.83-2.83" />
+              <path d="M16.24 7.76l2.83-2.83" />
+            </svg>
+            Restore
+          </button>
+        </>
+      )}
+    </div>
+  </div>
+);
+                  })}
+                </div>
+              )}
+
+              {/* =============================================
+                  📋 MODAL 1: VIEW PROGRAM DETAILS (Glass-Morphism + SVG)
+                  ============================================= */}
+              {viewingProgram && (
+                <div style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  background: 'rgba(0,0,0,0.7)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 9999
+                }}>
+                  <div style={{
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(79, 142, 247, 0.3)',
+                    padding: '24px',
+                    borderRadius: '12px',
+                    width: '90%',
+                    maxWidth: '450px',
+                    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)'
+                  }}>
+                    <div style={{
+                      fontSize: '18px',
+                      fontWeight: 'bold',
+                      color: '#f8fafc',
+                      marginBottom: '4px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                      Campaign Insights
+                    </div>
+                    <div style={{
+                      fontSize: '12px',
+                      color: '#3b82f6',
+                      marginBottom: '16px',
+                      fontFamily: 'var(--mono)'
+                    }}>
+                      {viewingProgram.id}
+                    </div>
+
+                    <div style={{
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '10px',
+                      fontSize: '13px',
+                      color: '#cbd5e1'
+                    }}>
+                      <div>
+                        <strong>Campaign Title:</strong>
+                        <span style={{ color: 'white' }}>{viewingProgram.title}</span>
+                      </div>
+
+                      <div>
+                        <strong>Distribution Phase Status:</strong>
+                        <span className="badge g" style={{ marginLeft: '8px' }}>
+                          {viewingProgram.status}
+                        </span>
+                      </div>
+
+                      <div>
+                        <strong>Aid Classification Matrix:</strong>
+                        <span>{viewingProgram.aidType || 'Rice Support — 5kg'}</span>
+                      </div>
+
+                      <hr style={{ borderColor: 'rgba(79, 142, 247, 0.2)', margin: '4px 0' }} />
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Total Expected Targets:</span>
+                        <strong>{viewingProgram.target}</strong>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Encoded Beneficiaries:</span>
+                        <strong style={{ color: '#10b981' }}>{viewingProgram.current}</strong>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Remaining Queue Space:</span>
+                        <strong style={{ color: '#ef4444' }}>
+                          {viewingProgram.target - viewingProgram.current}
+                        </strong>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Completion Execution Rate:</span>
+                        <strong style={{ color: '#3b82f6' }}>
+                          {Math.round((viewingProgram.current / viewingProgram.target) * 100)}%
+                        </strong>
+                      </div>
+
+                      <hr style={{ borderColor: 'rgba(79, 142, 247, 0.2)', margin: '4px 0' }} />
+
+                      <div>
+                        <strong>Log Audit Remarks:</strong>
+                        <p style={{
+                          fontStyle: 'italic',
+                          background: '#0f172a',
+                          padding: '8px',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          marginTop: '4px'
+                        }}>
+                          {viewingProgram.remarks || 'No recorded admin overhead remarks for this log asset.'}
+                        </p>
+                      </div>
+                    </div>
+
+                    <button
+                      className="btn btn-g"
+                      style={{
+                        width: '100%',
+                        marginTop: '20px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '6px',
+                        justifyContent: 'center'
+                      }}
+                      onClick={() => setViewingProgram(null)}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M18 15l-6-6-6 6" />
+                      </svg>
+                      Close Viewport
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* =============================================
+                  ✏️ MODAL 2: EDIT PROGRAM FORM (Glass-Morphism + SVG)
+                  ============================================= */}
+              {editingProgram && (
+                <div style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  background: 'rgba(0,0,0,0.7)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 9999
+                }}>
+                  <div style={{
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid rgba(79, 142, 247, 0.3)',
+                    padding: '24px',
+                    borderRadius: '12px',
+                    width: '90%',
+                    maxWidth: '450px',
+                    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)'
+                  }}>
+                    <div style={{
+                      fontSize: '16px',
+                      fontWeight: 'bold',
+                      color: '#f8fafc',
+                      marginBottom: '16px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px'
+                    }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                      </svg>
+                      Edit Distribution Configuration
+                    </div>
+
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                      <div>
+                        <label style={{
+                          fontSize: '11px',
+                          color: '#cbd5e1',
+                          display: 'block',
+                          marginBottom: '4px'
+                        }}>
+                          Program Title
+                        </label>
+                        <input
+                          className="fc"
+                          value={editingProgram.title}
+                          onChange={(e) => setEditingProgram({...editingProgram, title: e.target.value})}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{
+                          fontSize: '11px',
+                          color: '#cbd5e1',
+                          display: 'block',
+                          marginBottom: '4px'
+                        }}>
+                          Target Capacity
+                        </label>
+                        <input
+                          className="fc"
+                          type="number"
+                          value={editingProgram.target}
+                          onChange={(e) => setEditingProgram({...editingProgram, target: Number(e.target.value)})}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{
+                          fontSize: '11px',
+                          color: '#cbd5e1',
+                          display: 'block',
+                          marginBottom: '4px'
+                        }}>
+                          Aid Material Type
+                        </label>
+                        <input
+                          className="fc"
+                          value={editingProgram.aidType || ''}
+                          placeholder="e.g., Rice 5kg / Financial Cash P1000"
+                          onChange={(e) => setEditingProgram({...editingProgram, aidType: e.target.value})}
+                        />
+                      </div>
+
+                      <div>
+                        <label style={{
+                          fontSize: '11px',
+                          color: '#cbd5e1',
+                          display: 'block',
+                          marginBottom: '4px'
+                        }}>
+                          Campaign Schedule Label
+                        </label>
+                        <input
+                          className="fc"
+                          value={editingProgram.dateLabel || ''}
+                          placeholder="e.g., Q3 2026 / July 2026"
+                          onChange={(e) => setEditingProgram({...editingProgram, dateLabel: e.target.value})}
+                        />
+                      </div>
+                    </div>
+
+                    <div style={{
+                      display: 'flex',
+                      gap: '8px',
+                      marginTop: '20px',
+                      borderTop: '1px solid rgba(79, 142, 247, 0.2)',
+                      paddingTop: '16px'
+                    }}>
+                      <button
+                        className="btn btn-g"
+                        style={{
+                          flex: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          justifyContent: 'center'
+                        }}
+                        onClick={() => setEditingProgram(null)}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 15l-6-6-6 6" />
+                        </svg>
+                        Cancel
+                      </button>
+
+                      <button
+                        className="btn btn-p"
+                        style={{
+                          flex: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          justifyContent: 'center'
+                        }}
+                        onClick={() => {
+                          const updated = programsList.map(p =>
+                            p.id === editingProgram.id ? editingProgram : p
+                          );
+                          setProgramsList(updated);
+                          setEditingProgram(null);
+                          alert('Distribution details synchronized updated.');
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M19 21H5" />
+                          <path d="M19 3H5" />
+                          <path d="M19 12H5" />
+                          <path d="M5 21V3" />
+                        </svg>
+                        Save Modifications
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* =============================================
+                  🗑️ MODAL 3: DELETE CONFIRMATION (Glass-Morphism + SVG)
+                  ============================================= */}
+              {confirmDeleteId && (
+                <div style={{
+                  position: 'fixed',
+                  top: 0,
+                  left: 0,
+                  width: '100%',
+                  height: '100%',
+                  background: 'rgba(0,0,0,0.8)',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  zIndex: 99999
+                }}>
+                  <div style={{
+                    background: 'rgba(30, 41, 59, 0.8)',
+                    backdropFilter: 'blur(10px)',
+                    border: '1px solid #ef4444',
+                    padding: '24px',
+                    borderRadius: '12px',
+                    width: '90%',
+                    maxWidth: '400px',
+                    textAlign: 'center',
+                    boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)'
+                  }}>
+                    <div style={{
+                      fontSize: '36px',
+                      marginBottom: '12px',
+                      color: '#ef4444'
+                    }}>
+                      <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                        <path d="M12 9v4" />
+                        <path d="M12 17h.01" />
+                      </svg>
+                    </div>
+
+                    <div style={{
+                      fontSize: '16px',
+                      fontWeight: 'bold',
+                      color: '#f8fafc',
+                      marginBottom: '8px'
+                    }}>
+                      Delete this program?
+                    </div>
+
+                    <div style={{
+                      fontSize: '12px',
+                      color: '#94a3b8',
+                      marginBottom: '20px'
+                    }}>
+                      Ang aksyong ito ay hindi na mababawi. Mawawala ang core program registration block na ito mula sa system registry.
+                    </div>
+
+                    <div style={{
+                      display: 'flex',
+                      gap: '10px',
+                      justifyContent: 'center'
+                    }}>
+                      <button
+                        className="btn btn-g"
+                        style={{
+                          minWidth: '100px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          justifyContent: 'center'
+                        }}
+                        onClick={() => setConfirmDeleteId(null)}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 15l-6-6-6 6" />
+                        </svg>
+                        Cancel
+                      </button>
+
+                      <button
+                        className="btn btn-r"
+                        style={{
+                          minWidth: '100px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          justifyContent: 'center'
+                        }}
+                        onClick={() => {
+                          const updated = programsList.filter(p => p.id !== confirmDeleteId);
+                          setProgramsList(updated);
+                          setConfirmDeleteId(null);
+                          alert('Program template completely purged from current state registry.');
+                        }}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M3 6h18" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
+                        Delete
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+)}
+
             {/* ════════════════════════════════════════
                 SCREEN: ENCODE DISTRIBUTION
                 ════════════════════════════════════════ */}
             {screen === 'aid-encode' && (
-  <div className="screen active">
-    <div className="ph">
-      <div>
-        <div className="pt">Encode Aid Distribution</div>
-        <div className="ps">Log a beneficiary entry for an active program</div>
-      </div>
-      <button className="btn btn-g" onClick={() => nav('programs')}>
-    ← Back
-  </button>
-    </div>
-    
-    {/* BATCH MODE INDICATOR SYSTEM BANNER */}
-    {selectedResidents.length > 0 && (
-      <div style={{
-        background: 'rgba(59, 130, 246, 0.15)',
-        border: '1px dashed #3b82f6',
-        padding: '12px',
-        borderRadius: '6px',
-        marginBottom: '15px',
-        fontSize: '12px'
-      }}>
-        <span style={{ color: '#3b82f6', fontWeight: 'bold' }}>⚡ Batch Mode Active:</span> Mayroong <strong>{selectedResidents.length}</strong> residente na awtomatikong mapoproseso para sa ayuda na ito galing sa Masterlist Selection.
-        
-        <div style={{ marginTop: '5px', maxHeight: '60px', overflowY: 'auto', fontSize: '11px', color: '#94a3b8' }}>
-          Naka-queue: {residentsList.filter(r => selectedResidents.includes(r.id)).map(r => r.name).join(', ')}
-        </div>
-        
-        <button 
-          style={{
-            background: 'transparent', 
-            border: 'none', 
-            color: '#ef4444', 
-            fontSize: '11px', 
-            cursor: 'pointer', 
-            textDecoration: 'underline',
-            padding: '0',
-            marginTop: '6px',
-            display: 'block'
-          }}
-          onClick={() => setSelectedResidents([])}
-        >
-          Cancel Batch Mode (Switch back to Single Resident)
-        </button>
-      </div>
-    )}
+                  <div className="screen active">
+                    {/* Page Header */}
+                    <div className="ph">
+                      <div>
+                        <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                            <path d="M3.27 6.96L12 12.01l8.73-5.05" />
+                            <path d="M12 22.08V12" />
+                          </svg>
+                          Aid Distribution Encoding
+                        </div>
+                        <div className="ps">Log a beneficiary entry for an active relief program</div>
+                      </div>
+                      <button 
+                        className="btn btn-g" 
+                        onClick={() => nav('programs')} 
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M19 12H5" />
+                          <path d="M12 19l-7-7 7-7" />
+                        </svg>
+                        Back to Programs
+                      </button>
+                    </div>
 
-    <div className="tc">
-      <div className="fp">
-        <div className="fp-t">📦 Distribution Entry</div>
-        
-        <div className="fg">
-          <label className="fl">Distribution Program</label>
-          <select 
-    className="fc"
-    value={currentProgramId}
-    onChange={(e) => setCurrentProgramId(e.target.value)}
-  >
-            <option value="PROG-2024-004">Ayuda Rice Distribution (PROG-2024-004)</option>
-    <option value="PROG-2026-NEW">Bagong Paskong Pag-asa Program (PROG-2026-NEW)</option>
-          </select>
-        </div>
-        
-        <div className="fg">
-          <label className="fl">Beneficiary (Resident)</label>
-          <select 
-            value={currentBeneficiaryId}
-            onChange={(e) => setCurrentBeneficiaryId(e.target.value)}
-            disabled={selectedResidents.length > 0} // Locked kapag batch queue flow control ang ginagamit
-            className="fc"
-            style={{ background: selectedResidents.length > 0 ? '#1e293b' : '#0f172a' }}
-          >
-            <option value="">-- Pumili ng Residente --</option>
-            {filteredResidents.map((res) => (
-              <option key={res.id} value={res.id}>
-                {res.name} ({res.id}) — {res.purok}
-              </option>
-            ))}
-          </select>
-        </div>
-        
-        <div className="fg2">
-          <div className="fg">
-            <label className="fl">Aid Type</label>
-            <input className="fc" value={aidType} onChange={(e) => setAidType(e.target.value)} />
-          </div>
-          <div className="fg">
-            <label className="fl">Quantity</label>
-            <input className="fc" type="number" value={quantity} onChange={(e) => setQuantity(Number(e.target.value))} />
-          </div>
-        </div>
-        
-        <div className="fg">
-          <label className="fl">Remarks</label>
-          <textarea className="fc" placeholder="Optional notes..." value={remarks} onChange={(e) => setRemarks(e.target.value)} />
-        </div>
-        
-        {/* CONDITIONALLY RENDER VALIDATION NOTICES */}
-        {!duplicateAlert && currentBeneficiaryId && (
-          <div className="note note-s" style={{ marginBottom: '12px' }}>
-            ✓ No duplicate — resident not yet recorded under this program.
-          </div>
-        )}
-        
-        <div className="fa">
-          <button 
-            className="btn btn-p" 
-            onClick={handleLogAidEntry}
-            disabled={!!duplicateAlert || !currentBeneficiaryId}
-            style={{ opacity: (duplicateAlert || !currentBeneficiaryId) ? 0.5 : 1 }}
-          >
-            {selectedResidents.length > 1 ? '✔ Log & Next in Queue' : '✔ Log Entry'}
-          </button>
-        </div>
-      </div>
+                    {/* Success Message Banner */}
+                    {successMessage && (
+                      <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(6, 95, 70, 0.4)', color: '#34d399', border: '1px solid #059669', fontSize: '13px', fontWeight: '500', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <polyline points="20 6 9 17 4 12" />
+                        </svg>
+                        {successMessage}
+                      </div>
+                    )}
 
-      {/* KANANG BAHAGI: DATA INTERCEPTOR WARNING AT LOG VIEWPORT */}
-      <div>
-        {duplicateAlert && (
-          <div className="note note-e" style={{ marginBottom: '14px' }}>
-            ⚠ <strong>{duplicateAlert}</strong>
-          </div>
-        )}
-        
-        <div className="tw">
-          <table style={{ width: '100%' }}>
-            <thead>
-              <tr>
-                <th>Resident</th>
-                <th>Aid</th>
-                <th>By</th>
-                <th>Time</th>
-                <th>Status</th>
-              </tr>
-            </thead>
-            <tbody>
-              {aidLogs.map((log) => (
-                <tr key={log.id}>
-                  <td>{log.residentName}</td>
-                  <td>{log.aid}</td>
-                  <td>{log.officer}</td>
-                  <td style={mono10}>{log.time}</td>
-                  <td>
-                    <span className={`badge ${log.status === 'OK' ? 'g' : log.status === 'Synced' ? 't' : 'r'}`}>
-                      {log.status}
-                    </span>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-    </div>
-  </div>
-            )}
+                    {/* Batch Mode Indicator */}
+                    {selectedResidents.length > 0 && (
+                      <div style={{ background: 'rgba(59, 130, 246, 0.15)', border: '1px dashed #3b82f6', padding: '12px', borderRadius: '8px', marginBottom: '15px', fontSize: '12px', backdropFilter: 'blur(8px)' }}>
+                        <span style={{ color: '#3b82f6', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                          </svg>
+                          Batch Mode Active:
+                        </span>
+                        {' '}<strong>{selectedResidents.length}</strong> residents are queued for processing from the Masterlist Selection.
+                        <div style={{ marginTop: '5px', maxHeight: '60px', overflowY: 'auto', fontSize: '11px', color: '#94a3b8', padding: '4px 8px', background: '#0f172a', borderRadius: '4px' }}>
+                          Queued: {residentsList.filter(r => selectedResidents.includes(r.id)).map(r => r.name).join(', ')}
+                        </div>
+                        <button 
+                          style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', padding: '0', marginTop: '6px', display: 'block' }}
+                          onClick={() => setSelectedResidents([])}
+                        >
+                          Cancel Batch Mode
+                        </button>
+                      </div>
+                    )}
+
+                    <div className="tc">
+                      {/* 📝 FORM PANEL */}
+                      <div className="fp" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px' }}>
+                        <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                          </svg>
+                          Distribution Entry Form
+                        </div>
+
+                        {/* Relief Program Field */}
+                        <div className="fg" style={{ marginBottom: '16px' }}>
+                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
+                              <line x1="12" y1="22.08" x2="12" y2="12" />
+                            </svg>
+                            Relief Program <span style={{ color: '#ef4444' }}>*</span>
+                          </label>
+                          <select
+                            className="fc"
+                            value={selectedProgramId}
+                            onChange={(e) => {
+                              const progId = e.target.value;
+                              setSelectedProgramId(progId);
+                              const foundProg = programsList.find((p) => p.id === progId);
+                              if (foundProg) {
+                                setAidType(
+                                  foundProg.title.includes('Rice') ? 'Rice — 5kg Pack' : 'Financial / Cash Aid'
+                                );
+                              }
+                            }}
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: selectedProgramId ? '#f8fafc' : '#64748b', border: '1px solid #334155', fontSize: '13px', outline: 'none', cursor: 'pointer', transition: 'border-color 0.2s ease' }}
+                          >
+                            <option value="" disabled hidden>Choose active relief campaign...</option>
+                            {programsList
+                              .filter((prog) => prog.status === 'Active')
+                              .map((prog) => {
+                                const isFull = (prog.current || 0) >= (prog.target || 1);
+                                return (
+                                  <option key={prog.id} value={prog.id} disabled={isFull} style={{ background: '#1e293b', color: isFull ? '#94a3b8' : '#f8fafc', padding: '8px' }}>
+                                    {prog.title} ({prog.id}) — {prog.current}/{prog.target} {isFull ? '⚠️ (FULL)' : ''}
+                                  </option>
+                                );
+                              })}
+                          </select>
+                        </div>
+
+                        {/* Beneficiary Resident Selector with Filter & Clean Purok Text */}
+                        <div className="fg" style={{ marginBottom: '16px' }}>
+                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                              <circle cx="12" cy="7" r="4" />
+                            </svg>
+                            Beneficiary Resident <span style={{ color: '#ef4444' }}>*</span>
+                          </label>
+                          <div style={{ position: 'relative', marginBottom: '8px' }}>
+                            <input
+                              type="text"
+                              placeholder="Type to filter resident name, ID, or purok..."
+                              value={residentSearch}
+                              onChange={(e) => setResidentSearch(e.target.value)}
+                              style={{ width: '100%', padding: '8px 12px 8px 32px', borderRadius: '6px', background: '#1e293b', color: '#f8fafc', border: '1px solid #334155', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }}
+                            />
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>
+                              <circle cx="11" cy="11" r="8" />
+                              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                            </svg>
+                            {residentSearch && (
+                              <button
+                                type="button"
+                                onClick={() => setResidentSearch('')}
+                                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '12px', padding: '2px' }}
+                              >
+                                ✕
+                              </button>
+                            )}
+                          </div>
+
+                          <select
+                            className="fc"
+                            value={selectedResidentId}
+                            onChange={(e) => setSelectedResidentId(e.target.value)}
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: selectedResidentId ? '#f8fafc' : '#64748b', border: '1px solid #334155', fontSize: '13px', outline: 'none', cursor: 'pointer' }}
+                          >
+                            <option value="" disabled hidden>
+                              {filteredBeneficiaries.length > 0 ? "Select beneficiary from filtered list..." : "No matching resident found..."}
+                            </option>
+                            {filteredBeneficiaries.map((res) => (
+                              <option key={res.id} value={res.id} style={{ background: '#1e293b', color: '#f8fafc', padding: '8px' }}>
+                                {res.name} ({res.id || 'Resident'}) — {res.purok?.toString().toLowerCase().startsWith('purok') ? res.purok : `Purok ${res.purok || '1'}`}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+
+                        {/* Aid Type Field */}
+                        <div className="fg" style={{ marginBottom: '16px' }}>
+                          <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M20 7h-9" />
+                              <path d="M14 17H5" />
+                              <path d="M9 7v10" />
+                            </svg>
+                            Aid Type <span style={{ color: '#ef4444' }}>*</span>
+                          </label>
+                          <input
+                            type="text"
+                            className="fc"
+                            value={aidType}
+                            onChange={(e) => setAidType(e.target.value)}
+                            placeholder="e.g., Rice — 5kg"
+                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155', fontSize: '13px', outline: 'none' }}
+                          />
+                        </div>
+
+                        {/* 🔢 Custom Stepper + Add Entry Action Grid */}
+                        <div className="fg2" style={{ marginBottom: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                          {/* Custom Quantity Stepper */}
+                          <div className="fg">
+                            <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 11.25v8.75a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8.75" />
+                                <path d="M18 11l-3-3-3 3" />
+                              </svg>
+                              Quantity <span style={{ color: '#ef4444' }}>*</span>
+                            </label>
+                            <div style={{ display: 'flex', alignItems: 'center', background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden' }}>
+                              <button
+                                type="button"
+                                onClick={() => setQuantity(prev => Math.max(1, (Number(prev) || 1) - 1))}
+                                style={{ padding: '0 12px', height: '38px', background: '#1e293b', border: 'none', color: '#94a3b8', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 0.2s ease, color 0.2s ease' }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#334155'; e.currentTarget.style.color = '#f8fafc'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = '#1e293b'; e.currentTarget.style.color = '#94a3b8'; }}
+                              >
+                                −
+                              </button>
+                              <input
+                                type="number"
+                                min="1"
+                                value={quantity}
+                                onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                                style={{ width: '100%', textAlign: 'center', background: 'transparent', border: 'none', color: '#f8fafc', fontSize: '13px', fontWeight: '600', outline: 'none' }}
+                              />
+                              <button
+                                type="button"
+                                onClick={() => setQuantity(prev => (Number(prev) || 0) + 1)}
+                                style={{ padding: '0 12px', height: '38px', background: '#1e293b', border: 'none', color: '#94a3b8', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 0.2s ease, color 0.2s ease' }}
+                                onMouseEnter={(e) => { e.currentTarget.style.background = '#334155'; e.currentTarget.style.color = '#f8fafc'; }}
+                                onMouseLeave={(e) => { e.currentTarget.style.background = '#1e293b'; e.currentTarget.style.color = '#94a3b8'; }}
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* Integrated Add / Log Entry Button */}
+                          <div className="fg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                            <button
+                              type="button"
+                              className="btn btn-p"
+                              onClick={handleEncodeSubmit}
+                              disabled={!selectedProgramId || !selectedResidentId}
+                              style={{
+                                height: '38px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justify: 'center',
+                                gap: '6px',
+                                borderRadius: '8px',
+                                background: '#0284c7',
+                                color: '#ffffff',
+                                fontWeight: '600',
+                                fontSize: '13px',
+                                border: 'none',
+                                cursor: (!selectedProgramId || !selectedResidentId) ? 'not-allowed' : 'pointer',
+                                opacity: (!selectedProgramId || !selectedResidentId) ? 0.5 : 1,
+                                transition: 'background 0.2s ease'
+                              }}
+                              onMouseEnter={(e) => { if (selectedProgramId && selectedResidentId) e.currentTarget.style.background = '#0369a1'; }}
+                              onMouseLeave={(e) => { if (selectedProgramId && selectedResidentId) e.currentTarget.style.background = '#0284c7'; }}
+                            >
+                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                              </svg>
+                              Add Entry
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Remarks */}
+                        <div className="fg">
+                          <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <path d="M14 2v6h6" />
+                              <path d="M12 18v-6" />
+                              <path d="M9 15h6" />
+                            </svg>
+                            Remarks
+                          </label>
+                          <textarea
+                            className="fc"
+                            placeholder="Optional notes..."
+                            value={remarks}
+                            onChange={(e) => setRemarks(e.target.value)}
+                            style={{ minHeight: '70px' }}
+                          />
+                        </div>
+
+                        {/* Duplicate Validation Status */}
+                        {!duplicateAlert && selectedResidentId && (
+                          <div className="note note-s" style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                              <path d="M22 4L12 14.01l-3-3" />
+                            </svg>
+                            No duplicate — resident not yet recorded under this program.
+                          </div>
+                        )}
+                      </div>
+
+                      {/* 📊 AID LOGS TABLE */}
+                      <div>
+                        {duplicateAlert && (
+                          <div className="note note-e" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                              <path d="M12 9v4" />
+                              <path d="M12 17h.01" />
+                            </svg>
+                            <strong>{duplicateAlert}</strong>
+                          </div>
+                        )}
+
+                        <div className="tw" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px' }}>
+                          <table style={{ width: '100%' }}>
+                            <thead>
+                              <tr>
+                                <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>Resident</th>
+                                <th style={{ fontSize: '11px', color: 'var(--muted)' }}>Aid</th>
+                                <th style={{ fontSize: '11px', color: 'var(--muted)' }}>By</th>
+                                <th style={{ fontSize: '11px', color: 'var(--muted)' }}>Time</th>
+                                <th style={{ fontSize: '11px', color: 'var(--muted)' }}>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {aidLogs.map((log) => (
+                                <tr
+                                  key={log.id}
+                                  style={{ borderBottom: '1px solid rgba(79, 142, 247, 0.1)', transition: 'background 0.2s ease' }}
+                                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.05)')}
+                                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                                >
+                                  <td>{log.residentName}</td>
+                                  <td>{log.aid}</td>
+                                  <td>{log.officer}</td>
+                                  <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#94a3b8' }}>{log.time}</td>
+                                  <td>
+                                    <span className={`badge ${log.status === 'OK' ? 'g' : log.status === 'Synced' ? 't' : 'r'}`}>
+                                      {log.status === 'OK' && (
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                          <path d="M22 4L12 14.01l-3-3" />
+                                        </svg>
+                                      )}
+                                      {log.status === 'Synced' && (
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                        </svg>
+                                      )}
+                                      {log.status === 'Error' && (
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                          <path d="M12 9v4" />
+                                          <path d="M12 17h.01" />
+                                        </svg>
+                                      )}
+                                      {' '}{log.status}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
 
             {/* ════════════════════════════════════════
                 SCREEN: DISTRIBUTION LOGS
@@ -4050,16 +6051,197 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                         />
                       </div>
                       
-                      {/* 🔄 GUMAGANANG PROGRAM FILTER DROPDOWN */}
+                      {/* 🔄 DYNAMIC PROGRAM FILTER DROPDOWN */}
                       <select 
                         className="fc" 
-                        style={{ width: '220px' }}
-                        value={programFilter}
+                        style={{ width: '260px' }} 
+                        value={programFilter} 
                         onChange={(e) => setProgramFilter(e.target.value)}
                       >
                         <option value="All">All Programs</option>
-                        <option value="PROG-2024-004">Ayuda Rice Distribution (PROG-2024-004)</option>
-                        {/* Maaari mong i-map dito ang active programs array mo kung mayroon na */}
+                        {programsList.map((prog) => {
+  // Calculate percentage for the progress bar
+  const percent = Math.min(100, Math.round(((prog.current || 0) / (prog.target || 1)) * 100));
+
+  return (
+    <div
+      className="card"
+      key={prog.id}
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        justify: 'space-between',
+        border: '1px solid rgba(79, 142, 247, 0.2)',
+        position: 'relative',
+        background: 'rgba(30, 41, 59, 0.4)',
+        backdropFilter: 'blur(8px)',
+        borderRadius: '8px',
+        padding: '16px',
+        transition: 'all 0.3s ease',
+      }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+        e.currentTarget.style.background = 'rgba(30, 41, 59, 0.6)';
+      }}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.2)';
+        e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)';
+      }}
+    >
+      <div>
+        {/* CARD HEADER WITH DYNAMIC BADGE */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
+          {/* Call the helper function here */}
+          <span className={`badge ${getStatusBadgeClass(prog.status)}`} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+            <span style={{ height: '6px', width: '6px', borderRadius: '50%', backgroundColor: 'currentColor', display: 'inline-block' }}></span>
+            {prog.status}
+          </span>
+
+          <span className="badge gr" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M12 18v-6" />
+              <path d="M9 15h6" />
+            </svg>
+            {prog.dateLabel || 'Campaign'}
+          </span>
+        </div>
+
+        <div className="ct" style={{ fontWeight: 'bold', fontSize: '15px', color: '#f8fafc', marginBottom: '4px' }}>
+          {prog.title}
+        </div>
+        <div className="cm" style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#94a3b8', marginBottom: '10px' }}>
+          {prog.id}
+        </div>
+
+        {/* PROGRESS BAR */}
+        <div className="prog" style={{ margin: '10px 0', background: '#334155', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
+          <div
+            className="prog-b"
+            style={{
+              width: `${percent}%`,
+              height: '100%',
+              background: prog.status === 'Completed' ? 'linear-gradient(90deg, #10b981, #14b8a6)' : prog.status === 'Upcoming' ? '#64748b' : '#3b82f6',
+              transition: 'width 0.4s ease-in-out',
+            }}
+          />
+        </div>
+
+        <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', justifyContent: 'space-between' }}>
+          <span>
+            {prog.current} / {prog.target} targets
+          </span>
+          <strong>{percent}%</strong>
+        </div>
+      </div>
+
+      {/* ACTION BUTTONS */}
+      <div style={{ display: 'flex', gap: '6px', marginTop: '16px', borderTop: '1px solid rgba(79, 142, 247, 0.2)', paddingTop: '12px', flexWrap: 'wrap' }}>
+        {prog.status === 'Active' && (
+          <>
+            <button className="btn btn-p btn-sm" style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => nav('aid-encode')}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+              </svg>
+              Encode
+            </button>
+            <button className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => nav('aid-logs')}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M12 18v-6" />
+                <path d="M9 15h6" />
+              </svg>
+              Logs
+            </button>
+            <button className="btn btn-a btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#d97706', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => setEditingProgram(prog)}>
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              Edit
+            </button>
+            <button
+              className="btn btn-sm"
+              style={{ padding: '4px 8px', fontSize: '11px', background: '#10b981', color: 'white', display: 'flex', alignItems: 'center', gap: '4px' }}
+              onClick={() => {
+                const updated = programsList.map((p) => (p.id === prog.id ? { ...p, status: 'Completed' } : p));
+                setProgramsList(updated);
+                alert(`Program campaign ${prog.title} has been successfully closed and marked as Completed.`);
+              }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                <path d="M22 4L12 14.01l-3-3" />
+              </svg>
+              Complete
+            </button>
+          </>
+        )}
+
+        <button
+          className="btn btn-sm"
+          style={{ padding: '4px 8px', fontSize: '11px', background: '#475569', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '4px' }}
+          onClick={async () => {
+            const updated = programsList.map((p) => (p.id === prog.id ? { ...p, status: 'Archived' } : p));
+            setProgramsList(updated);
+            if (typeof createAuditLog === 'function') {
+              await createAuditLog({
+                action: 'ARCHIVE',
+                module: 'PROGRAMS',
+                recordId: prog.id,
+                details: `Archived program: ${prog.title}`,
+              });
+            }
+            alert(`Campaign historical logs archived successfully.`);
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+          </svg>
+          Archive
+        </button>
+
+        {prog.status === 'Upcoming' && (
+          <>
+            <button
+              className="btn btn-p btn-sm"
+              style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              onClick={() => {
+                const updated = programsList.map((p) => (p.id === prog.id ? { ...p, status: 'Active' } : p));
+                setProgramsList(updated);
+              }}
+            >
+              Activate
+            </button>
+            <button className="btn btn-a btn-sm" style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => setEditingProgram(prog)}>
+              Edit
+            </button>
+          </>
+        )}
+
+        {prog.status === 'Archived' && (
+          <>
+            <button className="btn btn-p btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#6366f1', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => setViewingProgram(prog)}>
+              View
+            </button>
+            <button
+              className="btn btn-g btn-sm"
+              style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
+              onClick={() => {
+                const updated = programsList.map((p) => (p.id === prog.id ? { ...p, status: 'Active' } : p));
+                setProgramsList(updated);
+              }}
+            >
+              Restore
+            </button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+})}
                       </select>
                       
                       {/* 🔄 GUMAGANANG STATUS FILTER DROPDOWN */}
@@ -4128,7 +6310,7 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                   <button className="btn btn-g" onClick={() => nav('aid-encode')}>← Back</button>
                 </div>
                 <div className="fp">
-                  <div className="fp-t">📦 Add Beneficiary List</div>
+                  <div className="fp-t"> Add Beneficiary List</div>
                   <div className="fg2">
                     <div className="fg">
                       <label className="fl">Full Name</label>
@@ -4147,22 +6329,117 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                       />
                     </div>
                   </div>
-                  <div className="fg2">
+     
+                  <div className="fg2" style={{ marginBottom: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                    {/* Quantity Field with Custom +/- Steppers */}
                     <div className="fg">
-                      <label className="fl">Quantity</label>
-                      <input
-                        className="fc" type="number"
-                        value={beneficiaryDraft.qty}
-                        onChange={(e) => setBeneficiaryDraft((prev) => ({ ...prev, qty: Number(e.target.value) }))}
-                      />
+                      <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 11.25v8.75a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8.75" />
+                          <path d="M18 11l-3-3-3 3" />
+                        </svg> 
+                        Quantity <span style={{ color: '#ef4444' }}>*</span>
+                      </label>
+
+                      <div style={{ display: 'flex', alignItems: 'center', background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden' }}>
+                        {/* Decrement (-) Button */}
+                        <button
+                          type="button"
+                          onClick={() => setQuantity(prev => Math.max(1, (Number(prev) || 1) - 1))}
+                          style={{
+                            padding: '0 12px',
+                            height: '38px',
+                            background: '#1e293b',
+                            border: 'none',
+                            color: '#94a3b8',
+                            fontSize: '16px',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            transition: 'background 0.2s ease, color 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = '#334155'; e.currentTarget.style.color = '#f8fafc'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = '#1e293b'; e.currentTarget.style.color = '#94a3b8'; }}
+                        >
+                          −
+                        </button>
+
+                        {/* Numerical Display Input */}
+                        <input
+                          type="number"
+                          min="1"
+                          value={quantity}
+                          onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                          style={{
+                            width: '100%',
+                            textAlign: 'center',
+                            background: 'transparent',
+                            border: 'none',
+                            color: '#f8fafc',
+                            fontSize: '13px',
+                            fontWeight: '600',
+                            outline: 'none',
+                            MozAppearance: 'textfield' // Tinatago ang browser spin buttons sa Firefox
+                          }}
+                        />
+
+                        {/* Increment (+) Button */}
+                        <button
+                          type="button"
+                          onClick={() => setQuantity(prev => (Number(prev) || 0) + 1)}
+                          style={{
+                            padding: '0 12px',
+                            height: '38px',
+                            background: '#1e293b',
+                            border: 'none',
+                            color: '#94a3b8',
+                            fontSize: '16px',
+                            fontWeight: 'bold',
+                            cursor: 'pointer',
+                            transition: 'background 0.2s ease, color 0.2s ease'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.background = '#334155'; e.currentTarget.style.color = '#f8fafc'; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.background = '#1e293b'; e.currentTarget.style.color = '#94a3b8'; }}
+                        >
+                          +
+                        </button>
+                      </div>
                     </div>
-                    <div className="fg" style={{ display: 'flex', alignItems: 'flex-end' }}>
-                      <button className="btn btn-p" type="button" onClick={addToList}>＋ Add</button>
+
+                    {/* Integrated Add Button */}
+                    <div className="fg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
+                      <button
+                        className="btn btn-p"
+                        type="button"
+                        onClick={addToList}
+                        style={{
+                          height: '38px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          gap: '6px',
+                          borderRadius: '8px',
+                          background: '#0284c7',
+                          color: '#ffffff',
+                          fontWeight: '600',
+                          fontSize: '13px',
+                          border: 'none',
+                          cursor: 'pointer',
+                          transition: 'background 0.2s ease'
+                        }}
+                        onMouseEnter={(e) => (e.currentTarget.style.background = '#0369a1')}
+                        onMouseLeave={(e) => (e.currentTarget.style.background = '#0284c7')}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                        Add Entry
+                      </button>
                     </div>
                   </div>
                 </div>
                 <div className="tw">
-                  <div className="tb"><strong>📋 Beneficiary List</strong></div>
+                  <div className="tb"><strong> Beneficiary List</strong></div>
                   <table>
                     <thead>
                       <tr><th>Name</th><th>Aid</th><th>Qty</th><th>Action</th></tr>
@@ -4188,294 +6465,908 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                   </table>
                 </div>
                 <div className="fa">
-                  <button className="btn btn-p" onClick={saveAll}>✔ Save All Beneficiaries</button>
+                  <button className="btn btn-p" onClick={saveAll}> Save All Beneficiaries</button>
                 </div>
               </div>
             )}
 
             {/* ════════════════════════════════════════
                 SCREEN: FILE BLOTTER ENTRY
-                ════════════════════════════════════════ */}
-
-            {screen === 'blotter-new' && (
-              <div className="screen active" style={{ position: 'relative' }}>
-                
-                {/* HEADER TRACK DESK */}
-                <div className="ph">
-                  <div>
-                    <div className="pt">File Blotter Entry</div>
-                    <div className="ps">Record a new community incident in the digital legal blotter engine</div>
+             {/* ════════════════════════════════════════ */}
+              {screen === 'blotter-new' && (
+                <div className="screen active" style={{ position: 'relative' }}>
+                  <div className="ph">
+                    <div>
+                      <div className="pt" style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                          <path d="M12 9v4" />
+                          <path d="M12 17h.01" />
+                        </svg>
+                        File Blotter Entry
+                      </div>
+                      <div className="ps">
+                        Record a new community incident in the digital legal blotter engine
+                      </div>
+                    </div>
+                    <button
+                      type="button"
+                      className="btn btn-g"
+                      onClick={() => nav('blotter-manage')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M19 12H5" />
+                        <path d="M12 19l-7-7 7-7" />
+                      </svg>
+                      Back to Registry
+                    </button>
                   </div>
-                  <button type="button" className="btn btn-g" onClick={() => nav('blotter-manage')}> ← Back to Registry</button>
+
+                  {/* =============================================
+                      🔐 SECTION 1: SYSTEM METADATA (Read-Only + Glass-Morphism)
+                      ============================================= */}
+                  <form onSubmit={handleCreateBlotterEntry}>
+                    <div className="fp" style={{
+                      background: 'rgba(15, 23, 42, 0.6)',
+                      backdropFilter: 'blur(10px)',
+                      borderLeft: '4px solid var(--accent)',
+                      borderRadius: '8px',
+                      marginBottom: '16px'
+                    }}>
+                      <div className="fp-t" style={{
+                        color: 'var(--accent)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                        </svg>
+                        System Metadata (Read-Only)
+                      </div>
+                      <div className="fg3" style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                        gap: '12px',
+                        marginTop: '8px'
+                      }}>
+                        <div className="fg">
+                          <label className="fl" style={{ color: '#94a3b8' }}>Blotter Tracking No.</label>
+                          <input
+                            className="fc"
+                            style={{
+                              background: '#1e293b',
+                              color: '#60a5fa',
+                              fontWeight: 'bold',
+                              fontFamily: 'var(--mono)'
+                            }}
+                            readOnly
+                            value={`BLT-2026-${String(blotterList.length + 125).padStart(5, '0')}`}
+                          />
+                        </div>
+                        <div className="fg">
+                          <label className="fl" style={{ color: '#94a3b8' }}>Officer Handling Case</label>
+                          <input
+                            className="fc"
+                            style={{ background: '#1e293b', color: '#cbd5e1' }}
+                            readOnly
+                            value="Juhairo Macabangon"
+                          />
+                        </div>
+                        <div className="fg">
+                          <label className="fl" style={{ color: '#94a3b8' }}>Date Logged</label>
+                          <input
+                            className="fc"
+                            style={{ background: '#1e293b', color: '#cbd5e1' }}
+                            readOnly
+                            value={new Date().toLocaleDateString('en-PH', {
+                              year: 'numeric',
+                              month: 'long',
+                              day: 'numeric'
+                            })}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* =============================================
+                      🚨 SECTION 2: INCIDENT CHARACTERISTICS (SVG Icons + Priority Badges)
+                      ============================================= */}
+                    <div className="fp" style={{
+                      background: 'rgba(26, 29, 36, 0.4)',
+                      backdropFilter: 'blur(8px)',
+                      border: '1px solid rgba(79, 142, 247, 0.2)',
+                      borderRadius: '8px',
+                      marginBottom: '16px'
+                    }}>
+                      <div className="fp-t" style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                          <path d="M12 9v4" />
+                          <path d="M12 17h.01" />
+                        </svg>
+                        Incident Parameters & Priority
+                      </div>
+
+                      {/* Date, Time, Priority */}
+                      <div className="fg3" style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                        gap: '12px'
+                      }}>
+                        <div className="fg">
+                          <label className="fl">Date of Incident</label>
+                          <input
+                            className="fc"
+                            type="date"
+                            required
+                            value={blotterForm.date}
+                            onChange={(e) => setBlotterForm({...blotterForm, date: e.target.value})}
+                          />
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Time Matrix</label>
+                          <input
+                            className="fc"
+                            type="time"
+                            required
+                            value={blotterForm.time}
+                            onChange={(e) => setBlotterForm({...blotterForm, time: e.target.value})}
+                          />
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Case Priority Rank</label>
+                          <select
+                            className="fc"
+                            value={blotterForm.priority}
+                            onChange={(e) => setBlotterForm({...blotterForm, priority: e.target.value})}
+                          >
+                            <option value="Low">
+                              <span style={{ color: '#10b981' }}>●</span> Low Priority
+                            </option>
+                            <option value="Medium">
+                              <span style={{ color: '#fbbf24' }}>●</span> Medium Priority
+                            </option>
+                            <option value="High">
+                              <span style={{ color: '#f87171' }}>●</span> High Priority
+                            </option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* Incident Type & Location */}
+                      <div className="fg2" style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '12px',
+                        marginTop: '12px'
+                      }}>
+                        <div className="fg">
+                          <label className="fl">Incident Type Classification</label>
+                          <select
+                            className="fc"
+                            value={blotterForm.type}
+                            onChange={(e) => setBlotterForm({...blotterForm, type: e.target.value})}
+                          >
+                            <option value="Noise Complaint">Noise Complaint</option>
+                            <option value="Physical Altercation">Physical Altercation</option>
+                            <option value="Domestic Violence">Domestic Violence</option>
+                            <option value="Theft">Theft</option>
+                            <option value="Trespassing">Trespassing</option>
+                            <option value="Property Dispute">Property Dispute</option>
+                            <option value="Harassment">Harassment</option>
+                            <option value="Threat">Threat</option>
+                            <option value="Vandalism">Vandalism</option>
+                            <option value="Others">Others</option>
+                          </select>
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Exact Location Address</label>
+                          <input
+                            className="fc"
+                            required
+                            placeholder="e.g. Purok 5, near the public plaza"
+                            value={blotterForm.location}
+                            onChange={(e) => setBlotterForm({...blotterForm, location: e.target.value})}
+                          />
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* =============================================
+                      👥 SECTION 3: PARTIES INVOLVED (SVG Icons + Intelligent Search)
+                      ============================================= */}
+                    <div className="fp" style={{
+                      background: 'rgba(26, 29, 36, 0.4)',
+                      backdropFilter: 'blur(8px)',
+                      border: '1px solid rgba(79, 142, 247, 0.2)',
+                      borderRadius: '8px',
+                      marginBottom: '16px'
+                    }}>
+                      <div className="fp-t" style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                        </svg>
+                        Legal Parties Involved
+                      </div>
+
+                      <div className="fg2" style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '20px'
+                      }}>
+                        {/* COMPLAINANT */}
+                        <div className="fg" style={{ position: 'relative' }}>
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: '4px'
+                          }}>
+                            <label className="fl" style={{ margin: 0 }}>Complainant (Nagrereklamo)</label>
+                            <label style={{
+                              fontSize: '11px',
+                              color: '#64748b',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              cursor: 'pointer'
+                            }}>
+                              <input
+                                type="checkbox"
+                                checked={blotterForm.isComplainantNonResident}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setBlotterForm({
+                                    ...blotterForm,
+                                    isComplainantNonResident: checked,
+                                    complainant: ''
+                                  });
+                                  setComplainantQuery('');
+                                }}
+                              />
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                <circle cx="9" cy="7" r="4" />
+                              </svg>
+                              Non-resident
+                            </label>
+                          </div>
+
+                          {blotterForm.isComplainantNonResident ? (
+                            <input
+                              className="fc"
+                              required
+                              placeholder="Enter full name of non-resident complainant"
+                              value={blotterForm.complainant}
+                              onChange={(e) => setBlotterForm({...blotterForm, complainant: e.target.value})}
+                            />
+                          ) : (
+                            <>
+                              <div style={{ position: 'relative' }}>
+                                <div className="sb-box">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <circle cx="11" cy="11" r="8" />
+                                    <path d="M21 21l-4.35-4.35" />
+                                  </svg>
+                                  <input
+                                    className="fc"
+                                    placeholder="Search resident name from database..."
+                                    value={complainantQuery}
+                                    onChange={(e) => {
+                                      setComplainantQuery(e.target.value);
+                                      setShowComplainantDropdown(true);
+                                    }}
+                                    onFocus={() => setShowComplainantDropdown(true)}
+                                    style={{ width: '100%' }}
+                                  />
+                                </div>
+                                {blotterForm.complainant && (
+                                  <div style={{
+                                    fontSize: '11px',
+                                    color: '#10b981',
+                                    marginTop: '2px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                  }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                    </svg>
+                                    Linked Profile: <strong>{blotterForm.complainant}</strong>
+                                  </div>
+                                )}
+                              </div>
+
+                              {showComplainantDropdown && complainantQuery && (
+                                <div style={{
+                                  position: 'absolute',
+                                  top: '64px',
+                                  left: 0,
+                                  width: '100%',
+                                  background: '#1e293b',
+                                  border: '1px solid #334155',
+                                  borderRadius: '4px',
+                                  zIndex: 10,
+                                  maxHeight: '150px',
+                                  overflowY: 'auto',
+                                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)'
+                                }}>
+                                  {residentsRegistry
+                                    .filter(r => r.name.toLowerCase().includes(complainantQuery.toLowerCase()))
+                                    .map(res => (
+                                      <div
+                                        key={res.id}
+                                        style={{
+                                          padding: '8px 12px',
+                                          color: 'white',
+                                          cursor: 'pointer',
+                                          borderBottom: '1px solid #334155',
+                                          fontSize: '12px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: '6px',
+                                          transition: 'background 0.2s ease'
+                                        }}
+                                        onClick={() => {
+                                          setBlotterForm({...blotterForm, complainant: res.name});
+                                          setComplainantQuery(res.name);
+                                          setShowComplainantDropdown(false);
+                                        }}
+                                        onMouseEnter={(e) => (e.target.style.background = 'rgba(79, 142, 247, 0.1)')}
+                                        onMouseLeave={(e) => (e.target.style.background = 'transparent')}
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                          <circle cx="9" cy="7" r="4" />
+                                        </svg>
+                                        {res.name} ({res.purok}) —
+                                        <span style={{ color: '#64748b', fontSize: '10px' }}>{res.id}</span>
+                                      </div>
+                                    ))}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+
+                        {/* RESPONDENT */}
+                        <div className="fg" style={{ position: 'relative' }}>
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: '4px'
+                          }}>
+                            <label className="fl" style={{ margin: 0 }}>Respondent (Inirereklamo)</label>
+                            <label style={{
+                              fontSize: '11px',
+                              color: '#64748b',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px',
+                              cursor: 'pointer'
+                            }}>
+                              <input
+                                type="checkbox"
+                                checked={blotterForm.isRespondentNonResident}
+                                onChange={(e) => {
+                                  const checked = e.target.checked;
+                                  setBlotterForm({
+                                    ...blotterForm,
+                                    isRespondentNonResident: checked,
+                                    respondent: ''
+                                  });
+                                  setRespondentQuery('');
+                                }}
+                              />
+                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                <circle cx="9" cy="7" r="4" />
+                              </svg>
+                              Non-resident
+                            </label>
+                          </div>
+
+                          {blotterForm.isRespondentNonResident ? (
+                            <input
+                              className="fc"
+                              required
+                              placeholder="Enter full name of non-resident respondent"
+                              value={blotterForm.respondent}
+                              onChange={(e) => setBlotterForm({...blotterForm, respondent: e.target.value})}
+                            />
+                          ) : (
+                            <>
+                              <div style={{ position: 'relative' }}>
+                                <div className="sb-box">
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <circle cx="11" cy="11" r="8" />
+                                    <path d="M21 21l-4.35-4.35" />
+                                  </svg>
+                                  <input
+                                    className="fc"
+                                    placeholder="Search resident name from database..."
+                                    value={respondentQuery}
+                                    onChange={(e) => {
+                                      setRespondentQuery(e.target.value);
+                                      setShowRespondentDropdown(true);
+                                    }}
+                                    onFocus={() => setShowRespondentDropdown(true)}
+                                    style={{ width: '100%' }}
+                                  />
+                                </div>
+                                {blotterForm.respondent && (
+                                  <div style={{
+                                    fontSize: '11px',
+                                    color: '#10b981',
+                                    marginTop: '2px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '4px'
+                                  }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                    </svg>
+                                    Linked Profile: <strong>{blotterForm.respondent}</strong>
+                                  </div>
+                                )}
+                              </div>
+
+                              {showRespondentDropdown && respondentQuery && (
+                                <div style={{
+                                  position: 'absolute',
+                                  top: '64px',
+                                  left: 0,
+                                  width: '100%',
+                                  background: '#1e293b',
+                                  border: '1px solid #334155',
+                                  borderRadius: '4px',
+                                  zIndex: 10,
+                                  maxHeight: '150px',
+                                  overflowY: 'auto',
+                                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)'
+                                }}>
+                                  {residentsRegistry
+                                    .filter(r => r.name.toLowerCase().includes(respondentQuery.toLowerCase()))
+                                    .map(res => (
+                                      <div
+                                        key={res.id}
+                                        style={{
+                                          padding: '8px 12px',
+                                          color: 'white',
+                                          cursor: 'pointer',
+                                          borderBottom: '1px solid #334155',
+                                          fontSize: '12px',
+                                          display: 'flex',
+                                          alignItems: 'center',
+                                          gap: '6px',
+                                          transition: 'background 0.2s ease'
+                                        }}
+                                        onClick={() => {
+                                          setBlotterForm({...blotterForm, respondent: res.name});
+                                          setRespondentQuery(res.name);
+                                          setShowRespondentDropdown(false);
+                                        }}
+                                        onMouseEnter={(e) => (e.target.style.background = 'rgba(79, 142, 247, 0.1)')}
+                                        onMouseLeave={(e) => (e.target.style.background = 'transparent')}
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                          <circle cx="9" cy="7" r="4" />
+                                        </svg>
+                                        {res.name} ({res.purok}) —
+                                        <span style={{ color: '#64748b', fontSize: '10px' }}>{res.id}</span>
+                                      </div>
+                                    ))}
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* WITNESSES */}
+                      <div className="fg" style={{ marginTop: '12px' }}>
+                        <label className="fl">Witnesses Block (Optional)</label>
+                        <input
+                          className="fc"
+                          placeholder="Comma-separated names (e.g. Pedro Oliver, Maria Santos)"
+                          value={blotterForm.witnesses}
+                          onChange={(e) => setBlotterForm({...blotterForm, witnesses: e.target.value})}
+                        />
+                      </div>
+                    </div>
+
+                    {/* =============================================
+                      📜 SECTION 4: CASE NARRATIVE & RESOLUTION (SVG Icons + Glass-Morphism)
+                      ============================================= */}
+                    <div className="fp" style={{
+                      background: 'rgba(26, 29, 36, 0.4)',
+                      backdropFilter: 'blur(8px)',
+                      border: '1px solid rgba(79, 142, 247, 0.2)',
+                      borderRadius: '8px',
+                      marginBottom: '16px'
+                    }}>
+                      <div className="fp-t" style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <path d="M14 2v6h6" />
+                          <path d="M12 18v-6" />
+                          <path d="M9 15h6" />
+                        </svg>
+                        Narrative & Executive Barangay Action
+                      </div>
+
+                      <div className="fg">
+                        <label className="fl">Incident Narrative Report Statement</label>
+                        <textarea
+                          className="fc"
+                          required
+                          style={{ minHeight: '100px' }}
+                          placeholder="Provide a detailed chronological presentation statement of the incident..."
+                          value={blotterForm.narrative}
+                          onChange={(e) => setBlotterForm({...blotterForm, narrative: e.target.value})}
+                        />
+                      </div>
+
+                      <div className="fg2" style={{
+                        display: 'grid',
+                        gridTemplateColumns: '1fr 1fr',
+                        gap: '12px',
+                        marginTop: '12px'
+                      }}>
+                        <div className="fg">
+                          <label className="fl">Barangay Formal Action Taken</label>
+                          <select
+                            className="fc"
+                            value={blotterForm.actionTaken}
+                            onChange={(e) => setBlotterForm({...blotterForm, actionTaken: e.target.value})}
+                          >
+                            <option value="Summoned Parties">Summoned Parties</option>
+                            <option value="Conducted Mediation">Conducted Mediation</option>
+                            <option value="Issued Certification">Issued Certification to File Action</option>
+                            <option value="Referred to PNP">Referred to PNP Authorities</option>
+                            <option value="Referred to Lupon">Referred to Lupon Tagapamayapa</option>
+                            <option value="Others">Others</option>
+                          </select>
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Active Case Management Status</label>
+                          <select
+                            className="fc"
+                            value={blotterForm.status}
+                            onChange={(e) => setBlotterForm({...blotterForm, status: e.target.value})}
+                          >
+                            <option value="Open">Open (Pending Mediation)</option>
+                            <option value="Under Mediation">Under Mediation Process</option>
+                            <option value="Resolved">Resolved & Closed Case</option>
+                            <option value="Referred to Higher Authority">Referred to Higher Authority</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* NEXT MEDIATION HEARING (Conditional) */}
+                      {(blotterForm.status === 'Open' || blotterForm.status === 'Under Mediation') && (
+                        <div className="fg" style={{
+                          marginTop: '12px',
+                          background: '#1e293b',
+                          padding: '12px',
+                          borderRadius: '6px',
+                          borderLeft: '3px solid var(--amber)'
+                        }}>
+                          <label className="fl" style={{
+                            color: 'var(--amber)',
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '6px'
+                          }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M12 2v4" />
+                              <path d="M12 18v4" />
+                              <path d="M4.93 4.93l2.83 2.83" />
+                              <path d="M16.24 16.24l2.83 2.83" />
+                              <path d="M2 12h2" />
+                              <path d="M20 12h2" />
+                              <path d="M4.93 19.07l2.83-2.83" />
+                              <path d="M16.24 7.76l2.83-2.83" />
+                            </svg>
+                            Scheduled Next Mediation Hearing Date
+                          </label>
+                          <input
+                            className="fc"
+                            type="date"
+                            value={blotterForm.nextHearingDate}
+                            onChange={(e) => setBlotterForm({...blotterForm, nextHearingDate: e.target.value})}
+                          />
+                        </div>
+                      )}
+
+                      {/* EVIDENCE ATTACHMENTS (Disabled) */}
+                      <div className="fg" style={{ marginTop: '12px' }}>
+                        <label className="fl" style={{
+                          color: '#94a3b8',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px'
+                        }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <path d="M7 10l5 5 5-5" />
+                            <path d="M12 15v-6" />
+                          </svg>
+                          Evidence Attachments (Future Enhancement)
+                        </label>
+                        <div style={{ display: 'flex', gap: '8px', opacity: 0.6 }}>
+                          <button
+                            type="button"
+                            disabled
+                            className="btn btn-g btn-sm"
+                            style={{
+                              cursor: 'not-allowed',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                              <circle cx="12" cy="12" r="4" />
+                            </svg>
+                            Upload Photo
+                          </button>
+                          <button
+                            type="button"
+                            disabled
+                            className="btn btn-g btn-sm"
+                            style={{
+                              cursor: 'not-allowed',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <path d="M14 2v6h6" />
+                              <path d="M12 18v-6" />
+                              <path d="M9 15h6" />
+                            </svg>
+                            Upload PDF
+                          </button>
+                          <button
+                            type="button"
+                            disabled
+                            className="btn btn-g btn-sm"
+                            style={{
+                              cursor: 'not-allowed',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
+                              <path d="M12 5v14" />
+                            </svg>
+                            Upload Video
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="fa" style={{
+                      display: 'flex',
+                      gap: '10px',
+                      marginTop: '20px',
+                      borderTop: '1px solid #334155',
+                      paddingTop: '16px'
+                    }}>
+                      <button
+                        type="submit"
+                        className="btn btn-p"
+                        style={{
+                          flex: 2,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          justifyContent: 'center'
+                        }}
+                      >
+                        Save Blotter Case Record
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-a"
+                        style={{
+                          background: '#475569',
+                          flex: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          justifyContent: 'center'
+                        }}
+                        onClick={handleClearBlotterForm}
+                      >
+                        Clear Form
+                      </button>
+
+                      <button
+                        type="button"
+                        className="btn btn-g"
+                        style={{
+                          flex: 1,
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          justifyContent: 'center'
+                        }}
+                        onClick={() => nav('blotter-manage')}
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                  {showSuccessModal && (
+                    <div style={{
+                      position: 'fixed',
+                      top: 0,
+                      left: 0,
+                      width: '100%',
+                      height: '100%',
+                      background: 'rgba(0,0,0,0.85)',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      zIndex: 99999
+                    }}>
+                      <div style={{
+                        background: '#1e293b',
+                        border: '1px solid #10b981',
+                        padding: '30px',
+                        borderRadius: '12px',
+                        width: '90%',
+                        maxWidth: '420px',
+                        textAlign: 'center',
+                        boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
+                        backdropFilter: 'blur(10px)'
+                      }}>
+                        <div style={{
+                          fontSize: '42px',
+                          marginBottom: '12px',
+                          color: '#10b981'
+                        }}>
+                          <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                            <path d="M22 4L12 14.01l-3-3" />
+                          </svg>
+                        </div>
+
+                        <div style={{
+                          fontSize: '18px',
+                          fontWeight: 'bold',
+                          color: '#f8fafc',
+                          marginBottom: '4px'
+                        }}>
+                          Blotter Successfully Recorded
+                        </div>
+
+                        <div style={{
+                          fontSize: '13px',
+                          color: '#60a5fa',
+                          fontFamily: 'var(--mono)',
+                          marginBottom: '16px',
+                          fontWeight: 'bold'
+                        }}>
+                          {recentlyFiledId}
+                        </div>
+
+                        <div style={{
+                          fontSize: '12px',
+                          color: '#94a3b8',
+                          marginBottom: '24px'
+                        }}>
+                          The formal incident report context has been cataloged into Nabua’s local database schema registry successfully.
+                        </div>
+
+                        <div style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '8px'
+                        }}>
+                          <button
+                            className="btn btn-p"
+                            style={{
+                              width: '100%',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              justifyContent: 'center'
+                            }}
+                            onClick={() => {
+                              setShowSuccessModal(false);
+                              nav('blotter-manage');
+                            }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <path d="M14 2v6h6" />
+                              <path d="M12 18v-6" />
+                              <path d="M9 15h6" />
+                            </svg>
+                            View Case File Logs
+                          </button>
+
+                          <button
+                            className="btn btn-g"
+                            style={{
+                              width: '100%',
+                              background: '#10b981',
+                              color: 'white',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              justifyContent: 'center'
+                            }}
+                            onClick={() => {
+                              setShowSuccessModal(false);
+                              handleClearBlotterForm();
+                            }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M12 5v14M5 12h14" />
+                            </svg>
+                            File New Blotter Entry
+                          </button>
+
+                          <button
+                            className="btn btn-a"
+                            style={{
+                              width: '100%',
+                              background: '#334155',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px',
+                              justifyContent: 'center'
+                            }}
+                            onClick={() => {
+                              setShowSuccessModal(false);
+                              nav('blotter-manage');
+                            }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M19 12H5" />
+                              <path d="M12 19l-7-7 7-7" />
+                            </svg>
+                            Back to Manage Board
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
-
-                <form onSubmit={handleCreateBlotterEntry}>
-                  
-                  {/* SECTION 1: SYSTEM AUTOMATED RUNTIME INFO */}
-                  <div className="fp" style={{ background: '#0f172a', borderLeft: '4px solid #3b82f6' }}>
-                    <div className="fp-t" style={{ color: '#3b82f6' }}>🔒 System Metadata (Read-Only fields)</div>
-                    <div className="fg3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginTop: '8px' }}>
-                      <div className="fg">
-                        <label className="fl" style={{ color: '#94a3b8' }}>Blotter Tracking No.</label>
-                        <input className="fc" style={{ background: '#1e293b', color: '#60a5fa', fontWeight: 'bold', fontFamily: 'var(--mono)' }} readOnly value={`BLT-2026-${String(blotterList.length + 125).padStart(5, '0')}`} />
-                      </div>
-                      <div className="fg">
-                        <label className="fl" style={{ color: '#94a3b8' }}>Officer Handling Case</label>
-                        <input className="fc" style={{ background: '#1e293b', color: '#cbd5e1' }} readOnly value="Juhairo Macabangon" />
-                      </div>
-                      <div className="fg">
-                        <label className="fl" style={{ color: '#94a3b8' }}>Date Logged</label>
-                        <input className="fc" style={{ background: '#1e293b', color: '#cbd5e1' }} readOnly value="July 29, 2026" />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SECTION 2: INCIDENT CHARACTERISTICS */}
-                  <div className="fp">
-                    <div className="fp-t">🚨 Incident Parameters & Priority</div>
-                    <div className="fg3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px' }}>
-                      <div className="fg">
-                        <label className="fl">Date of Incident</label>
-                        <input className="fc" type="date" required value={blotterForm.date} onChange={(e) => setBlotterForm({...blotterForm, date: e.target.value})} />
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Time Matrix</label>
-                        <input className="fc" type="time" required value={blotterForm.time} onChange={(e) => setBlotterForm({...blotterForm, time: e.target.value})} />
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Case Priority Rank</label>
-                        <select className="fc" value={blotterForm.priority} onChange={(e) => setBlotterForm({...blotterForm, priority: e.target.value})}>
-                          <option value="Low">🟢 Low Priority</option>
-                          <option value="Medium">🟡 Medium Priority</option>
-                          <option value="High">🔴 High Priority</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
-                      <div className="fg">
-                        <label className="fl">Incident Type Classification</label>
-                        <select className="fc" value={blotterForm.type} onChange={(e) => setBlotterForm({...blotterForm, type: e.target.value})}>
-                          <option value="Noise Complaint">Noise Complaint</option>
-                          <option value="Physical Altercation">Physical Altercation</option>
-                          <option value="Domestic Violence">Domestic Violence</option>
-                          <option value="Theft">Theft</option>
-                          <option value="Trespassing">Trespassing</option>
-                          <option value="Property Dispute">Property Dispute</option>
-                          <option value="Harassment">Harassment</option>
-                          <option value="Threat">Threat</option>
-                          <option value="Vandalism">Vandalism</option>
-                          <option value="Others">Others</option>
-                        </select>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Exact Location Address</label>
-                        <input className="fc" required placeholder="e.g. Purok 5, near the public plaza" value={blotterForm.location} onChange={(e) => setBlotterForm({...blotterForm, location: e.target.value})} />
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* SECTION 3: PARTIES INVOLVED (INTELLIGENT RESIDENT LOOKUP ENGINE) */}
-                  <div className="fp">
-                    <div className="fp-t">👥 Legal Parties Involved</div>
-                    <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-                      
-                      {/* COMPLAINANT DECK BLOCK */}
-                      <div className="fg" style={{ position: 'relative' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <label className="fl" style={{ margin: 0 }}>Complainant (Nagrereklamo)</label>
-                          <label style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                            <input type="checkbox" checked={blotterForm.isComplainantNonResident} 
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setBlotterForm({...blotterForm, isComplainantNonResident: checked, complainant: ''});
-                                setComplainantQuery('');
-                              }} 
-                            /> Non-resident
-                          </label>
-                        </div>
-                        
-                        {blotterForm.isComplainantNonResident ? (
-                          <input className="fc" required placeholder="Enter full name of non-resident complainant" value={blotterForm.complainant} onChange={(e) => setBlotterForm({...blotterForm, complainant: e.target.value})} />
-                        ) : (
-                          <>
-                            <input className="fc" placeholder="🔍 Search resident name from database..." value={complainantQuery} 
-                              onChange={(e) => {
-                                setComplainantQuery(e.target.value);
-                                setShowComplainantDropdown(true);
-                              }}
-                              onFocus={() => setShowComplainantDropdown(true)}
-                            />
-                            {blotterForm.complainant && <div style={{ fontSize: '11px', color: '#10b981', marginTop: '2px' }}>🔒 Linked Profile: <strong>{blotterForm.complainant}</strong></div>}
-                            
-                            {showComplainantDropdown && complainantQuery && (
-                              <div style={{ position: 'absolute', top: '64px', left: 0, width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: '4px', zIndex: 10, maxHeight: '150px', overflowY: 'auto' }}>
-                                {residentsRegistry.filter(r => r.name.toLowerCase().includes(complainantQuery.toLowerCase())).map(res => (
-                                  <div key={res.id} style={{ padding: '8px 12px', color: 'white', cursor: 'pointer', borderBottom: '1px solid #334155', fontSize: '12px' }}
-                                    onClick={() => {
-                                      setBlotterForm({...blotterForm, complainant: res.name});
-                                      setComplainantQuery(res.name);
-                                      setShowComplainantDropdown(false);
-                                    }}>
-                                    👤 {res.name} ({res.purok}) — <span style={{ color: '#64748b', fontSize: '10px' }}>{res.id}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-
-                      {/* RESPONDENT DECK BLOCK */}
-                      <div className="fg" style={{ position: 'relative' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <label className="fl" style={{ margin: 0 }}>Respondent (Inirereklamo)</label>
-                          <label style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                            <input type="checkbox" checked={blotterForm.isRespondentNonResident} 
-                              onChange={(e) => {
-                                const checked = e.target.checked;
-                                setBlotterForm({...blotterForm, isRespondentNonResident: checked, respondent: ''});
-                                setRespondentQuery('');
-                              }} 
-                            /> Non-resident
-                          </label>
-                        </div>
-
-                        {blotterForm.isRespondentNonResident ? (
-                          <input className="fc" required placeholder="Enter full name of non-resident respondent" value={blotterForm.respondent} onChange={(e) => setBlotterForm({...blotterForm, respondent: e.target.value})} />
-                        ) : (
-                          <>
-                            <input className="fc" placeholder="🔍 Search resident name from database..." value={respondentQuery} 
-                              onChange={(e) => {
-                                setRespondentQuery(e.target.value);
-                                setShowRespondentDropdown(true);
-                              }}
-                              onFocus={() => setShowRespondentDropdown(true)}
-                            />
-                            {blotterForm.respondent && <div style={{ fontSize: '11px', color: '#10b981', marginTop: '2px' }}>🔒 Linked Profile: <strong>{blotterForm.respondent}</strong></div>}
-                            
-                            {showRespondentDropdown && respondentQuery && (
-                              <div style={{ position: 'absolute', top: '64px', left: 0, width: '100%', background: '#1e293b', border: '1px solid #334155', borderRadius: '4px', zIndex: 10, maxHeight: '150px', overflowY: 'auto' }}>
-                                {residentsRegistry.filter(r => r.name.toLowerCase().includes(respondentQuery.toLowerCase())).map(res => (
-                                  <div key={res.id} style={{ padding: '8px 12px', color: 'white', cursor: 'pointer', borderBottom: '1px solid #334155', fontSize: '12px' }}
-                                    onClick={() => {
-                                      setBlotterForm({...blotterForm, respondent: res.name});
-                                      setRespondentQuery(res.name);
-                                      setShowRespondentDropdown(false);
-                                    }}>
-                                    👤 {res.name} ({res.purok}) — <span style={{ color: '#64748b', fontSize: '10px' }}>{res.id}</span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </>
-                        )}
-                      </div>
-                    </div>
-
-                    <div className="fg" style={{ marginTop: '12px' }}>
-                      <label className="fl">Witnesses Block (Optional)</label>
-                      <input className="fc" placeholder="Comma-separated names (e.g. Pedro Oliver, Maria Santos)" value={blotterForm.witnesses} onChange={(e) => setBlotterForm({...blotterForm, witnesses: e.target.value})} />
-                    </div>
-                  </div>
-
-                  {/* SECTION 4: CASE NARRATIVE & RESOLUTION WORKFLOW */}
-                  <div className="fp">
-                    <div className="fp-t">📜 Narrative & Executive Barangay Action</div>
-                    <div className="fg">
-                      <label className="fl">Incident Narrative Report Statement</label>
-                      <textarea className="fc" required style={{ minHeight: '100px' }} placeholder="Provide a detailed chronological presentation statement of the incident..." value={blotterForm.narrative} onChange={(e) => setBlotterForm({...blotterForm, narrative: e.target.value})} />
-                    </div>
-
-                    <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
-                      <div className="fg">
-                        <label className="fl">Barangay Formal Action Taken</label>
-                        <select className="fc" value={blotterForm.actionTaken} onChange={(e) => setBlotterForm({...blotterForm, actionTaken: e.target.value})}>
-                          <option value="Summoned Parties">Summoned Parties</option>
-                          <option value="Conducted Mediation">Conducted Mediation</option>
-                          <option value="Issued Certification">Issued Certification to File Action</option>
-                          <option value="Referred to PNP">Referred to PNP Authorities</option>
-                          <option value="Referred to Lupon">Referred to Lupon Tagapamayapa</option>
-                          <option value="Others">Others</option>
-                        </select>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Active Case Management Status</label>
-                        <select className="fc" value={blotterForm.status} onChange={(e) => setBlotterForm({...blotterForm, status: e.target.value})}>
-                          <option value="Open">Open (Pending Mediation)</option>
-                          <option value="Under Mediation">Under Mediation Process</option>
-                          <option value="Resolved">Resolved & Closed Case</option>
-                          <option value="Referred to Higher Authority">Referred to Higher Authority</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* CONDITIONAL COMPONENT: NEXT MEDIATION HEARING MATRIX */}
-                    {(blotterForm.status === 'Open' || blotterForm.status === 'Under Mediation') && (
-                      <div className="fg" style={{ marginTop: '12px', background: '#1e293b', padding: '12px', borderRadius: '6px', borderLeft: '3px solid #eab308' }}>
-                        <label className="fl" style={{ color: '#eab308' }}>🗓️ Scheduled Next Mediation Hearing Date</label>
-                        <input className="fc" type="date" value={blotterForm.nextHearingDate} onChange={(e) => setBlotterForm({...blotterForm, nextHearingDate: e.target.value})} />
-                      </div>
-                    )}
-
-                    {/* ATTACHMENT EVIDENCE SUBMISSION LAYER (Future Core Enhancements Mock) */}
-                    <div className="fg" style={{ marginTop: '12px' }}>
-                      <label className="fl" style={{ color: '#94a3b8' }}>📁 Evidence Attachments (System Future Upgrade Framework)</label>
-                      <div style={{ display: 'flex', gap: '8px', opacity: 0.6 }}>
-                        <button type="button" disabled className="btn btn-g btn-sm" style={{ cursor: 'not-allowed' }}>🖼️ Upload Photo</button>
-                        <button type="button" disabled className="btn btn-g btn-sm" style={{ cursor: 'not-allowed' }}>📄 Upload PDF Document</button>
-                        <button type="button" disabled className="btn btn-g btn-sm" style={{ cursor: 'not-allowed' }}>🎥 Upload Video Asset</button>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* BUTTON ACTION CONTROLS FOOTER INTERFACE */}
-                  <div className="fa" style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid #334155', paddingTop: '16px' }}>
-                    <button type="submit" className="btn btn-p" style={{ flex: 2 }}>📋 Save Blotter Case Record</button>
-                    <button type="button" className="btn btn-a" style={{ background: '#475569', flex: 1 }} onClick={handleClearBlotterForm}>🧼 Clear Form</button>
-                    <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => nav('blotter-manage')}>Cancel</button>
-                  </div>
-                </form>
-
-                {/* 📋 PRODUCTION INTERACTIVE MODAL OVERLAY LAYER: SUCCESS VIEW DIALOG */}
-                {showSuccessModal && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
-                    <div style={{ background: '#1e293b', border: '1px solid #10b981', padding: '30px', borderRadius: '12px', width: '90%', maxWidth: '420px', textAlign: 'center', boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)' }}>
-                      <div style={{ fontSize: '42px', marginBottom: '12px' }}>✅</div>
-                      <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '4px' }}>Blotter Successfully Recorded</div>
-                      <div style={{ fontSize: '13px', color: '#60a5fa', fontFamily: 'var(--mono)', marginBottom: '16px', fontWeight: 'bold' }}>{recentlyFiledId}</div>
-                      <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '24px' }}>
-                        The formal incident report context has been cataloged into Nabua’s local database schema registry successfully.
-                      </div>
-                      
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                        <button className="btn btn-p" style={{ width: '100%' }} 
-                          onClick={() => {
-                            setShowSuccessModal(false);
-                            nav('blotter-manage'); // O dalhin mo sa profile logs viewport kung mayroon na
-                          }}>
-                          👁️ View Case File Logs
-                        </button>
-                        <button className="btn btn-g" style={{ width: '100%', background: '#10b981', color: 'white' }} 
-                          onClick={() => {
-                            setShowSuccessModal(false);
-                            handleClearBlotterForm();
-                          }}>
-                          ➕ File New Blotter Entry
-                        </button>
-                        <button className="btn btn-a" style={{ width: '100%', background: '#334155' }} 
-                          onClick={() => {
-                            setShowSuccessModal(false);
-                            nav('blotter-manage');
-                          }}>
-                          🔙 Back to Manage Board
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </div>
-            )}
+              )}
 
             {/* ════════════════════════════════════════
                 SCREEN: MANAGE BLOTTER
@@ -4762,14 +7653,14 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                     {/* SYSTEM UTILITIES CONTROL FOOTER BUTTONS */}
                     <div style={{ marginTop: '24px', display: 'flex', gap: '12px', flexWrap: 'wrap', borderTop: '1px solid #334155', paddingTop: '16px' }}>
                       <button className="btn btn-s" onClick={() => {
-                        alert("💾 Success: Case configuration updates successfully saved to client core registry.");
+                        alert(" Success: Case configuration updates successfully saved to client core registry.");
                         nav('blotter-manage');
                       }}>
-                        💾 Save Changes
+                         Save Changes
                       </button>
                       <button className="btn btn-g" onClick={() => nav('blotter-manage')}>Cancel Updates</button>
                       <button className="btn btn-a" style={{ marginLeft: 'auto' }} onClick={() => alert("📆 Scheduling Mediation: Hearing date posted to operational calendar.")}>
-                        📝 Schedule Mediation
+                         Schedule Mediation
                       </button>
                       <button className="btn btn-g" onClick={() => nav('blotter-manage')}>Close View</button>
                     </div>
@@ -4779,35 +7670,72 @@ const filteredAuditLogs = auditLogs.filter((log) => {
             
             {/* ════════════════════════════════════════
                 SCREEN: ANNOUNCEMENTS
-                ════════════════════════════════════════ */}
+                {/* ════════════════════════════════════════ */}
                 {screen === 'announcements' && (
                   <div className="screen active">
-                    
-                    {/* ── VIEW 1: MAIN REGISTRY MANAGEMENT BOARD ── */}
                     {announcementSubScreen === 'list' && (
                       <div>
                         {/* TOP LEVEL CONTROLLER BAR */}
                         <div className="ph">
                           <div>
-                            <div className="pt">Announcements Engine</div>
+                            <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                              </svg>
+                              Announcements Engine
+                            </div>
                             <div className="ps">Post, monitor, and configure active community bulletin broadcasts</div>
                           </div>
-                          <button type="button" className="btn btn-p" onClick={() => {
-                            setAnnouncementForm({ title: '', category: 'General', content: '', pinned: false, status: 'Published' });
-                            setAnnouncementSubScreen('new');
-                          }}>＋ New Announcement</button>
+                          <button
+                            type="button"
+                            className="btn btn-p"
+                            onClick={() => {
+                              setAnnouncementForm({ title: '', category: 'General', content: '', pinned: false, status: 'Published' });
+                              setAnnouncementSubScreen('new');
+                            }}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M12 5v14M5 12h14" />
+                            </svg>
+                            New Announcement
+                          </button>
                         </div>
 
-                        {/* SEARCH AND SEARCH FILTER CONTEXT CONTROLS */}
-                        <div className="fp" style={{ background: '#0f172a', marginBottom: '16px', padding: '16px' }}>
+                        {/* SEARCH AND FILTER CONTROLS (SVG Icons + Glass-Morphism) */}
+                        <div className="fp" style={{
+                          background: 'rgba(15, 23, 42, 0.6)',
+                          backdropFilter: 'blur(10px)',
+                          border: '1px solid rgba(79, 142, 247, 0.2)',
+                          marginBottom: '16px',
+                          padding: '16px',
+                          borderRadius: '8px'
+                        }}>
                           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
+                            {/* Search Input */}
                             <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl" style={{ color: '#94a3b8' }}>🔍 Search Bulletins</label>
-                              <input className="fc" placeholder="Search announcement title or content details..." value={searchAnnQuery} onChange={(e) => setSearchAnnQuery(e.target.value)} />
+                              <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                Search Bulletins
+                              </label>
+                              <input
+                                className="fc"
+                                placeholder="Search announcement title or content details..."
+                                value={searchAnnQuery}
+                                onChange={(e) => setSearchAnnQuery(e.target.value)}
+                              />
                             </div>
+
+                            {/* Category Filter */}
                             <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl" style={{ color: '#94a3b8' }}>📁 Category Filter</label>
-                              <select className="fc" value={filterAnnCategory} onChange={(e) => setFilterAnnCategory(e.target.value)}>
+                              <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                Category Filter
+                              </label>
+                              <select
+                                className="fc"
+                                value={filterAnnCategory}
+                                onChange={(e) => setFilterAnnCategory(e.target.value)}
+                              >
                                 <option value="All">All Categories</option>
                                 <option value="General">General</option>
                                 <option value="Health">Health</option>
@@ -4816,12 +7744,20 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                                 <option value="Governance">Governance</option>
                               </select>
                             </div>
+
+                            {/* Status Filter */}
                             <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl" style={{ color: '#94a3b8' }}>📊 Workflow Status</label>
-                              <select className="fc" value={filterAnnStatus} onChange={(e) => setFilterAnnStatus(e.target.value)}>
+                              <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                Workflow Status
+                              </label>
+                              <select
+                                className="fc"
+                                value={filterAnnStatus}
+                                onChange={(e) => setFilterAnnStatus(e.target.value)}
+                              >
                                 <option value="All">All Statuses</option>
-                                <option value="Published">🟢 Published</option>
-                                <option value="Draft">🟡 Drafts</option>
+                                <option value="Published">Published</option>
+                                <option value="Draft">Drafts</option>
                               </select>
                             </div>
                           </div>
@@ -4830,84 +7766,278 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                         {/* MAIN DATA RENDERING GRID */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                           {announcementsList
-                            // Sorting engine logic: Unahin palagi ang may `pinned: true`
+                            // Sorting: Pinned first
                             .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
-                            // Sequential filtering checks
+                            // Filtering
                             .filter(ann => {
-                              const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) || ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
+                              const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) ||
+                                                ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
                               const matchCat = filterAnnCategory === 'All' || ann.category === filterAnnCategory;
                               const matchStatus = filterAnnStatus === 'All' || ann.status === filterAnnStatus;
                               return matchQuery && matchCat && matchStatus;
                             })
                             .map(ann => (
-                              <div key={ann.id} className={`ann ${ann.pinned ? 'pinned' : ''}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: '#1e293b', padding: '16px', borderRadius: '8px', borderLeft: ann.pinned ? '4px solid #f59e0b' : '4px solid #475569' }}>
+                              <div
+                                key={ann.id}
+                                className={`ann ${ann.pinned ? 'pinned' : ''}`}
+                                style={{
+                                  display: 'flex',
+                                  justifyContent: 'space-between',
+                                  alignItems: 'flex-start',
+                                  background: '#1e293b',
+                                  padding: '16px',
+                                  borderRadius: '8px',
+                                  borderLeft: ann.pinned ? '4px solid #f59e0b' : '4px solid #475569',
+                                  transition: 'all 0.3s ease'
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = '#252f3f')}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = '#1e293b')}
+                              >
                                 <div style={{ flex: 1, paddingRight: '20px' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                    <span className="ann-cat" style={{ color: ann.category === 'Health' ? '#f59e0b' : '#3b82f6', fontWeight: 'bold', fontSize: '11px' }}>
-                                      {ann.pinned ? '📌 ' : ''}{ann.category.toUpperCase()}
+                                  <div style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '8px',
+                                    marginBottom: '4px'
+                                  }}>
+                                    <span
+                                      className="ann-cat"
+                                      style={{
+                                        color: ann.category === 'Health' ? '#f59e0b' :
+                                              ann.category === 'Security' ? '#ef4444' :
+                                              ann.category === 'Events' ? '#8b5cf6' :
+                                              ann.category === 'Governance' ? '#3b82f6' : '#64748b',
+                                        fontWeight: 'bold',
+                                        fontSize: '11px',
+                                        textTransform: 'uppercase'
+                                      }}
+                                    >
+                                      {ann.pinned && (
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}>
+                                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                                        </svg>
+                                      )}
+                                      {ann.category}
                                     </span>
-                                    <span style={{ fontSize: '10px', background: ann.status === 'Published' ? '#065f46' : '#78350f', color: ann.status === 'Published' ? '#34d399' : '#fbbf24', padding: '2px 6px', borderRadius: '4px' }}>
+
+                                    <span style={{
+                                      fontSize: '10px',
+                                      background: ann.status === 'Published' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(251, 191, 36, 0.15)',
+                                      color: ann.status === 'Published' ? '#34d399' : '#fbbf24',
+                                      padding: '2px 6px',
+                                      borderRadius: '4px',
+                                      fontWeight: '600'
+                                    }}>
                                       {ann.status}
                                     </span>
                                   </div>
-                                  <div className="ann-t" style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '6px' }}>{ann.title}</div>
-                                  <div className="ann-b" style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: '1.5', marginBottom: '8px' }}>{ann.content}</div>
-                                  <div className="ann-f" style={{ fontSize: '11px', color: '#94a3b8' }}>Posted by {ann.author} · {ann.date}</div>
+
+                                  <div className="ann-t" style={{
+                                    fontSize: '16px',
+                                    fontWeight: 'bold',
+                                    color: '#f8fafc',
+                                    marginBottom: '6px'
+                                  }}>
+                                    {ann.title}
+                                  </div>
+
+                                  <div className="ann-b" style={{
+                                    fontSize: '13px',
+                                    color: '#cbd5e1',
+                                    lineHeight: '1.5',
+                                    marginBottom: '8px'
+                                  }}>
+                                    {ann.content}
+                                  </div>
+
+                                  <div className="ann-f" style={{
+                                    fontSize: '11px',
+                                    color: '#94a3b8',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px'
+                                  }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                      <circle cx="9" cy="7" r="4" />
+                                    </svg>
+                                    Posted by {ann.author} · {ann.date}
+                                  </div>
                                 </div>
 
-                                {/* SYSTEM RUNTIME MANAGEMENT ACTIONS CONTROLLER */}
-                                <div style={{ display: 'flex', gap: '6px' }}>
-                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px' }} onClick={() => handleTogglePinAnnouncement(ann.id)}>
-                                    {ann.pinned ? '📍 Unpin' : '📌 Pin'}
+                                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
+                                  <button
+                                    type="button"
+                                    className="btn btn-g btn-sm"
+                                    style={{
+                                      padding: '4px 8px',
+                                      fontSize: '11px',
+                                      background: ann.pinned ? '#78350f' : '#334155',
+                                      color: ann.pinned ? '#fbbf24' : '#60a5fa'
+                                    }}
+                                    onClick={() => handleTogglePinAnnouncement(ann.id)}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
+                                    </svg>
+                                    {ann.pinned ? 'Unpin' : 'Pin'}
                                   </button>
-                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#334155', color: '#60a5fa' }} onClick={() => handleOpenEditAnnouncement(ann)}>
-                                    ✏️ Edit
+
+                                  <button
+                                    type="button"
+                                    className="btn btn-g btn-sm"
+                                    style={{
+                                      padding: '4px 8px',
+                                      fontSize: '11px',
+                                      background: '#334155',
+                                      color: '#60a5fa'
+                                    }}
+                                    onClick={() => handleOpenEditAnnouncement(ann)}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                    </svg>
+                                    Edit
                                   </button>
-                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#7f1d1d', color: '#fca5a5' }} onClick={() => handleTriggerDeleteAnnouncement(ann.id)}>
-                                    🗑️ Delete
+
+                                  <button
+                                    type="button"
+                                    className="btn btn-g btn-sm"
+                                    style={{
+                                      padding: '4px 8px',
+                                      fontSize: '11px',
+                                      background: '#7f1d1d',
+                                      color: '#fca5a5'
+                                    }}
+                                    onClick={() => handleTriggerDeleteAnnouncement(ann.id)}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M3 6h18" />
+                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                    </svg>
+                                    Delete
                                   </button>
                                 </div>
                               </div>
                             ))}
-                            
-                          {/* EMPTY REGISTRY SCREEN STATE MOCK */}
+
+                          {/* EMPTY STATE */}
                           {announcementsList.filter(ann => {
-                            const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) || ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
+                            const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) ||
+                                              ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
                             const matchCat = filterAnnCategory === 'All' || ann.category === filterAnnCategory;
                             const matchStatus = filterAnnStatus === 'All' || ann.status === filterAnnStatus;
                             return matchQuery && matchCat && matchStatus;
                           }).length === 0 && (
-                            <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', background: '#0f172a', borderRadius: '8px', border: '1px dashed #334155' }}>
-                              📭 No records found matching the active filtering options.
+                            <div style={{
+                              textAlign: 'center',
+                              padding: '40px',
+                              color: '#94a3b8',
+                              background: '#0f172a',
+                              borderRadius: '8px',
+                              border: '1px dashed #334155',
+                              display: 'flex',
+                              flexDirection: 'column',
+                              alignItems: 'center',
+                              gap: '12px'
+                            }}>
+                              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                              </svg>
+                              No records found matching the active filtering options.
                             </div>
                           )}
                         </div>
                       </div>
                     )}
 
-                    {/* ── VIEW 2 & 3: DEDICATED ANNOUNCEMENT INPUT INTERFACE FORM (CREATE & EDIT) ── */}
+                    {/* =============================================
+                        📝 VIEW 2 & 3: ANNOUNCEMENT FORM (CREATE & EDIT)
+                        ============================================= */}
                     {(announcementSubScreen === 'new' || announcementSubScreen === 'edit') && (
-                      <div className="fp" style={{ maxWidth: '700px', margin: '0 auto' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #334155', paddingBottom: '12px' }}>
+                      <div className="fp" style={{
+                        maxWidth: '700px',
+                        margin: '0 auto',
+                        background: 'rgba(26, 29, 36, 0.4)',
+                        backdropFilter: 'blur(8px)',
+                        border: '1px solid rgba(79, 142, 247, 0.2)',
+                        borderRadius: '8px'
+                      }}>
+                        <div style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'center',
+                          marginBottom: '16px',
+                          borderBottom: '1px solid #334155',
+                          paddingBottom: '12px'
+                        }}>
                           <div>
-                            <div className="fp-t" style={{ fontSize: '18px', margin: 0 }}>
-                              {announcementSubScreen === 'new' ? '📢 Create New Barangay Announcement' : '✏️ Modify Existing Announcement'}
+                            <div className="fp-t" style={{
+                              fontSize: '18px',
+                              margin: 0,
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}>
+                              {announcementSubScreen === 'new' ? (
+                                <>
+                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                                  </svg>
+                                  Create New Barangay Announcement
+                                </>
+                              ) : (
+                                <>
+                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                  </svg>
+                                  Modify Existing Announcement
+                                </>
+                              )}
                             </div>
-                            <div style={{ fontSize: '12px', color: '#94a3b8' }}>Distribute critical legal updates and bulletins to Nabua residents</div>
+                            <div style={{ fontSize: '12px', color: '#94a3b8' }}>
+                              Distribute critical legal updates and bulletins to Nabua residents
+                            </div>
                           </div>
-                          <button type="button" className="btn btn-g" onClick={() => setAnnouncementSubScreen('list')}>← Back to Board</button>
+                          <button
+                            type="button"
+                            className="btn btn-g"
+                            onClick={() => setAnnouncementSubScreen('list')}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                          >
+                            Back to Board
+                          </button>
                         </div>
 
                         <form onSubmit={(e) => handleSaveAnnouncement(e, announcementForm.status)}>
                           <div className="fg">
-                            <label className="fl">Announcement Title Header</label>
-                            <input className="fc" required placeholder="e.g. Schedule of General Assembly or Relief Operations" value={announcementForm.title} onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })} />
+                            <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              Announcement Title Header
+                            </label>
+                            <input
+                              className="fc"
+                              required
+                              placeholder="e.g. Schedule of General Assembly or Relief Operations"
+                              value={announcementForm.title}
+                              onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })}
+                            />
                           </div>
 
+                          {/* Category & Pin Toggle (2-Column Grid) */}
                           <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                             <div className="fg">
-                              <label className="fl">Category Engine Routing</label>
-                              <select className="fc" value={announcementForm.category} onChange={(e) => setAnnouncementForm({ ...announcementForm, category: e.target.value })}>
+                              <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                Category Engine Routing
+                              </label>
+                              <select
+                                className="fc"
+                                value={announcementForm.category}
+                                onChange={(e) => setAnnouncementForm({ ...announcementForm, category: e.target.value })}
+                              >
                                 <option value="General">General Notice</option>
                                 <option value="Health">Health Mission / Advisory</option>
                                 <option value="Security">Security Alerts & Regulations</option>
@@ -4916,340 +8046,911 @@ const filteredAuditLogs = auditLogs.filter((log) => {
                               </select>
                             </div>
                             <div className="fg" style={{ display: 'flex', alignItems: 'center', marginTop: '24px' }}>
-                              <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px', cursor: 'pointer', color: '#cbd5e1' }}>
-                                <input type="checkbox" checked={announcementForm.pinned} onChange={(e) => setAnnouncementForm({ ...announcementForm, pinned: e.target.checked })} /> 📌 Pin this layout statement directly to top
+                              <label style={{
+                                display: 'flex',
+                                gap: '8px',
+                                alignItems: 'center',
+                                fontSize: '13px',
+                                cursor: 'pointer',
+                                color: '#cbd5e1'
+                              }}>
+                                <input
+                                  type="checkbox"
+                                  checked={announcementForm.pinned}
+                                  onChange={(e) => setAnnouncementForm({ ...announcementForm, pinned: e.target.checked })}
+                                />
+                                Pin this announcement to top
                               </label>
                             </div>
                           </div>
 
+                          {/* Content */}
                           <div className="fg">
-                            <label className="fl">Public Content Narrative Report Statement</label>
-                            <textarea className="fc" required style={{ minHeight: '140px', lineHeight: '1.6' }} placeholder="Write down the comprehensive details here..." value={announcementForm.content} onChange={(e) => setAnnouncementForm({ ...announcementForm, content: e.target.value })} />
+                            <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              Public Content Narrative Report Statement
+                            </label>
+                            <textarea
+                              className="fc"
+                              required
+                              style={{ minHeight: '140px', lineHeight: '1.6' }}
+                              placeholder="Write down the comprehensive details here..."
+                              value={announcementForm.content}
+                              onChange={(e) => setAnnouncementForm({ ...announcementForm, content: e.target.value })}
+                            />
                           </div>
 
-                          {/* ACTION BUTTON ENGINE ROUTINE */}
-                          <div className="fa" style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid #334155', paddingTop: '16px', justifyContent: 'flex-end' }}>
-                            <button type="button" className="btn btn-g" style={{ background: '#475569' }} onClick={() => setAnnouncementSubScreen('list')}>Cancel Changes</button>
-                            <button type="submit" className="btn btn-g" style={{ background: '#b45309', color: 'white' }} onClick={(e) => handleSaveAnnouncement(e, 'Draft')}>💾 Save as Draft</button>
-                            <button type="submit" className="btn btn-p" onClick={(e) => handleSaveAnnouncement(e, 'Published')}>🚀 Broadcast & Publish</button>
+                          {/* Action Buttons */}
+                          <div className="fa" style={{
+                            display: 'flex',
+                            gap: '10px',
+                            marginTop: '20px',
+                            borderTop: '1px solid #334155',
+                            paddingTop: '16px',
+                            justifyContent: 'flex-end'
+                          }}>
+                            <button
+                              type="button"
+                              className="btn btn-g"
+                              style={{ background: '#475569' }}
+                              onClick={() => setAnnouncementSubScreen('list')}
+                            >
+                              Cancel Changes
+                            </button>
+                            <button
+                              type="submit"
+                              className="btn btn-g"
+                              style={{ background: '#b45309', color: 'white' }}
+                              onClick={(e) => handleSaveAnnouncement(e, 'Draft')}
+                            >
+                              Save as Draft
+                            </button>
+                            <button
+                              type="submit"
+                              className="btn btn-p"
+                              onClick={(e) => handleSaveAnnouncement(e, 'Published')}
+                            >
+                              Broadcast & Publish
+                            </button>
                           </div>
                         </form>
                       </div>
                     )}
 
-                    {/* ── DYNAMIC MODAL INTERFACE LAYER: SECURE ELIMINATION CONFIRMATION ── */}
                     {showAnnDeleteModal && (
-                      <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
-                        <div style={{ background: '#1e293b', border: '1px solid #ef4444', padding: '24px', borderRadius: '8px', width: '90%', maxWidth: '400px', textAlign: 'center' }}>
-                          <div style={{ fontSize: '36px', marginBottom: '8px' }}>⚠️</div>
-                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '8px' }}>Confirm Permanent Deletion?</div>
+                      <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        background: 'rgba(0,0,0,0.8)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 99999
+                      }}>
+                        <div style={{
+                          background: '#1e293b',
+                          border: '1px solid #ef4444',
+                          padding: '24px',
+                          borderRadius: '8px',
+                          width: '90%',
+                          maxWidth: '400px',
+                          textAlign: 'center',
+                          boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)'
+                        }}>
+                          <div style={{ fontSize: '36px', marginBottom: '8px', color: '#ef4444' }}>
+                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                              <path d="M12 9v4" />
+                              <path d="M12 17h.01" />
+                            </svg>
+                          </div>
+                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '8px' }}>
+                            Confirm Permanent Deletion?
+                          </div>
                           <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '20px' }}>
                             Are you sure you want to remove this notice? Residents will immediately lose read access visibility across the portal logs.
                           </div>
                           <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                            <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => {
-                              setShowAnnDeleteModal(false);
-                              setAnnIdToDelete(null);
-                            }}>Cancel</button>
-                            <button type="button" className="btn btn-p" style={{ background: '#ef4444', flex: 1 }} onClick={handleConfirmDeleteAnnouncement}>Delete Notice</button>
+                            <button
+                              type="button"
+                              className="btn btn-g"
+                              style={{ flex: 1 }}
+                              onClick={() => {
+                                setShowAnnDeleteModal(false);
+                                setAnnIdToDelete(null);
+                              }}
+                            >
+                              Cancel
+                            </button>
+                            <button
+                              type="button"
+                              className="btn"
+                              style={{
+                                flex: 1,
+                                background: '#ef4444',
+                                color: 'white',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                justifyContent: 'center'
+                              }}
+                              onClick={handleConfirmDeleteAnnouncement}
+                            >
+                              Delete Notice
+                            </button>
                           </div>
                         </div>
                       </div>
                     )}
-
                   </div>
                 )}
 
             {/* ════════════════════════════════════════
                 SCREEN: FEEDBACK & COMPLAINTS
                 ════════════════════════════════════════ */}
-            {screen === 'feedback' && (
-              <div className="screen active" style={{ position: 'relative' }}>
-                
-                {/* SYSTEM SUCCESS GLOBAL TOAST */}
-                {showFbSuccessToast && (
-                  <div style={{ position: 'fixed', top: '20px', right: '20px', background: '#059669', color: 'white', padding: '12px 24px', borderRadius: '6px', zIndex: 99999, fontWeight: 'bold', boxShadow: '0 4px 12px rgba(0,0,0,0.3)', fontSize: '13px' }}>
-                    {fbToastMessage}
-                  </div>
-                )}
+                {screen === 'feedback' && (
+  <div className="screen active" style={{ position: 'relative' }}>
+    {/* SYSTEM SUCCESS GLOBAL TOAST */}
+    {showFbSuccessToast && (
+      <div style={{
+        position: 'fixed',
+        top: '20px',
+        right: '20px',
+        background: '#059669',
+        color: 'white',
+        padding: '12px 24px',
+        borderRadius: '6px',
+        zIndex: 99999,
+        fontWeight: 'bold',
+        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+        fontSize: '13px',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '8px'
+      }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+          <path d="M22 4L12 14.01l-3-3" />
+        </svg>
+        {fbToastMessage}
+      </div>
+    )}
 
-                {/* HEADER METRICS DESK */}
-                <div className="ph">
-                  <div>
-                    <div className="pt">Feedback &amp; Complaints Desk</div>
-                    <div className="ps">Monitor, route, and resolve real-time constituent issues within Barangay Bustrac</div>
-                  </div>
-                </div>
+    {/* HEADER METRICS DESK */}
+    <div className="ph">
+      <div>
+        <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          Feedback & Complaints Desk
+        </div>
+        <div className="ps">Monitor, route, and resolve real-time constituent issues within Barangay Bustrac</div>
+      </div>
+    </div>
 
-                {/* FEATURE 11: QUICK STATISTICS OVERVIEW TILES */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '16px' }}>
-                  <div style={{ background: '#1e293b', padding: '16px', borderRadius: '8px', borderLeft: '4px solid #ef4444' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8', uppercase: 'true' }}>⏳ PENDING SUBMISSIONS</div>
-                    <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc', marginTop: '4px' }}>
-                      {feedbackList.filter(f => f.status === 'Pending').length}
-                    </div>
-                  </div>
-                  <div style={{ background: '#1e293b', padding: '16px', borderRadius: '8px', borderLeft: '4px solid #3b82f6' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>🔍 UNDER REVIEW</div>
-                    <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc', marginTop: '4px' }}>
-                      {feedbackList.filter(f => f.status === 'Under Review').length}
-                    </div>
-                  </div>
-                  <div style={{ background: '#1e293b', padding: '16px', borderRadius: '8px', borderLeft: '4px solid #10b981' }}>
-                    <div style={{ fontSize: '11px', color: '#94a3b8' }}>✅ RESOLVED &amp; CLOSED</div>
-                    <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc', marginTop: '4px' }}>
-                      {feedbackList.filter(f => f.status === 'Resolved').length}
-                    </div>
-                  </div>
-                </div>
+    {/* QUICK STATISTICS OVERVIEW TILES (SVG Icons + Glass-Morphism) */}
+    <div style={{
+      display: 'grid',
+      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+      gap: '12px',
+      marginBottom: '16px'
+    }}>
+      <div style={{
+        background: 'rgba(30, 41, 59, 0.6)',
+        padding: '16px',
+        borderRadius: '8px',
+        borderLeft: '4px solid #ef4444',
+        backdropFilter: 'blur(8px)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px'
+      }}>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M12 2v4" />
+          <path d="M12 18v4" />
+          <path d="M4.93 4.93l2.83 2.83" />
+          <path d="M16.24 16.24l2.83 2.83" />
+          <path d="M2 12h2" />
+          <path d="M20 12h2" />
+          <path d="M4.93 19.07l2.83-2.83" />
+          <path d="M16.24 7.76l2.83-2.83" />
+        </svg>
+        <div>
+          <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase' }}>Pending Submissions</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
+            {feedbackList.filter(f => f.status === 'Pending').length}
+          </div>
+        </div>
+      </div>
 
-                {/* CONTROLS WORKSPACE (SEARCH, FILTER, SORT) */}
-                <div className="tw" style={{ background: '#0f172a', padding: '16px', borderRadius: '8px', marginBottom: '12px' }}>
-                  <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr', gap: '10px', alignItems: 'center' }}>
-                    <div className="sb-box" style={{ margin: 0, width: '100%' }}>
-                      <span>🔍</span>
-                      <input placeholder="Search Resident, ID or Subject..." value={searchFbQuery} onChange={(e) => setSearchFbQuery(e.target.value)} />
-                    </div>
-                    
-                    <select className="fc" style={{ width: '100%' }} value={filterFbType} onChange={(e) => setFilterFbType(e.target.value)}>
-                      <option value="All Types">All Types</option>
-                      <option value="Complaint">Complaint</option>
-                      <option value="Suggestion">Suggestion</option>
-                      <option value="Inquiry">Inquiry</option>
-                    </select>
+      <div style={{
+        background: 'rgba(30, 41, 59, 0.6)',
+        padding: '16px',
+        borderRadius: '8px',
+        borderLeft: '4px solid #3b82f6',
+        backdropFilter: 'blur(8px)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px'
+      }}>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <circle cx="12" cy="12" r="10" />
+          <path d="M21 21l-4.35-4.35" />
+        </svg>
+        <div>
+          <div style={{ fontSize: '11px', color: '#94a3b8' }}>Under Review</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
+            {feedbackList.filter(f => f.status === 'Under Review').length}
+          </div>
+        </div>
+      </div>
 
-                    <select className="fc" style={{ width: '100%' }} value={filterFbStatus} onChange={(e) => setFilterFbStatus(e.target.value)}>
-                      <option value="All Status">All Statuses</option>
-                      <option value="Pending">Pending</option>
-                      <option value="Under Review">Under Review</option>
-                      <option value="Responded">Responded</option>
-                      <option value="Resolved">Resolved</option>
-                    </select>
+      <div style={{
+        background: 'rgba(30, 41, 59, 0.6)',
+        padding: '16px',
+        borderRadius: '8px',
+        borderLeft: '4px solid #10b981',
+        backdropFilter: 'blur(8px)',
+        display: 'flex',
+        alignItems: 'center',
+        gap: '12px'
+      }}>
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+          <path d="M22 4L12 14.01l-3-3" />
+        </svg>
+        <div>
+          <div style={{ fontSize: '11px', color: '#94a3b8' }}>Resolved & Closed</div>
+          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
+            {feedbackList.filter(f => f.status === 'Resolved').length}
+          </div>
+        </div>
+      </div>
+    </div>
 
-                    <select className="fc" style={{ width: '100%' }} value={filterFbPriority} onChange={(e) => setFilterFbPriority(e.target.value)}>
-                      <option value="All Priorities">All Priorities</option>
-                      <option value="High">🔴 High Priority</option>
-                      <option value="Medium">🟡 Medium Priority</option>
-                      <option value="Low">🔵 Low Priority</option>
-                    </select>
+    {/* CONTROLS WORKSPACE (SEARCH, FILTER, SORT) */}
+    <div className="tw" style={{
+      background: 'rgba(15, 23, 42, 0.6)',
+      padding: '16px',
+      borderRadius: '8px',
+      marginBottom: '12px',
+      backdropFilter: 'blur(8px)',
+      border: '1px solid rgba(79, 142, 247, 0.2)'
+    }}>
+      <div style={{
+        display: 'grid',
+        gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr',
+        gap: '10px',
+        alignItems: 'center'
+      }}>
+        {/* Search */}
+        <div className="sb-box" style={{ margin: 0, width: '100%' }}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <path d="M21 21l-4.35-4.35" />
+          </svg>
+          <input
+            placeholder="Search Resident, ID or Subject..."
+            value={searchFbQuery}
+            onChange={(e) => setSearchFbQuery(e.target.value)}
+          />
+        </div>
 
-                    <select className="fc" style={{ width: '100%' }} value={sortFbBy} onChange={(e) => setSortFbBy(e.target.value)}>
-                      <option value="Newest">Newest First</option>
-                      <option value="Oldest">Oldest First</option>
-                      <option value="PendingFirst">Pending Priority</option>
-                    </select>
-                  </div>
-                </div>
-
-                {/* CENTRAL REGISTRY SYSTEM TABLE */}
-                <div className="tw" style={{ overflowX: 'auto' }}>
-                  <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-                    <thead>
-                      <tr>
-                        <th>Ticket ID</th>
-                        <th>Resident From</th>
-                        <th>Classification</th>
-                        <th>Rank</th>
-                        <th>Subject Heading</th>
-                        <th>Date Submitted</th>
-                        <th>Assigned Agent</th>
-                        <th>Status State</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                      <tbody>
-                       {feedbackList
-  // 1. Reliable Timestamp Sorting Execution
-  .sort((a, b) => {
-    const timeA = new Date(a.rawTimestamp || a.date || 0).getTime();
-    const timeB = new Date(b.rawTimestamp || b.date || 0).getTime();
-
-    if (sortFbBy === 'Oldest') {
-      return timeA - timeB;
-    }
-    if (sortFbBy === 'PendingFirst') {
-      const priorityWeight = { High: 3, Medium: 2, Low: 1 };
-      const weightA = priorityWeight[a.priority] || 0;
-      const weightB = priorityWeight[b.priority] || 0;
-      return weightB - weightA;
-    }
-    return timeB - timeA; // Default to Newest First
-  })
-
-  // 2. Real-time Search & Filtering Chain (Fixed 'All Statuses' mismatch)
-  .filter((fb) => {
-    const query = searchFbQuery.toLowerCase();
-    
-    const matchesSearch =
-      (fb.sender || '').toLowerCase().includes(query) ||
-      (fb.id || '').toLowerCase().includes(query) ||
-      (fb.subject || '').toLowerCase().includes(query);
-
-    const matchesType = 
-      filterFbType === 'All Types' || fb.type === filterFbType;
-
-    // FIX: Handles both 'All Status' and 'All Statuses' safely
-    const matchesStatus =
-      filterFbStatus === 'All Status' ||
-      filterFbStatus === 'All Statuses' ||
-      fb.status === filterFbStatus;
-
-    const matchesPriority =
-      filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
-
-    return matchesSearch && matchesType && matchesStatus && matchesPriority;
-  })
-  .map((fb) => (
-    <tr key={fb._id || fb.id} style={{ borderBottom: '1px solid #334155' }}>
-      <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#60a5fa', fontWeight: 'bold' }}>
-        {fb.id}
-      </td>
-      <td style={{ fontWeight: '500' }}>{fb.sender}</td>
-      <td>
-        <span className={`badge ${fb.type === 'Complaint' ? 'r' : fb.type === 'Suggestion' ? 'b' : 'p'}`}>
-          {fb.type}
-        </span>
-      </td>
-      <td style={{ fontSize: '12px' }}>
-        {fb.priority === 'High' ? '🔴 High' : fb.priority === 'Medium' ? '🟡 Med' : '🔵 Low'}
-      </td>
-      <td style={{ fontSize: '12px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fb.subject}>
-        {fb.subject}
-      </td>
-      <td style={{ fontSize: '11px', color: '#94a3b8' }}>{fb.date}</td>
-      <td style={{ fontSize: '12px', color: fb.assignedTo === 'Unassigned' ? '#94a3b8' : '#cbd5e1' }}>
-        👤 {fb.assignedTo}
-      </td>
-      <td>
-        <span
-          className="badge"
-          style={{
-            background: fb.status === 'Pending' ? '#7f1d1d' : fb.status === 'Under Review' ? '#1e3a8a' : fb.status === 'Responded' ? '#78350f' : '#065f46',
-            color: fb.status === 'Pending' ? '#fca5a5' : fb.status === 'Under Review' ? '#93c5fd' : fb.status === 'Responded' ? '#fde047' : '#34d399',
-          }}
+        {/* Type Filter */}
+        <select
+          className="fc"
+          style={{ width: '100%' }}
+          value={filterFbType}
+          onChange={(e) => setFilterFbType(e.target.value)}
         >
-          {fb.status}
-        </span>
-      </td>
-      <td>
-        <button
-          type="button"
-          className={`btn btn-sm ${fb.status === 'Pending' || fb.status === 'Under Review' ? 'btn-p' : 'btn-g'}`}
-          onClick={() => handleOpenFeedbackDetails(fb)}
+          <option value="All Types">All Types</option>
+          <option value="Complaint">Complaint</option>
+          <option value="Suggestion">Suggestion</option>
+          <option value="Inquiry">Inquiry</option>
+        </select>
+
+        {/* Status Filter */}
+        <select
+          className="fc"
+          style={{ width: '100%' }}
+          value={filterFbStatus}
+          onChange={(e) => setFilterFbStatus(e.target.value)}
         >
-          {fb.status === 'Pending' || fb.status === 'Under Review' ? '📋 Respond' : '👁️ View Details'}
-        </button>
-      </td>
-    </tr>
-  ))}
-                      </tbody>
-                  </table>
-                  
-                  {/* NO MATCH ENCOUNTERED BANNER */}
-                  {feedbackList.filter(fb => {
-                    const matchesSearch = fb.sender.toLowerCase().includes(searchFbQuery.toLowerCase()) || fb.id.toLowerCase().includes(searchFbQuery.toLowerCase()) || fb.subject.toLowerCase().includes(searchFbQuery.toLowerCase());
-                    const matchesType = filterFbType === 'All Types' || fb.type === filterFbType;
-                    const matchesStatus = filterFbStatus === 'All Status' || fb.status === filterFbStatus;
-                    const matchesPriority = filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
-                    return matchesSearch && matchesType && matchesStatus && matchesPriority;
-                  }).length === 0 && (
-                    <div style={{ textAlign: 'center', padding: '32px', color: '#94a3b8', border: '1px dashed #334155', borderRadius: '0 0 8px 8px', background: '#1e293b' }}>
-                      📭 No active feedback logs found matching the filtering conditions.
-                    </div>
+          <option value="All Status">All Statuses</option>
+          <option value="Pending">Pending</option>
+          <option value="Under Review">Under Review</option>
+          <option value="Responded">Responded</option>
+          <option value="Resolved">Resolved</option>
+        </select>
+
+        {/* Priority Filter */}
+        <select
+          className="fc"
+          style={{ width: '100%' }}
+          value={filterFbPriority}
+          onChange={(e) => setFilterFbPriority(e.target.value)}
+        >
+          <option value="All Priorities">All Priorities</option>
+          <option value="High">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+            </svg>
+            High Priority
+          </option>
+          <option value="Medium">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+            </svg>
+            Medium Priority
+          </option>
+          <option value="Low">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+            </svg>
+            Low Priority
+          </option>
+        </select>
+
+        {/* Sort */}
+        <select
+          className="fc"
+          style={{ width: '100%' }}
+          value={sortFbBy}
+          onChange={(e) => setSortFbBy(e.target.value)}
+        >
+          <option value="Newest">Newest First</option>
+          <option value="Oldest">Oldest First</option>
+          <option value="PendingFirst">Pending Priority</option>
+        </select>
+      </div>
+    </div>
+
+    {/* CENTRAL REGISTRY SYSTEM TABLE (Glass-Morphism) */}
+    <div className="tw" style={{
+      background: 'rgba(26, 29, 36, 0.4)',
+      backdropFilter: 'blur(8px)',
+      border: '1px solid rgba(79, 142, 247, 0.2)',
+      borderRadius: '8px',
+      overflowX: 'auto'
+    }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <thead>
+          <tr>
+            <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Ticket ID</th>
+            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Resident From</th>
+            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Classification</th>
+            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Rank</th>
+            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Subject Heading</th>
+            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Date Submitted</th>
+            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Assigned Agent</th>
+            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Status State</th>
+            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Action</th>
+          </tr>
+        </thead>
+        <tbody>
+          {feedbackList
+            // Sorting
+            .sort((a, b) => {
+              const timeA = new Date(a.rawTimestamp || a.date || 0).getTime();
+              const timeB = new Date(b.rawTimestamp || b.date || 0).getTime();
+              if (sortFbBy === 'Oldest') {
+                return timeA - timeB;
+              }
+              if (sortFbBy === 'PendingFirst') {
+                const priorityWeight = { High: 3, Medium: 2, Low: 1 };
+                const weightA = priorityWeight[a.priority] || 0;
+                const weightB = priorityWeight[b.priority] || 0;
+                return weightB - weightA;
+              }
+              return timeB - timeA; // Default to Newest First
+            })
+            // Filtering
+            .filter((fb) => {
+              const query = searchFbQuery.toLowerCase();
+              const matchesSearch = (fb.sender || '').toLowerCase().includes(query) ||
+                                  (fb.id || '').toLowerCase().includes(query) ||
+                                  (fb.subject || '').toLowerCase().includes(query);
+              const matchesType = filterFbType === 'All Types' || fb.type === filterFbType;
+              const matchesStatus = filterFbStatus === 'All Status' || filterFbStatus === 'All Statuses' || fb.status === filterFbStatus;
+              const matchesPriority = filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
+              return matchesSearch && matchesType && matchesStatus && matchesPriority;
+            })
+            .map((fb) => (
+              <tr
+                key={fb._id || fb.id}
+                style={{
+                  borderBottom: '1px solid #334155',
+                  transition: 'background 0.2s ease'
+                }}
+                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.05)')}
+                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+              >
+                <td style={{
+                  fontFamily: 'var(--mono)',
+                  fontSize: '11px',
+                  color: '#60a5fa',
+                  fontWeight: 'bold',
+                  padding: '12px 16px'
+                }}>
+                  {fb.id}
+                </td>
+                <td style={{ fontWeight: '500', padding: '12px 16px' }}>{fb.sender}</td>
+                <td style={{ padding: '12px 16px' }}>
+                  <span className={`badge ${fb.type === 'Complaint' ? 'r' : fb.type === 'Suggestion' ? 'b' : 'p'}`}>
+                    {fb.type}
+                  </span>
+                </td>
+                <td style={{ fontSize: '12px', padding: '12px 16px' }}>
+                  {fb.priority === 'High' ? (
+                    <span className="badge r" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                      </svg>
+                      High
+                    </span>
+                  ) : fb.priority === 'Medium' ? (
+                    <span className="badge a" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                      </svg>
+                      Medium
+                    </span>
+                  ) : (
+                    <span className="badge g" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                      </svg>
+                      Low
+                    </span>
                   )}
-                </div>
+                </td>
+                <td style={{
+                  fontSize: '12px',
+                  maxWidth: '220px',
+                  overflow: 'hidden',
+                  textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap',
+                  padding: '12px 16px'
+                }} title={fb.subject}>
+                  {fb.subject}
+                </td>
+                <td style={{ fontSize: '11px', color: '#94a3b8', padding: '12px 16px' }}>{fb.date}</td>
+                <td style={{
+                  fontSize: '12px',
+                  color: fb.assignedTo === 'Unassigned' ? '#94a3b8' : '#cbd5e1',
+                  padding: '12px 16px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                  </svg>
+                  {fb.assignedTo}
+                </td>
+                <td style={{ padding: '12px 16px' }}>
+                  <span className="badge" style={{
+                    background: fb.status === 'Pending' ? '#7f1d1d' :
+                               fb.status === 'Under Review' ? '#1e3a8a' :
+                               fb.status === 'Responded' ? '#78350f' : '#065f46',
+                    color: fb.status === 'Pending' ? '#fca5a5' :
+                          fb.status === 'Under Review' ? '#93c5fd' :
+                          fb.status === 'Responded' ? '#fde047' : '#34d399',
+                  }}>
+                    {fb.status}
+                  </span>
+                </td>
+                <td style={{ padding: '12px 16px' }}>
+                  <button
+                    type="button"
+                    className={`btn btn-sm ${fb.status === 'Pending' || fb.status === 'Under Review' ? 'btn-p' : 'btn-g'}`}
+                    onClick={() => handleOpenFeedbackDetails(fb)}
+                    style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                  >
+                    {fb.status === 'Pending' || fb.status === 'Under Review' ? (
+                      <>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <path d="M14 2v6h6" />
+                          <path d="M12 18v-6" />
+                          <path d="M9 15h6" />
+                        </svg>
+                        Respond
+                      </>
+                    ) : (
+                      <>
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <path d="M14 2v6h6" />
+                          <path d="M12 18v-6" />
+                          <path d="M9 15h6" />
+                        </svg>
+                        View Details
+                      </>
+                    )}
+                  </button>
+                </td>
+              </tr>
+            ))}
+        </tbody>
+      </table>
 
-                {/* ── CENTRAL DIAGNOSTIC FULL WORKFLOW MODAL DIALOG ── */}
-                {selectedFeedback && (
-                  <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
-                    <div style={{ background: '#1e293b', border: '1px solid #3b82f6', width: '90%', maxWidth: '600px', borderRadius: '12px', padding: '24px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)' }}>
-                      
-                      {/* MODAL HEADER CARD */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #334155', paddingBottom: '12px', marginBottom: '16px' }}>
-                        <div>
-                          <span style={{ fontSize: '11px', background: '#3b82f6', color: 'white', padding: '2px 6px', borderRadius: '4px', marginRight: '6px', fontFamily: 'var(--mono)' }}>{selectedFeedback.id}</span>
-                          <strong style={{ fontSize: '16px', color: '#f8fafc' }}>{selectedFeedback.type} Details Log</strong>
-                        </div>
-                        <button type="button" style={{ background: 'transparent', border: 'none', color: '#94a3b8', fontSize: '20px', cursor: 'pointer' }} onClick={() => setSelectedFeedback(null)}>×</button>
-                      </div>
+      {/* NO MATCH ENCOUNTERED BANNER */}
+      {feedbackList.filter(fb => {
+        const matchesSearch = fb.sender.toLowerCase().includes(searchFbQuery.toLowerCase()) ||
+                            fb.id.toLowerCase().includes(searchFbQuery.toLowerCase()) ||
+                            fb.subject.toLowerCase().includes(searchFbQuery.toLowerCase());
+        const matchesType = filterFbType === 'All Types' || fb.type === filterFbType;
+        const matchesStatus = filterFbStatus === 'All Status' || fb.status === filterFbStatus;
+        const matchesPriority = filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
+        return matchesSearch && matchesType && matchesStatus && matchesPriority;
+      }).length === 0 && (
+        <div style={{
+          textAlign: 'center',
+          padding: '32px',
+          color: '#94a3b8',
+          border: '1px dashed #334155',
+          borderRadius: '0 0 8px 8px',
+          background: '#1e293b',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          gap: '12px'
+        }}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          No active feedback logs found matching the filtering conditions.
+        </div>
+      )}
+    </div>
 
-                      {/* SYSTEM INFORMATIONAL METADATA */}
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '14px', fontSize: '13px', background: '#0f172a', padding: '12px', borderRadius: '6px' }}>
-                        <div><span style={{ color: '#94a3b8' }}>Resident Submitter:</span> <strong style={{ color: 'white' }}>{selectedFeedback.sender}</strong></div>
-                        <div><span style={{ color: '#94a3b8' }}>Rank Priority:</span> <strong>{selectedFeedback.priority === 'High' ? '🔴 High' : selectedFeedback.priority === 'Medium' ? '🟡 Medium' : '🔵 Low'}</strong></div>
-                        <div><span style={{ color: '#94a3b8' }}>Timeline Stamp:</span> <span style={{ color: '#cbd5e1' }}>{selectedFeedback.date}</span></div>
-                        <div>
-                          <span style={{ color: '#94a3b8' }}>Attachment Field:</span>{' '}
-                          {selectedFeedback.attachment ? (
-                            <span style={{ color: '#60a5fa', cursor: 'pointer', textDecoration: 'underline' }} onClick={() => alert(`Opening system dynamic link placeholder: ${selectedFeedback.attachment}`)}>
-                              📎 {selectedFeedback.attachment}
-                            </span>
-                          ) : (
-                            <span style={{ color: '#64748b' }}>None</span>
-                          )}
-                        </div>
-                      </div>
+    {/* =============================================
+         📋 CENTRAL DIAGNOSTIC FULL WORKFLOW MODAL DIALOG
+         ============================================= */}
+    {selectedFeedback && (
+      <div style={{
+        position: 'fixed',
+        top: 0,
+        left: 0,
+        width: '100%',
+        height: '100%',
+        background: 'rgba(0,0,0,0.8)',
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        zIndex: 99999
+      }}>
+        <div style={{
+          background: '#1e293b',
+          border: '1px solid #3b82f6',
+          width: '90%',
+          maxWidth: '600px',
+          borderRadius: '12px',
+          padding: '24px',
+          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+          backdropFilter: 'blur(10px)'
+        }}>
+          {/* MODAL HEADER CARD */}
+          <div style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            borderBottom: '1px solid #334155',
+            paddingBottom: '12px',
+            marginBottom: '16px'
+          }}>
+            <div>
+              <span style={{
+                fontSize: '11px',
+                background: '#3b82f6',
+                color: 'white',
+                padding: '2px 6px',
+                borderRadius: '4px',
+                marginRight: '6px',
+                fontFamily: 'var(--mono)'
+              }}>
+                {selectedFeedback.id}
+              </span>
+              <strong style={{ fontSize: '16px', color: '#f8fafc' }}>
+                {selectedFeedback.type} Details Log
+              </strong>
+            </div>
+            <button
+              type="button"
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: '#94a3b8',
+                fontSize: '20px',
+                cursor: 'pointer'
+              }}
+              onClick={() => setSelectedFeedback(null)}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 15l-6-6-6 6" />
+              </svg>
+            </button>
+          </div>
 
-                      {/* MAIN MESSAGE STATEMENT AREA */}
-                      <div style={{ marginBottom: '16px' }}>
-                        <label className="fl" style={{ color: '#94a3b8', fontSize: '12px' }}>Subject Heading</label>
-                        <div style={{ background: '#334155', padding: '8px 12px', borderRadius: '4px', color: 'white', fontWeight: '600', fontSize: '13px', marginBottom: '8px' }}>{selectedFeedback.subject}</div>
-                        
-                        <label className="fl" style={{ color: '#94a3b8', fontSize: '12px' }}>Original Input Context Message</label>
-                        <div style={{ background: '#334155', padding: '12px', borderRadius: '6px', color: '#cbd5e1', fontSize: '13px', lineHeight: '1.6', maxHeight: '120px', overflowY: 'auto' }}>
-                          "{selectedFeedback.message}"
-                        </div>
-                      </div>
-
-                      {/* SYSTEM MANAGEMENT FORM AUDIT BLOCK */}
-                      <form onSubmit={handleSubmitFeedbackAction}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '12px' }}>
-                          <div className="fg" style={{ margin: 0 }}>
-                            <label className="fl">Update Workflow Status</label>
-                            <select className="fc" value={fbStatusUpdate} onChange={(e) => setFbStatusUpdate(e.target.value)}>
-                              <option value="Pending">Pending</option>
-                              <option value="Under Review">Under Review</option>
-                              <option value="Responded">Responded</option>
-                              <option value="Resolved">Resolved &amp; Closed</option>
-                            </select>
-                          </div>
-                          
-                          <div className="fg" style={{ margin: 0 }}>
-                            <label className="fl">Assign Staff Operations Agent</label>
-                            <select className="fc" value={fbStaffAssignment} onChange={(e) => setFbStaffAssignment(e.target.value)}>
-                              <option value="Unassigned">Unassigned</option>
-                              <option value="Mark Gian Cortero">Mark Gian Cortero</option> {/* */}
-                              <option value="Juhairo Macabangon">Juhairo Macabangon</option> {/* */}
-                              <option value="Denver Napagal">Denver Napagal</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="fg">
-                          <label className="fl">Official Response Statement (To be broadcast to Resident Portal Logs)</label>
-                          <textarea className="fc" required style={{ minHeight: '80px', fontSize: '13px' }} placeholder="Provide a clean clear response guidelines message context here..." value={fbResponseText} onChange={(e) => setFbResponseText(e.target.value)} />
-                        </div>
-
-                        {/* AUDIT TRAIL FIELD FOOTNOTE */}
-                        {selectedFeedback.status === 'Resolved' && (
-                          <div style={{ fontSize: '11px', color: '#10b981', background: '#065f46', padding: '8px', borderRadius: '4px', marginBottom: '12px' }}>
-                            🗲 Historical Audit Track: Resolved by <strong>{selectedFeedback.handledBy}</strong> on <em>{selectedFeedback.dateResolved}</em>
-                          </div>
-                        )}
-
-                        {/* ACTION TRIGGERS CONTROLLER AREA */}
-                        <div style={{ display: 'flex', gap: '8px', justifyContent: 'flex-end', borderTop: '1px solid #334155', paddingTop: '12px' }}>
-                          <button type="button" className="btn btn-g" style={{ background: '#475569' }} onClick={() => setSelectedFeedback(null)}>Discard</button>
-                          <button type="submit" className="btn btn-p">💾 Commit Changes &amp; Notify</button>
-                        </div>
-                      </form>
-
-                    </div>
-                  </div>
+          {/* SYSTEM INFORMATIONAL METADATA */}
+          <div style={{
+            display: 'grid',
+            gridTemplateColumns: '1fr 1fr',
+            gap: '12px',
+            marginBottom: '14px',
+            fontSize: '13px',
+            background: '#0f172a',
+            padding: '12px',
+            borderRadius: '6px'
+          }}>
+            <div>
+              <span style={{ color: '#94a3b8' }}>Resident Submitter:</span>
+              <strong style={{ color: 'white' }}>{selectedFeedback.sender}</strong>
+            </div>
+            <div>
+              <span style={{ color: '#94a3b8' }}>Rank Priority:</span>
+              <strong>
+                {selectedFeedback.priority === 'High' ? (
+                  <span className="badge r" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                    </svg>
+                    High
+                  </span>
+                ) : selectedFeedback.priority === 'Medium' ? (
+                  <span className="badge a" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                    </svg>
+                    Medium
+                  </span>
+                ) : (
+                  <span className="badge g" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <circle cx="12" cy="12" r="10" />
+                    </svg>
+                    Low
+                  </span>
                 )}
+              </strong>
+            </div>
+            <div>
+              <span style={{ color: '#94a3b8' }}>Timeline Stamp:</span>
+              <span style={{ color: '#cbd5e1' }}>{selectedFeedback.date}</span>
+            </div>
+            <div>
+              <span style={{ color: '#94a3b8' }}>Attachment Field:</span>
+              {' '}
+              {selectedFeedback.attachment ? (
+                <span style={{
+                  color: '#60a5fa',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}
+                  onClick={() => alert(`Opening system dynamic link placeholder: ${selectedFeedback.attachment}`)}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                  </svg>
+                  {selectedFeedback.attachment}
+                </span>
+              ) : (
+                <span style={{ color: '#64748b' }}>None</span>
+              )}
+            </div>
+          </div>
 
+          {/* MAIN MESSAGE STATEMENT AREA */}
+          <div style={{ marginBottom: '16px' }}>
+            <label className="fl" style={{
+              color: '#94a3b8',
+              fontSize: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M12 18v-6" />
+                <path d="M9 15h6" />
+              </svg>
+              Subject Heading
+            </label>
+            <div style={{
+              background: '#334155',
+              padding: '8px 12px',
+              borderRadius: '4px',
+              color: 'white',
+              fontWeight: '600',
+              fontSize: '13px',
+              marginBottom: '8px'
+            }}>
+              {selectedFeedback.subject}
+            </div>
+
+            <label className="fl" style={{
+              color: '#94a3b8',
+              fontSize: '12px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px'
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+              </svg>
+              Original Input Context Message
+            </label>
+            <div style={{
+              background: '#334155',
+              padding: '12px',
+              borderRadius: '6px',
+              color: '#cbd5e1',
+              fontSize: '13px',
+              lineHeight: '1.6',
+              maxHeight: '120px',
+              overflowY: 'auto'
+            }}>
+              "{selectedFeedback.message}"
+            </div>
+          </div>
+
+          {/* SYSTEM MANAGEMENT FORM AUDIT BLOCK */}
+          <form onSubmit={handleSubmitFeedbackAction}>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: '1fr 1fr',
+              gap: '12px',
+              marginBottom: '12px'
+            }}>
+              <div className="fg" style={{ margin: 0 }}>
+                <label className="fl" style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M12 2v4" />
+                    <path d="M12 18v4" />
+                    <path d="M4.93 4.93l2.83 2.83" />
+                    <path d="M16.24 16.24l2.83 2.83" />
+                    <path d="M2 12h2" />
+                    <path d="M20 12h2" />
+                    <path d="M4.93 19.07l2.83-2.83" />
+                    <path d="M16.24 7.76l2.83-2.83" />
+                  </svg>
+                  Update Workflow Status
+                </label>
+                <select
+                  className="fc"
+                  value={fbStatusUpdate}
+                  onChange={(e) => setFbStatusUpdate(e.target.value)}
+                >
+                  <option value="Pending">Pending</option>
+                  <option value="Under Review">Under Review</option>
+                  <option value="Responded">Responded</option>
+                  <option value="Resolved">Resolved & Closed</option>
+                </select>
               </div>
-                )}
+              <div className="fg" style={{ margin: 0 }}>
+                <label className="fl" style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                  </svg>
+                  Assign Staff Operations Agent
+                </label>
+                <select
+                  className="fc"
+                  value={fbStaffAssignment}
+                  onChange={(e) => setFbStaffAssignment(e.target.value)}
+                >
+                  <option value="Unassigned">Unassigned</option>
+                  <option value="Mark Gian Cortero">Mark Gian Cortero</option>
+                  <option value="Juhairo Macabangon">Juhairo Macabangon</option>
+                  <option value="Denver Napagal">Denver Napagal</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="fg">
+              <label className="fl" style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 18v-6" />
+                  <path d="M9 15h6" />
+                </svg>
+                Official Response Statement (To be broadcast to Resident Portal Logs)
+              </label>
+              <textarea
+                className="fc"
+                required
+                style={{ minHeight: '80px', fontSize: '13px' }}
+                placeholder="Provide a clean clear response guidelines message context here..."
+                value={fbResponseText}
+                onChange={(e) => setFbResponseText(e.target.value)}
+              />
+            </div>
+
+            {/* AUDIT TRAIL FIELD FOOTNOTE */}
+            {selectedFeedback.status === 'Resolved' && (
+              <div style={{
+                fontSize: '11px',
+                color: '#10b981',
+                background: '#065f46',
+                padding: '8px',
+                borderRadius: '4px',
+                marginBottom: '12px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 18v-6" />
+                  <path d="M9 15h6" />
+                </svg>
+                Historical Audit Track: Resolved by <strong>{selectedFeedback.handledBy}</strong> on <em>{selectedFeedback.dateResolved}</em>
+              </div>
+            )}
+
+            {/* ACTION TRIGGERS CONTROLLER AREA */}
+            <div style={{
+              display: 'flex',
+              gap: '8px',
+              justifyContent: 'flex-end',
+              borderTop: '1px solid #334155',
+              paddingTop: '12px'
+            }}>
+              <button
+                type="button"
+                className="btn btn-g"
+                style={{ background: '#475569' }}
+                onClick={() => setSelectedFeedback(null)}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 15l-6-6-6 6" />
+                </svg>
+                Discard
+              </button>
+              <button
+                type="submit"
+                className="btn btn-p"
+                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M19 21H5" />
+                  <path d="M19 3H5" />
+                  <path d="M19 12H5" />
+                  <path d="M5 21V3" />
+                </svg>
+                Commit Changes & Notify
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+    )}
+  </div>
+)} 
 
             {/* ════════════════════════════════════════
                 SCREEN: CONFLICT RESOLUTION (Admin only)
@@ -5509,12 +9210,11 @@ const filteredAuditLogs = auditLogs.filter((log) => {
               </div>
             )}
 
-          </div>{/* /content */}
-          {/* 💡 SYSTEM FOOTER: Ilagay ito bago magsara ang main content panel wrapper */}
+          </div>
           <footer style={{
             textAlign: 'center',
             padding: '20px 0',
-            marginTop: 'auto', // Itutulak nito ang footer sa pinakababa ng page
+            marginTop: 'auto', 
             borderTop: '1px solid #1e293b',
             color: '#64748b',
             fontSize: '12px',
