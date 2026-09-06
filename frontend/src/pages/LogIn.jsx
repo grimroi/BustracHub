@@ -260,7 +260,7 @@ export default function LogIn() {
             type="submit" 
             className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-medium py-3 rounded-lg text-sm transition-colors shadow-lg shadow-emerald-950/50 mt-2"
           >
-            Sign In →
+            Sign In 
           </button>
         </form>
 
@@ -271,11 +271,11 @@ export default function LogIn() {
             onClick={() => navigate('/')}
             className="text-xs text-slate-400 hover:text-emerald-400 transition-colors font-medium inline-flex items-center gap-1"
           >
-            ← Back to the Public Portal
+             Back to the Public Portal
           </button>
           
           <div className="text-[10px] text-slate-600 border-t border-slate-800/60 pt-3">
-            🔄 Gumagana kahit walang internet — Awtomatikong nagsi-sync sa CouchDB
+             Gumagana kahit walang internet — Awtomatikong nagsi-sync sa CouchDB
             <span className="block mt-1 opacity-70">
               v1.0 • Barangay Bustrac © 2026
             </span>

@@ -33,6 +33,7 @@
   font-size: 15px;
   line-height: 1.6;
   min-height: 100vh;
+  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
 }
 
 .resident-root-container *,
@@ -844,4 +845,30 @@
     grid-template-columns: 1fr;
     gap: 10px;
   }
+}
+
+.resident-root-container .resident-footer {
+  padding: 20px;
+  text-align: center;
+  border-top: 1px solid var(--border);
+  margin-top: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.resident-root-container .footer-inner {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  align-items: center;
+}
+
+.resident-root-container .footer-brand {
+  font-weight: 800;
+  color: var(--text);
+}
+
+.resident-root-container .footer-version {
+  font-size: 10px;
+  color: var(--hint);
 }

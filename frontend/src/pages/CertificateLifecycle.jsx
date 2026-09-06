@@ -215,7 +215,7 @@ const updateRequest = useCallback(async (request, nextStep) => {
       >
         <div className="card" style={{ flex: '1', minWidth: 0 }}>
           <div className="card-title" style={{ marginBottom: '10px', fontWeight: 700 }}>
-            📌 Incoming Requests
+             Incoming Requests
           </div>
           <div className="tw" style={{ marginBottom: 0 }}>
             <table>
@@ -302,7 +302,7 @@ const updateRequest = useCallback(async (request, nextStep) => {
 
         <div className="card" style={{ flex: '1', minWidth: 0 }}>
           <div className="card-title" style={{ marginBottom: '10px', fontWeight: 700 }}>
-            📋 Pending Approvals
+             Pending Approvals
           </div>
           <div className="tw" style={{ marginBottom: 0 }}>
             <table>
