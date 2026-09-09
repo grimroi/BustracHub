@@ -9,6 +9,16 @@ const INITIAL_FORM = {
   lastName: '',
   certificateType: '',
   purpose: '',
+  residentId: '',
+  rbiId: '',
+  purok: '',
+  ctc: {
+    name: '',
+    number: '',
+    amountPaid: '',
+    dateIssued: '',
+    placeIssued: ''
+  }
 };
 
 const formatStamp = () => {
@@ -127,40 +137,42 @@ const updateRequest = useCallback(async (request, nextStep) => {
 
   const handleCreateRequest = async (event) => {
   event.preventDefault();
-  if (!requestForm.firstName.trim() || !requestForm.lastName.trim() || !requestForm.certificateType || !requestForm.purpose.trim()) {
-    return; 
+  if (
+    !requestForm.firstName.trim() ||
+    !requestForm.lastName.trim() ||
+    !requestForm.certificateType ||
+    !requestForm.purpose.trim()
+  ) {
+    return;
   }
 
   try {
-    // 1. Gagawa ng malinis na payload object
     const generatedId = `CERT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
 
     const newRequestPayload = {
-      _id: generatedId, // Para tugma sa primary key rendering ng CouchDB at localStorage
+      _id: generatedId,
       type: 'certificate_request',
       firstName: requestForm.firstName.trim(),
       lastName: requestForm.lastName.trim(),
       certificateType: requestForm.certificateType,
       purpose: requestForm.purpose.trim(),
-      status: 'Pending', // 💡 PRO-TIP: Gawin mo na itong 'Approved' agad para lumitaw sa Issuance List! Kung 'Pending', dapat may Admin Approval phase muna kayo.
-      step: 1,
+      residentId: requestForm.residentId.trim(),
+      rbiId: requestForm.rbiId.trim().toUpperCase(),
       purok: requestForm.purok || 'Purok 1',
+      status: 'Pending',
+      step: 1,
       createdAt: new Date().toISOString().split('T')[0],
       updatedAt: new Date().toISOString().split('T')[0],
+      ctc: {
+        name: requestForm.ctc?.name?.trim() || '',
+        number: requestForm.ctc?.number?.trim() || '',
+        amountPaid: parseFloat(requestForm.ctc?.amountPaid) || 0,
+        dateIssued: requestForm.ctc?.dateIssued || '',
+        placeIssued: requestForm.ctc?.placeIssued?.trim() || '',
+      },
     };
 
-    // 2. I-save sa offline CouchDB core local engine
-    await db.post(newRequestPayload);
-
-    // 3. UI SYNC TRIGGER: Idagdag ang bagong record sa active list memory array kung nandoon ang prop
-    // if (typeof setIssuedCertificates === 'function') {
-    //   setIssuedCertificates((prevCerts) => {
-    //     const updatedList = [newRequestPayload, ...prevCerts];
-    //     // Siguraduhing naka-sync din agad sa localStorage para kahit i-refresh ay hindi mawawala
-    //     localStorage.setItem('bustrac_certs', JSON.stringify(updatedList));
-    //     return updatedList;
-    //   });
-    // }
+    await db.put(newRequestPayload);
 
     alert('✓ Certificate request submitted and queued for issuance preview!');
     setRequestForm(INITIAL_FORM);
@@ -377,7 +389,7 @@ const updateRequest = useCallback(async (request, nextStep) => {
           }}
         >
           <div className="card" style={{ width: '100%', maxWidth: '440px', padding: '22px' }}>
-            <div className="fp-t">📝 New Request</div>
+            <div className="fp-t"> New Request</div>
             <form onSubmit={handleCreateRequest}>
               <div className="fg">
                 <label className="fl">First Name</label>

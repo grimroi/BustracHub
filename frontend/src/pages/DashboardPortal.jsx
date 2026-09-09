@@ -13,39 +13,76 @@ const db = new PouchDB('bustrac_db');
 // ─────────────────────────────────────────────
 
 const SCREEN_META = {
-  dashboard:        ['Dashboard', ''],            // subtitle rendered per role in JSX
-  residents:        ['Manage Residents',          'Resident Registry Module'],
+  dashboard:        ['Dashboard',                  ''],            // subtitle rendered per role in JSX
+  residents:        ['Manage Residents',           'Resident Registry Module'],
   'add-resident':   ['Add New Resident',          'Resident Registry'],
-  households:       ['Manage Households',         'Resident Registry'],
-  'cert-req':       ['Request & Approval',        'Certificate Issuance Module'],
-  'cert-approve':   ['Certificate Approval',      'Certificate Issuance Module'],
-  'cert-print':     ['Issuance & Print',          'Certificate Issuance Module'],
-  programs:         ['Distribution Programs',     'Aid Distribution Module'],
-  'aid-encode':     ['Encode Distribution',       'Aid Distribution Module'],
-  'aid-logs':       ['Distribution Logs',         'Aid Distribution Module'],
-  'add-beneficiary':['Add Beneficiaries',         'Aid Distribution Module'],
-  'blotter-new':    ['File Blotter Entry',        'Blotter Module'],
-  'blotter-manage': ['Manage Blotter Records',    'Blotter Module'],
-  'blotter-detail': ['Complaint Details',         'Blotter Module — Case Management'],
-  announcements:    ['Announcements',             'Community Module'],
-  feedback:         ['Feedback & Complaints',     'Community Module'],
-  conflicts:        ['Conflict Resolution',       'Admin Only — CouchDB Sync Conflicts'],
-  audit:            ['Audit Log',                 'Admin Only — Immutable Transaction History'],
-  users:            ['Manage Users',              'Admin Only — User Accounts & Roles'],
-  reports:          ['Generate Reports',          'Administration'],
+  households:       ['Manage Households',          'Resident Registry'],
+  'cert-req':       ['Request & Approval',         'Certificate Issuance Module'],
+  'cert-approve':   ['Certificate Approval',       'Certificate Issuance Module'],
+  'cert-print':     ['Issuance & Print',           'Certificate Issuance Module'],
+  business_clearance: ['Business Clearance',       'Certificate Issuance Module'],
+  brgy_clearance:   ['Barangay Clearance (Individual)', 'Certificate Issuance Module'],
+  programs:         ['Distribution Programs',      'Aid Distribution Module'],
+  'aid-encode':     ['Encode Distribution',        'Aid Distribution Module'],
+  'aid-logs':       ['Distribution Logs',          'Aid Distribution Module'],
+  'add-beneficiary':['Add Beneficiaries',          'Aid Distribution Module'],
+  'blotter-new':    ['File Blotter Entry',         'Blotter Module'],
+  'blotter-manage': ['Manage Blotter Records',     'Blotter Module'],
+  'blotter-detail': ['Complaint Details',          'Blotter Module — Case Management'],
+  announcements:    ['Announcements',              'Community Module'],
+  feedback:         ['Feedback & Complaints',      'Community Module'],
+  conflicts:        ['Conflict Resolution',        'Admin Only — CouchDB Sync Conflicts'],
+  audit:            ['Audit Log',                  'Admin Only — Immutable Transaction History'],
+  users:            ['Manage Users',               'Admin Only — User Accounts & Roles'],
+  reports:          ['Generate Reports',           'Administration'],
 };
 
-const EMPTY_RESIDENT = {
-  firstName:   '',
-  middleName:  '',
-  lastName:    '',
-  birthdate:   '',
-  gender:      '',
-  civilStatus: '',
-  contact:     '',
-  purok:       '',
-  household:   '',
-  voter:       false,
+export const EMPTY_RESIDENT = {
+  rbiNo: '',
+  householdNo: '',
+  fileDateUpdated: new Date().toISOString().split('T')[0],
+
+  lastName: '',
+  firstName: '',
+  middleName: '',
+  suffix: '',
+  alias: '',
+  birthdate: '',
+  age: 0,
+  birthPlace: '',
+  sex: 'Male',
+  isLgbtqia: false,
+  lgbtqiaSpecification: '',
+  civilStatus: 'Single',
+  citizenship: 'Filipino',
+  religion: '',
+  indigenousTribe: '',
+
+  weightKg: '',
+  heightCm: '',
+  bloodType: '',
+
+  isFamilyHead: false,
+  isSoloParent: false,
+  isHouseholdHead: false,
+  relationshipToHouseholdHead: '',
+
+  isRegisteredVoter: false,
+  isVotingLocally: false,
+  precinctNo: '',
+  votingOtherPlace: '',
+
+  isBarangayResident: true,
+  residentSince: '',
+  residencyStatus: 'Permanent',
+  contactNo: '',
+  email: '',
+  purokZoneAddress: '',
+  addressOutsideBarangay: '',
+
+  isBarangayOfficial: false,
+  isDeceased: false,
+  photoUrl: '',
 };
 
 const INITIAL_COMPLAINT = {
@@ -140,14 +177,15 @@ const mapDocToFeedback = (doc) => {
     rawDoc: doc,
   };
 };
-
 // ─────────────────────────────────────────────
 // COMPONENT
 // ─────────────────────────────────────────────
 export default function DashboardPortal({ role = 'staff' }) {
   const navigate = useNavigate();
   const location = useLocation();
-
+  
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  
   // ── Dynamic User Identity ──
 const rawUser = sessionStorage.getItem('bustrac_user');
 
@@ -250,10 +288,10 @@ const initials = displayName
   const [residentsList, setResidentsList] = useState(() => {
     const savedResidents = localStorage.getItem('bustrac_residents');
     return savedResidents ? JSON.parse(savedResidents) : [
-      { id: 'RES-0001', name: 'Santos, Maria D.', purok: 'Purok 3', purokClass: 'b', age: 34, civilStatus: 'Married', voter: true, household: 'HH-0012', conflict: false },
-      { id: 'RES-0002', name: 'Reyes, Juan B.', purok: 'Purok 1', purokClass: 'p', age: 67, civilStatus: 'Widowed', voter: true, household: 'HH-0003', conflict: false },
-      { id: 'RES-0003', name: 'Garcia, Ana L.', purok: 'Purok 2', purokClass: 't', age: 28, civilStatus: 'Single', voter: false, household: 'HH-0007', conflict: false },
-      { id: 'RES-0412', name: 'Dela Cruz, Maria', purok: 'Purok ?', purokClass: 'a', age: 29, civilStatus: 'Married', voter: true, household: 'HH-0015', conflict: true },
+      { id: 'RES-0001', rbiId: '05-17-23-005-00000001', firstName: 'Maria', middleName: 'D.', lastName: 'Santos', name: 'Maria D. Santos', birthdate: '1990-03-12', gender: 'Female', civilStatus: 'Married', contact: '0917-123-4567', purok: 'Purok 3', household: 'HH-0012', householdHead: false, voter: true, conflict: false },
+      { id: 'RES-0002', rbiId: '05-17-23-005-00000002', firstName: 'Juan', middleName: 'B.', lastName: 'Reyes', name: 'Juan B. Reyes', birthdate: '1959-05-20', gender: 'Male', civilStatus: 'Widowed', contact: '0917-000-0002', purok: 'Purok 1', household: 'HH-0003', householdHead: true, voter: true, conflict: false },
+      { id: 'RES-0003', rbiId: '05-17-23-005-00000003', name: 'Garcia, Ana L.', firstName: 'Ana', lastName: 'Garcia', purok: 'Purok 2', purokClass: 't', age: 28, civilStatus: 'Single', voter: false, household: 'HH-0007', householdHead: true, conflict: false },
+      { id: 'RES-0412', rbiId: '05-17-23-005-00000412', name: 'Dela Cruz, Maria', firstName: 'Maria', lastName: 'Dela Cruz', purok: 'Purok 1', purokClass: 'p', age: 29, civilStatus: 'Married', voter: true, household: 'HH-0015', householdHead: true, conflict: true },
     ];
   });
 
@@ -428,13 +466,15 @@ useEffect(() => {
       firstName: fName,
       middleName: '',
       lastName: lName,
-      birthdate: '',
-      gender: 'Male',
-      civilStatus: res.civilStatus,
-      contact: '09123456789',
-      purok: res.purok,
-      household: res.household
-    });
+      birthdate: res.birthdate || '',
+      gender: res.gender || '',
+      civilStatus: res.civilStatus || '',
+      contact: res.contact || '',
+      purok: res.purok || '',
+      household: res.household || '',
+      householdHead: res.householdHead === true,
+      rbiId: res.rbiId || ''
+  });
 
     nav('edit-resident');
   };
@@ -621,24 +661,24 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
     setResidentForm((prev) => ({ ...prev, [field]: value }));
 
   // 1. Function to populate the form when Edit is clicked
-const handleStartEditResident = (res) => {
-  const nameParts = res.name.split(' ');
-  
-  setResidentForm({
-    firstName: nameParts[0] || '',
-    middleName: nameParts.length > 2 ? nameParts[1] : '',
-    lastName: nameParts[nameParts.length - 1] || '',
-    birthdate: '2026-01-01', // Pansamantalang default date para sa form validator
-    gender: 'Male', // Default selection
-    civilStatus: res.civilStatus,
-    contact: '09123456789', // Default contact mock
-    purok: res.purok,
-    household: res.household
-  });
+  const handleStartEditResident = (res) => {
+    const nameParts = res.name.split(' ');
+    
+    setResidentForm({
+      firstName: nameParts[0] || '',
+      middleName: nameParts.length > 2 ? nameParts[1] : '',
+      lastName: nameParts[nameParts.length - 1] || '',
+      birthdate: '2026-01-01', // Pansamantalang default date para sa form validator
+      gender: 'Male', // Default selection
+      civilStatus: res.civilStatus,
+      contact: '09123456789', // Default contact mock
+      purok: res.purok,
+      household: res.household
+    });
 
-  setEditingResidentId(res.id);
-  nav('add-resident'); 
-};
+    setEditingResidentId(res.id);
+    nav('add-resident'); 
+  };
 
 // 2. Function to delete the resident from the list
 const handleDeleteResident = async (id, name) => {
@@ -663,73 +703,213 @@ const handleDeleteResident = async (id, name) => {
   }
 };
   const submitAddResident = async (e) => {
-  e.preventDefault();
-  const { firstName, middleName, lastName, birthdate, gender, civilStatus, contact, purok, household } = residentForm;
-  
-  if (!firstName || !middleName || !lastName || !birthdate || !gender || !civilStatus || !contact || !purok || !household) {
-    alert('Please fill in all required fields.');
-    return;
-  }
+    e.preventDefault();
 
-  const fullName = `${firstName} ${middleName} ${lastName}`;
+    const {
+        firstName,
+        middleName,
+        lastName,
+        birthdate,
+        gender,
+        civilStatus,
+        contact,
+        purok,
+        household,
+        rbiId,
+        voter,
+        householdHead
+    } = residentForm;
+ 
+    console.log('RESIDENT FORM BEFORE SAVE:', residentForm);       
+    // Required fields
+    if (
+        !firstName?.trim() ||
+        !middleName?.trim() ||
+        !lastName?.trim() ||
+        !birthdate ||
+        !gender ||
+        !civilStatus ||
+        !contact?.trim() ||
+        !purok ||
+        !household ||
+        !rbiId?.trim()
+    ) {
+        alert('Please fill in all required fields, including RBI ID.');
+        return;
+    }
 
-  let dynamicPurokClass = 'b';
-  if (purok.includes('1')) dynamicPurokClass = 'p';
-  else if (purok.includes('2')) dynamicPurokClass = 'g';
-  else if (purok.includes('5')) dynamicPurokClass = 'a';
+    const normalizedRbiId = rbiId.trim().toUpperCase();
 
-  if (editingResidentId) {
-    // ── UPDATE LOGIC ──
+    // Prevent duplicate RBI ID
+    const duplicateRbiId = residentsList.some(
+        (res) =>
+            res.rbiId?.trim().toUpperCase() === normalizedRbiId &&
+            res.id !== editingResidentId
+    );
+
+    if (duplicateRbiId) {
+        alert(
+            `RBI ID ${normalizedRbiId} is already assigned to another resident.`
+        );
+        return;
+    }
+
+    const fullName = `${firstName.trim()} ${middleName.trim()} ${lastName.trim()}`;
+
+    // Purok badge class
+    let dynamicPurokClass = 'b';
+
+    if (purok.includes('1')) {
+        dynamicPurokClass = 'p';
+    } else if (purok.includes('2')) {
+        dynamicPurokClass = 'g';
+    } else if (purok.includes('5')) {
+        dynamicPurokClass = 'a';
+    }
+
+    // =========================================================
+    // UPDATE EXISTING RESIDENT
+    // =========================================================
+    if (editingResidentId) {
     const updatedList = residentsList.map((res) => {
-      if (res.id === editingResidentId) {
-        return {
-          ...res,
-          name: fullName,
-          purok: purok,
-          purokClass: dynamicPurokClass,
-          age: birthdate ? new Date().getFullYear() - new Date(birthdate).getFullYear() : res.age,
-          civilStatus: civilStatus,
-          household: household
-        };
+      if (res.id !== editingResidentId) {
+        return res;
       }
-      return res;
+
+      return {
+        ...res,
+        rbiId: normalizedRbiId,
+        firstName: firstName.trim(),
+        middleName: middleName.trim(),
+        lastName: lastName.trim(),
+        name: fullName,
+        birthdate,
+        gender,
+        civilStatus,
+        contact: contact.trim(),
+        purok,
+        purokClass: dynamicPurokClass,
+        age: new Date().getFullYear() - new Date(birthdate).getFullYear(),
+        household,
+        householdHead: Boolean(householdHead),
+        voter: Boolean(voter),
+      };
     });
 
     setResidentsList(updatedList);
+
     await createAuditLog({
       action: 'UPDATE',
       module: 'RESIDENTS',
       recordId: editingResidentId,
       details: `Updated resident record: ${fullName}`,
     });
-    alert(`Resident ${editingResidentId} updated successfully!`);
-    setEditingResidentId(null); // I-reset ang edit mode
-  } else {
-    //  CREATE LOGIC 
-    const newResident = {
-      id: `RES-${String(residentsList.length + 1).padStart(4, '0')}`,
-      name: fullName,
-      purok: purok,
-      purokClass: dynamicPurokClass,
-      age: birthdate ? new Date().getFullYear() - new Date(birthdate).getFullYear() : 0,
-      civilStatus: civilStatus,
-      voter: true,
-      household: household,
-      conflict: false
-    };
-    setResidentsList([...residentsList, newResident]);
 
-    await createAuditLog({
-      action: 'CREATE',
-      module: 'RESIDENTS',
-      recordId: newResident.id,
-      details: `Added new resident record: ${fullName}`,
-    });
-    alert(`Resident added successfully!\n\nName: ${fullName}`);
+    alert(`Resident ${editingResidentId} updated successfully!`);
+    setEditingResidentId(null);
+    setResidentForm(EMPTY_RESIDENT);
+    nav('residents');
+    return;
   }
 
-  setResidentForm(EMPTY_RESIDENT);
-  nav('residents');
+    // =========================================================
+    // CREATE NEW RESIDENT
+    // =========================================================
+
+    const newResidentId = `RES-${String(
+        residentsList.length + 1
+    ).padStart(4, '0')}`;
+
+    const newResident = {
+        id: newResidentId,
+
+        // Official Record of Barangay Inhabitants identifier
+        rbiId: normalizedRbiId,
+
+        firstName: firstName.trim(),
+        middleName: middleName.trim(),
+        lastName: lastName.trim(),
+
+        name: fullName,
+
+        birthdate,
+        gender,
+        civilStatus,
+        contact: contact.trim(),
+
+        purok,
+        purokClass: dynamicPurokClass,
+
+        age: new Date().getFullYear() - new Date(birthdate).getFullYear(),
+
+        household,
+        householdHead: Boolean(householdHead),
+
+        voter: Boolean(voter),
+
+        conflict: false,
+    };
+
+    const updatedList = [
+        ...residentsList,
+        newResident
+    ];
+
+    setResidentsList(updatedList);
+
+    // Persist locally
+    localStorage.setItem(
+        'bustrac_residents',
+        JSON.stringify(updatedList)
+    );
+    
+    const residentDoc = {
+      _id: newResidentId,
+      type: 'resident',
+      residentId: newResidentId,
+      rbiId: normalizedRbiId,
+      firstName: firstName.trim(),
+      middleName: middleName.trim(),
+      lastName: lastName.trim(),
+      name: fullName,
+      birthdate,
+      gender,
+      civilStatus,
+      contact: contact.trim(),
+      purok,
+      household,
+      householdHead: Boolean(householdHead),
+      voter: Boolean(voter),
+      conflict: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    
+    try {
+      await db.put(residentDoc);
+    } catch (error) {
+      console.error(
+        'Failed to save resident to PouchDB:',
+        error
+      );
+    }
+
+    await createAuditLog({
+        action: 'CREATE',
+        module: 'RESIDENTS',
+        recordId: newResidentId,
+        details: `Added new resident record: ${fullName} (${normalizedRbiId})`,
+    });
+
+    alert(
+        `Resident added successfully!\n\n` +
+        `Resident ID: ${newResidentId}\n` +
+        `RBI ID: ${normalizedRbiId}\n` +
+        `Name: ${fullName}`
+    );
+
+    setResidentForm(EMPTY_RESIDENT);
+    nav('residents');
 };
  
  const submitAddHousehold = async (e) => {
@@ -887,6 +1067,11 @@ const sendSummons = () => {
   
 
   const handlePrintRelease = async (req) => {
+  if (!issuanceMeta.orNumber.trim() || !issuanceMeta.ctcNumber.trim() || !issuanceMeta.amountPaid) {
+    alert('Please fill in all required issuance fields (OR No., CTC No., Amount Paid).');
+    return;
+  }
+
   try {
     const latestDoc = await db.get(req._id);
     const updatedDoc = {
@@ -894,37 +1079,40 @@ const sendSummons = () => {
       status: 'Issued',
       issuedAt: new Date().toISOString(),
       step: 5,
+      purpose: issuanceMeta.purpose || latestDoc.purpose,
+      remarks: issuanceMeta.remarks,
+      validity: issuanceMeta.validity,
+      noDerogatoryRecord: issuanceMeta.noDerogatoryRecord,
+      orNumber: issuanceMeta.orNumber,
+      ctc: {
+        name: issuanceMeta.ctcName || `${latestDoc.firstName || ''} ${latestDoc.lastName || ''}`.trim(),
+        number: issuanceMeta.ctcNumber,
+        amountPaid: parseFloat(issuanceMeta.ctcAmountPaid || issuanceMeta.amountPaid) || 0,
+        dateIssued: issuanceMeta.ctcDateIssued || issuanceMeta.dateIssued,
+        placeIssued: issuanceMeta.placeIssued,
+      },
+      signatories: {
+        secretary: issuanceMeta.secretary || barangaySettings.signatories?.secretary,
+        punongBarangay: issuanceMeta.punongBarangay || barangaySettings.signatories?.punongBarangay,
+      },
+      issuanceMeta: { ...issuanceMeta, printedAt: new Date().toISOString() },
     };
+
     await db.put(updatedDoc);
 
     await createAuditLog({
-    action: 'UPDATE',
-    module: 'CERTIFICATES',
-    recordId: req._id,
-    details: `Issued and printed certificate for ${req.firstName || ''} ${req.lastName || ''}`,
+      action: 'UPDATE',
+      module: 'CERTIFICATES',
+      recordId: req._id,
+      details: `Issued and printed certificate for ${latestDoc.firstName || ''} ${latestDoc.lastName || ''}`,
     });
 
-    setSelectedCertificate(updatedDoc); 
-
-    setTimeout(() => {
-      window.print();
-    }, 350);
+    setSelectedCertificate(updatedDoc);
+    setTimeout(() => window.print(), 350);
   } catch (err) {
     console.error('Failed to update certificate status:', err);
   }
 };
-
-useEffect(() => {
-  // Print will only run if the certificate is officially at Step 4 (Issued) and in the correct screen area
-  if (selectedCertificate && Number(selectedCertificate.step) === 4 && screen === 'cert-print') {
-    const printTimer = setTimeout(() => {
-      window.print();
-    }, 150);
-
-    return () => clearTimeout(printTimer);
-  }
-}, [selectedCertificate, screen]);
-
   // ─────────────────────────────────────────────
   // TOPBAR TITLE
   // ─────────────────────────────────────────────
@@ -945,7 +1133,9 @@ useEffect(() => {
     const matchesSearch =
       res.name.toLowerCase().includes(query) ||
       res.id.toLowerCase().includes(query) ||
-      res.purok.toLowerCase().includes(query);
+      res.rbiId?.toLowerCase().includes(query) ||
+      res.purok.toLowerCase().includes(query) ||
+      res.household?.toLowerCase().includes(query);
 
     const matchesPurok = purokFilter === 'All Puroks' || res.purok === purokFilter;
     const matchesGender = genderFilter === 'All Gender' || res.gender === genderFilter;
@@ -996,6 +1186,115 @@ const [aidLogs, setAidLogs] = useState(() => {
   ];
 });
 
+// ── BARANGAY CLEARANCE (INDIVIDUAL) STATE MANAGEMENT ──
+const [clearanceList, setClearanceList] = useState([]);
+const [showClearancePrintModal, setShowClearancePrintModal] = useState(false);
+const [selectedClearanceCert, setSelectedClearanceCert] = useState(null);
+
+// Form State matching legacy fields in modern structure
+const [clearanceForm, setClearanceForm] = useState({
+  _id: '',
+  clearanceNo: 'BC-2026-0001',
+  fullName: 'PANIZAL, JOAN REBUSQUILLO',
+  purpose: 'Employment Requirement',
+  remarks: 'No Derogatory Record',
+  validity: '(6) Six Months Validity',
+  dateIssued: new Date().toISOString().split('T')[0],
+  orNo: '',
+  amtPaid: '50.00',
+  // CTC Details
+  ctcNo: '',
+  ctcName: '',
+  ctcAmtPaid: '0.00',
+  ctcDateIssued: new Date().toISOString().split('T')[0],
+  ctcPlaceIssued: 'Nabua, Camarines Sur',
+  // Signatories
+  secretary: 'MRS. MELY M. PRESADO',
+  captain: 'HON. ANNABELLE E. RULL',
+  // Blotter Check Status
+  hasBlotterRecord: false,
+  selectedResidentId: '', 
+  isIssuedByBarangay: true, 
+});
+
+// Fetch Barangay Clearances from PouchDB
+const fetchClearances = async () => {
+  try {
+    if (typeof db !== 'undefined' && db.allDocs) {
+      const res = await db.allDocs({ include_docs: true, startkey: 'brgy_clearance_', endkey: 'brgy_clearance_\uffff' });
+      const docs = res.rows.map(r => r.doc);
+      setClearanceList(docs);
+    }
+  } catch (err) {
+    console.error('Failed to fetch barangay clearances:', err);
+  }
+};
+
+// Save or Update Clearance Record
+const handleSaveClearance = async (e) => {
+  e.preventDefault();
+  if (!clearanceForm.fullName.trim() || !clearanceForm.purpose.trim()) {
+    alert('Please fill in the Resident Full Name and Purpose.');
+    return;
+  }
+
+  try {
+    const payload = {
+      ...clearanceForm,
+      _id: clearanceForm._id || `brgy_clearance_${Date.now()}`,
+      type: 'barangay_clearance',
+      updatedAt: new Date().toISOString(),
+      createdAt: clearanceForm.createdAt || new Date().toISOString(),
+    };
+
+    if (typeof db !== 'undefined' && db.put) {
+      await db.put(payload);
+    }
+
+    await fetchClearances();
+    alert(clearanceForm._id ? '✓ Barangay Clearance updated successfully!' : '✓ Barangay Clearance issued successfully!');
+    
+    // Reset Form
+    resetClearanceForm();
+  } catch (err) {
+    console.error('Failed to save barangay clearance:', err);
+    alert('Error saving record to local database.');
+  }
+};
+
+const resetClearanceForm = () => {
+  const nextNo = `BC-2026-${String(clearanceList.length + 1).padStart(4, '0')}`;
+  setClearanceForm({
+    _id: '',
+    clearanceNo: nextNo,
+    fullName: '',
+    purpose: '',
+    remarks: 'No Derogatory Record',
+    validity: '(6) Six Months Validity',
+    dateIssued: new Date().toISOString().split('T')[0],
+    orNo: '',
+    amtPaid: '50.00',
+    ctcNo: '',
+    ctcName: '',
+    ctcAmtPaid: '0.00',
+    ctcDateIssued: new Date().toISOString().split('T')[0],
+    ctcPlaceIssued: 'Nabua, Camarines Sur',
+    secretary: 'MRS. MELY M. PRESADO',
+    captain: 'HON. ANNABELLE E. RULL',
+    hasBlotterRecord: false,
+  });
+};
+
+const handleEditClearance = (rec) => {
+  setClearanceForm(rec);
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+const handlePrintClearance = (rec) => {
+  setSelectedClearanceCert(rec);
+  setShowClearancePrintModal(true);
+};
+
 // Auto-save tracker para sa logs array
 useEffect(() => {
   localStorage.setItem('bustrac_aid_logs', JSON.stringify(aidLogs));
@@ -1007,7 +1306,6 @@ useEffect(() => {
     setDuplicateAlert('');
     return;
   }
-  // Titingnan kung ang napiling Resident ID ay nabigyan na ng ayuda sa program logs natin
   const alreadyReceived = aidLogs.some(log => 
     log.residentId === currentBeneficiaryId && 
     log.programId === currentProgramId &&
@@ -1088,7 +1386,6 @@ const handleEncodeSubmit = async (e) => {
     return;
   }
 
-  // 2. Kuhanin ang detalye ng napiling program at residente
   const targetProg = programsList.find((p) => p.id === selectedProgramId);
   const targetResident = residentsList.find((r) => r.id === selectedResidentId);
   const residentName = targetResident ? targetResident.name : 'Unknown Resident';
@@ -1457,7 +1754,34 @@ useEffect(() => {
 const [blotterSearch, setBlotterSearch] = useState('');
 const [filterType, setFilterType] = useState('All Types');
 const [filterStatus, setFilterStatus] = useState('All Status');
+const [dateFrom, setDateFrom] = useState('');
+const [dateTo, setDateTo] = useState('');
+const [filterVawc, setFilterVawc] = useState(false);
 const [selectedBlotterId, setSelectedBlotterId] = useState(null);
+const [blotterVerifyQuery, setBlotterVerifyQuery] = useState('');
+const [blotterMatches, setBlotterMatches] = useState([]);
+
+// ── CTC MASTERLIST STATES ──
+const [ctcQuery, setCtcQuery] = useState('');
+const [showCtcMatches, setShowCtcMatches] = useState(false);
+const [ctcMasterlist, setCtcMasterlist] = useState([
+  { _id: 'ctc_001', ctcNo: 'CTC-2026-001', ctcName: 'Juan Dela Cruz', amountPaid: 50, dateIssued: '2026-08-01', placeIssued: 'Barangay Bustrac, Nabua, Camarines Sur' },
+  { _id: 'ctc_002', ctcNo: 'CTC-2026-002', ctcName: 'Maria Santos', amountPaid: 65, dateIssued: '2026-08-05', placeIssued: 'Barangay Bustrac, Nabua, Camarines Sur' }
+]);
+
+useEffect(() => {
+  if (!blotterVerifyQuery.trim()) {
+    setBlotterMatches([]);
+    return;
+  }
+  const q = blotterVerifyQuery.toLowerCase();
+  const matches = blotterList.filter(b => {
+    const resp = (b.respondent || b.respName || '').toLowerCase();
+    const comp = (b.complainant || b.compName || '').toLowerCase();
+    return resp.includes(q) || comp.includes(q);
+  });
+  setBlotterMatches(matches);
+}, [blotterVerifyQuery, blotterList]);
 
 useEffect(() => {
   const params = new URLSearchParams(location.search);
@@ -1476,20 +1800,41 @@ const currentBlotterRoster = typeof blotterList !== 'undefined' ? blotterList : 
   { id: 'BLT-2024-040', type: 'Property Dispute', complainant: 'Santos, Jose', respondent: 'Cruz, Ana', location: 'Purok 2', date: '2024-04-05', time: '10:15', status: 'Under Mediation', narrative: 'Kinasuhan dahil sa bakod na lumampas.', actionTaken: 'Pending hearing' }
 ];
 
-const filteredBlotters = currentBlotterRoster.filter(b => {
-  const matchesSearch = b.id.toLowerCase().includes(blotterSearch.toLowerCase()) ||
-                        b.complainant.toLowerCase().includes(blotterSearch.toLowerCase()) ||
-                        b.respondent.toLowerCase().includes(blotterSearch.toLowerCase());
-  
-  const matchesType = filterType === 'All Types' || b.type === filterType;
-  
-  // Hahawakan natin ang status text compatibility (e.g. Mediation vs Under Mediation)
-  const matchesStatus = filterStatus === 'All Status' || 
-                        b.status === filterStatus || 
-                        (filterStatus === 'Under Mediation' && b.status === 'Mediation');
+const filteredBlotters = (currentBlotterRoster || []).filter((b) => {
+  const query = blotterSearch.toLowerCase().trim();
 
-  return matchesSearch && matchesType && matchesStatus;
+  // 1. Search Box (Null-Safe for ID, Complainant, Respondent)
+  const matchesSearch =
+    !query ||
+    (b.id && b.id.toLowerCase().includes(query)) ||
+    (b.complainant && b.complainant.toLowerCase().includes(query)) ||
+    (b.respondent && b.respondent.toLowerCase().includes(query));
+
+  // 2. Incident Type & Status
+  const matchesType = filterType === 'All Types' || b.type === filterType;
+  const matchesStatus =
+    filterStatus === 'All Status' ||
+    b.status === filterStatus ||
+    (filterStatus === 'Under Mediation' && b.status === 'Mediation');
+
+  // 3. Date Range Filtering (Mula sa UI inputs: dateFrom at dateTo)
+  const caseDate = b.date ? new Date(b.date) : null;
+  const matchesDateFrom = !dateFrom || (caseDate && caseDate >= new Date(dateFrom));
+  const matchesDateTo = !dateTo || (caseDate && caseDate <= new Date(dateTo));
+
+  // 4. VAWC Filter Toggle (Mula sa UI input: filterVawc)
+  const matchesVawc = !filterVawc || b.isVawc === true || b.vawc === true;
+
+  return (
+    matchesSearch &&
+    matchesType &&
+    matchesStatus &&
+    matchesDateFrom &&
+    matchesDateTo &&
+    matchesVawc
+  );
 });
+
 // Dropdown control para sa Residents Submenu
 const [isResidentsOpen, setIsResidentsOpen] = useState(false);
 // CERTIFICATE PIPELINE BRIDGE LAYER 
@@ -1527,29 +1872,28 @@ const strictlyIssuedCertificates = issuedCertificates.filter(cert => cert.step =
 const handleApproveCertificate = async (currentRequest) => {
   if (!currentRequest) return;
 
-  try{
+  try {
     const latestDoc = await db.get(currentRequest._id);
-    
+
     const formattedPayload = {
-      ...latestDoc,                    // Gamitin ang latest doc structures
-      status: 'Approved',              // 🏛️ Papasok sa approvedCertificates filter
-      step: 3,                         // 📑 Step 3: Handa na para sa Printing Queue
+      ...latestDoc,
+      status: 'Approved',
+      step: 3,
+      orNumber: currentRequest.orNumber || latestDoc.orNumber || `OR-${Date.now()}`,
       updatedAt: new Date().toISOString().split('T')[0]
     };
 
-    // I-save ang pinakabagong state transition
     await db.put(formattedPayload);
-    
+
     await createAuditLog({
-    action: 'APPROVE',
-    module: 'CERTIFICATES',
-    recordId: currentRequest._id,
-    details: `Approved certificate request for ${currentRequest.firstName || ''} ${currentRequest.lastName || ''}`,
+      action: 'APPROVE',
+      module: 'CERTIFICATES',
+      recordId: currentRequest._id,
+      details: `Approved certificate request for ${currentRequest.firstName || ''} ${currentRequest.lastName || ''}`,
     });
 
-    // Lipat sa screen kung saan nandoon ang print features
     if (typeof nav === 'function') {
-      nav('cert-print'); 
+      nav('cert-print');
     }
   } catch (err) {
     console.error('Failed to update certificate status to Approved:', err);
@@ -1821,7 +2165,7 @@ useEffect(() => {
 
     return () => changes.cancel();
   }, [db]);
-// ════════════════════════════════════════════════════════════════
+  // ════════════════════════════════════════════════════════════════
   // 4. EFFECT #2: FEEDBACK & COMPLAINTS POUCHDB LISTENER
   // ════════════════════════════════════════════════════════════════
   useEffect(() => {
@@ -1949,6 +2293,121 @@ const handleSubmitFeedbackAction = async (e) => {
 // ── AUDIT LOGS STATE ──
 const [auditLogs, setAuditLogs] = useState([]);
 
+const [issuanceMeta, setIssuanceMeta] = useState({
+  orNumber: '',
+  ctcNumber: '',
+  ctcName: '',
+  amountPaid: '',
+  ctcAmountPaid: '',
+  dateIssued: new Date().toISOString().split('T')[0],
+  ctcDateIssued: new Date().toISOString().split('T')[0],
+  placeIssued: 'Barangay Bustrac, Nabua, Camarines Sur',
+  purpose: '',
+  remarks: 'No Derogatory Record',
+  validity: '6 months',
+  noDerogatoryRecord: true,
+  secretary: '',
+  punongBarangay: '',
+});
+
+// ── CONFLICT RESOLUTION STATE & LOGIC ──
+const [conflictsList, setConflictsList] = useState([]);
+const [loadingConflicts, setLoadingConflicts] = useState(false);
+
+// Fetch all conflicted documents from PouchDB
+const fetchDatabaseConflicts = async () => {
+  if (typeof db === 'undefined') return;
+  setLoadingConflicts(true);
+  try {
+    const result = await db.allDocs({ include_docs: true, conflicts: true });
+    const detectedConflicts = [];
+
+    for (const row of result.rows) {
+      if (row.doc && row.doc._conflicts && row.doc._conflicts.length > 0) {
+        for (const conflictRev of row.doc._conflicts) {
+          // Fetch the exact content of the conflicting revision
+          const conflictDoc = await db.get(row.id, { rev: conflictRev });
+          detectedConflicts.push({
+            docId: row.id,
+            type: row.doc.type || 'residents',
+            versionA: row.doc,         // Current winning revision
+            versionB: conflictDoc,     // Conflicting revision
+            conflictRev: conflictRev
+          });
+        }
+      }
+    }
+    setConflictsList(detectedConflicts);
+  } catch (err) {
+    console.error('Failed to load database conflicts:', err);
+  } finally {
+    setLoadingConflicts(false);
+  }
+};
+
+// Automatically scan for conflicts when mounting or navigating to conflict screen
+useEffect(() => {
+  if (screen === 'conflicts') {
+    fetchDatabaseConflicts();
+  }
+}, [screen]);
+
+// Resolve Conflict: Keep Version A (Discard conflicting revision B)
+const handleKeepVersionA = async (conflict) => {
+  try {
+    await db.remove(conflict.docId, conflict.conflictRev);
+    alert('✓ Conflict resolved. Retained Version A.');
+    fetchDatabaseConflicts();
+  } catch (err) {
+    console.error('Failed to purge conflict revision:', err);
+    alert('Error resolving conflict.');
+  }
+};
+
+// Resolve Conflict: Keep Version B (Override current doc with revision B)
+const handleKeepVersionB = async (conflict) => {
+  try {
+    const updatedDoc = {
+      ...conflict.versionB,
+      _rev: conflict.versionA._rev // Overwrite main document revision
+    };
+    await db.put(updatedDoc);
+    await db.remove(conflict.docId, conflict.conflictRev);
+    alert('✓ Conflict resolved. Overwritten with Version B.');
+    fetchDatabaseConflicts();
+  } catch (err) {
+    console.error('Failed to resolve with Version B:', err);
+    alert('Error resolving conflict.');
+  }
+};
+
+// Resolve Conflict: Keep Both (Save Version B as a new separate document)
+const handleKeepBoth = async (conflict) => {
+  try {
+    const newDocId = `${conflict.docId}_split_${Date.now()}`;
+    const duplicateDoc = {
+      ...conflict.versionB,
+      _id: newDocId
+    };
+    delete duplicateDoc._rev;
+    
+    await db.put(duplicateDoc);
+    await db.remove(conflict.docId, conflict.conflictRev);
+    alert('✓ Conflict resolved. Saved Version B as a distinct record.');
+    fetchDatabaseConflicts();
+  } catch (err) {
+    console.error('Failed to split conflicting document:', err);
+    alert('Error splitting conflict.');
+  }
+};
+// ── Barangay Settings / Signatories ──
+const [barangaySettings, setBarangaySettings] = useState({
+  signatories: {
+    secretary: 'MRS. MELY M. PRESADO',
+    punongBarangay: 'HON. ANNABELLE E. RULL'
+  }
+});
+
 // ── AUDIT FILTER STATES ──
 const [auditSearch, setAuditSearch] = useState('');
 const [auditModuleFilter, setAuditModuleFilter] = useState('ALL');
@@ -2010,22 +2469,334 @@ const getStatusBadgeClass = (status) => {
       return 'badge-info';
   }
 };
+useEffect(() => {
+  const loadSettings = async () => {
+    try {
+      const doc = await db.get('barangay_settings');
+      setBarangaySettings(doc);
+    } catch (err) {
+      if (err.name === 'not_found') {
+        const defaultSettings = {
+          _id: 'barangay_settings',
+          type: 'barangay_settings',
+          signatories: {
+            secretary: 'MRS. MELY M. PRESADO',
+            punongBarangay: 'HON. ANNABELLE E. RULL'
+          }
+        };
+        await db.put(defaultSettings);
+        setBarangaySettings(defaultSettings);
+      }
+    }
+  };
+  loadSettings();
+}, []);
+const pendingRequestsCount = (issuedCertificates || []).filter(
+  (c) => c.status === 'Under Review' || c.status === 'Pending' || c.step === 1
+).length;
+
+const pendingBlotterCount = blotterList.filter(
+  (b) => b.status === 'Open' || b.status === 'Under Mediation'
+).length;
+
+const activeFeedbackCount = feedbackList.filter(
+  (f) => f.status === 'Pending' || f.status === 'Under Review'
+).length;
+
+const handleSelectCtc = (ctc) => {
+  setIssuanceMeta(prev => ({
+    ...prev,
+    ctcNumber: ctc.ctcNo,
+    ctcName: ctc.ctcName,
+    ctcAmountPaid: ctc.amountPaid,
+    ctcDateIssued: ctc.dateIssued,
+    placeIssued: ctc.placeIssued
+  }));
+  setCtcQuery(ctc.ctcNo);
+  setShowCtcMatches(false);
+};
+
+const handlePrintFormat = (format) => {
+  console.log(`Printing format: ${format}`);
+  window.print();
+};
+
+const handleSaveOnly = async () => {
+  if (!selectedCertificate) return;
+  try {
+    const latestDoc = await db.get(selectedCertificate._id);
+    await db.put({
+      ...latestDoc,
+      issuanceMeta: { ...issuanceMeta, savedAt: new Date().toISOString() },
+    });
+    alert('Transaction saved successfully.');
+  } catch (err) {
+    console.error('Save failed:', err);
+    alert('Failed to save transaction.');
+  }
+};
+
+
+// ── CTC MODAL STATE MANAGEMENT ──
+const [showCtcModal, setShowCtcModal] = useState(false);
+const [ctcForm, setCtcForm] = useState({
+  ctcNo: '',
+  rbiNo: '',
+  ctcName: '',
+  amtPaid: '',
+  dateIssued: new Date().toISOString().split('T')[0],
+  placeIssued: 'Nabua, Camarines Sur',
+  isIssuedByBarangay: true,
+});
+
+// Handle saving new CTC record locally to PouchDB engine
+const handleSaveCtc = async (e) => {
+  e.preventDefault();
+  if (!ctcForm.ctcNo.trim() || !ctcForm.amtPaid.trim()) return;
+
+  try {
+    const ctcPayload = {
+      _id: `ctc_${Date.now()}`,
+      type: 'ctc_record',
+      rbiNo: ctcForm.rbiNo.trim(),
+      ctcNo: ctcForm.ctcNo.trim(),
+      ctcName: ctcForm.ctcName.trim() || 'Resident',
+      amtPaid: ctcForm.amtPaid,
+      dateIssued: ctcForm.dateIssued,
+      isIssuedByBarangay: ctcForm.isIssuedByBarangay,
+      placeIssued: ctcForm.placeIssued,
+      createdAt: new Date().toISOString(),
+    };
+
+    // Save record to local offline database (PouchDB)
+    if (typeof db !== 'undefined' && db.put) {
+      await db.put(ctcPayload);
+    }
+
+    // Auto-close modal and fully reset state
+    setShowCtcModal(false);
+    setCtcForm({
+      rbiNo: '',
+      ctcNo: '',
+      ctcName: '',
+      amtPaid: '',
+      dateIssued: new Date().toISOString().split('T')[0],
+      placeIssued: 'Nabua, Camarines Sur',
+      isIssuedByBarangay: true,
+    });
+
+    alert('✓ CTC Record successfully saved!');
+  } catch (err) {
+    console.error('Failed to save CTC record to local database:', err);
+    alert('Error saving CTC record.');
+  }
+};
+
+// ── BUSINESS CLEARANCE FORM STATE ──
+const [businessForm, setBusinessForm] = useState({
+  // Applicant Information
+  bcIdNo: '0156',
+  lastName: '',
+  firstName: '',
+  middleName: '',
+  contactNo: '',
+  email: '',
+  applicantAddress: '',
+  applicantBgyCityProv: 'Bustrac, Nabua, Camarines Sur',
+  civilStatus: '',
+  occupation: '',
+  nationality: 'Filipino',
+  isFemale: false,
+  remarks: '',
+  photoUrl: null,
+
+  // Business Information
+  regDate: new Date().toISOString().split('T')[0],
+  businessName: '',
+  natureOfBusiness: '',
+  businessCategory: '',
+  typeOfBusiness: '',
+  storeAreaSqm: '',
+  businessAddress: '',
+  businessBgyCityProv: 'BUSTRAC, NABUA, CAMARINES SUR',
+  businessContactNo: '',
+  businessEmail: '',
+
+  // Requirements & Compliance
+  cctvEnabled: false,
+  sanitaryWasteDisposal: false,
+  hasFireExtinguisher: false,
+  hasFireExit: false,
+  sanitaryCompliant: false,
+
+  // Employee Masterlist
+  employeeCount: 0,
+  employeeMasterlistName: '',
+});
+
+
+const [businessTab, setBusinessTab] = useState('page1');
+const [businessMasterlist, setBusinessMasterlist] = useState([]);
+
+const fetchBusinessClearances = async () => {
+  if (typeof db === 'undefined') return;
+  try {
+    const result = await db.allDocs({ include_docs: true });
+    const records = result.rows
+      .map(row => row.doc)
+      .filter(doc => doc && doc.type === 'business_clearance');
+    setBusinessMasterlist(records);
+  } catch (err) {
+    console.error('Failed to fetch business clearances:', err);
+  }
+};
+
+// Auto-fetch records when navigating to business clearance screen
+useEffect(() => {
+  if (screen === 'business_clearance') {
+    fetchBusinessClearances();
+  }
+}, [screen]);
+
+// ── POUCHDB SAVE / UPDATE HANDLER ──
+const handleSaveBusinessClearance = async (e) => {
+  e.preventDefault();
+  
+  if (!businessForm.businessName.trim() || !businessForm.lastName.trim()) {
+    alert('Please complete the required Applicant and Business Name fields.');
+    return;
+  }
+
+  try {
+    // Preserve existing _id and _rev if editing, or create new _id if new record
+    const payload = {
+      ...businessForm,
+      _id: businessForm._id || `bus_clearance_${Date.now()}`,
+      type: 'business_clearance',
+      updatedAt: new Date().toISOString(),
+      createdAt: businessForm.createdAt || new Date().toISOString(),
+    };
+
+    if (typeof db !== 'undefined' && db.put) {
+      await db.put(payload);
+    }
+
+    // Refresh masterlist automatically
+    await fetchBusinessClearances();
+    
+    alert(businessForm._id ? '✓ Business Clearance updated successfully!' : '✓ Business Clearance entry saved successfully!');
+
+    // Reset Form & Set Next ID
+    const nextId = String(parseInt(businessForm.bcIdNo || '156') + 1).padStart(4, '0');
+    setBusinessForm({
+      bcIdNo: nextId,
+      lastName: '',
+      firstName: '',
+      middleName: '',
+      contactNo: '',
+      email: '',
+      applicantAddress: '',
+      applicantBgyCityProv: 'Bustrac, Nabua, Camarines Sur',
+      civilStatus: '',
+      occupation: '',
+      nationality: 'Filipino',
+      isFemale: false,
+      remarks: '',
+      photoUrl: null,
+      regDate: new Date().toISOString().split('T')[0],
+      businessName: '',
+      natureOfBusiness: '',
+      businessCategory: '',
+      typeOfBusiness: '',
+      storeAreaSqm: '',
+      businessAddress: '',
+      businessBgyCityProv: 'BUSTRAC, NABUA, CAMARINES SUR',
+      businessContactNo: '',
+      businessEmail: '',
+      cctvEnabled: false,
+      sanitaryWasteDisposal: false,
+      hasFireExtinguisher: false,
+      hasFireExit: false,
+      sanitaryCompliant: false,
+      employeeCount: 0,
+      employeeMasterlistName: '',
+      orNo: '',
+      clearanceFee: '',
+      garbageFee: '',
+    });
+    setBusinessTab('page1');
+  } catch (err) {
+    console.error('Failed to save/update Business Clearance record:', err);
+    alert('Error saving record to local database.');
+  }
+};
+
+const handleEditBusinessClearance = (record) => {
+  setBusinessForm(record);
+  setBusinessTab('page1');
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+// ── PRINT BUSINESS CLEARANCE STATE & HANDLER ──
+const [selectedBusinessCert, setSelectedBusinessCert] = useState(null);
+const [showBusinessPrintModal, setShowBusinessPrintModal] = useState(false);
+
+const handlePrintBusinessClearance = (record) => {
+  setSelectedBusinessCert(record);
+  setShowBusinessPrintModal(true);
+};
+
+const handleBarangayToggle = (e) => {
+  const isChecked = e.target.checked;
+  setCtcForm((prev) => ({
+    ...prev,
+    isIssuedByBarangay: isChecked,
+    placeIssued: isChecked ? 'Nabua, Camarines Sur' : '',
+  }));
+}; 
+
+const updateCtcField = (field) => (e) => {
+  setCtcForm((prev) => ({ ...prev, [field]: e.target.value }));
+};
   // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
   return (
     <div className="dashboard-shell-container">
-      <div className="app">
+      <div className={`app ${sidebarOpen ? 'sidebar-is-open' : 'sidebar-is-closed'}`}>
         {/* ════════════════ SIDEBAR ════════════════ */}
-        <aside className="sidebar">
+        <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`}>
         {/* Logo / App Name */}
         <div className="sb-logo">
-          <img src={logo} alt="Barangay Bustrac Official Seal" className="sb-logo-img" />
-          <div>
-            <div className="sb-title">Bustrac Hub</div>
-            <div className="sb-sub">{role === 'admin' ? 'Administrator Portal' : 'Staff Portal'}</div>
-          </div>
+        <button
+          type="button"
+          className="sidebar-close-btn"
+          onClick={() => setSidebarOpen((prev) => !prev)}
+          aria-label={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+          title={sidebarOpen ? 'Collapse sidebar' : 'Expand sidebar'}
+        >
+          <svg
+            width="24"
+            height="24"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth={2}
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+            <line x1="9" y1="3" x2="9" y2="21" />
+          </svg>
+        </button>
+        <img src={logo} alt="Barangay Bustrac Official Seal" className="sb-logo-img" />
+        <div>
+          <div className="sb-title">Bustrac Hub</div>
+          <div className="sb-sub">{role === 'admin' ? 'Administrator Portal' : 'Staff Portal'}</div>
         </div>
+      </div>
 
         {/* Navigation */}
         <nav className="sb-nav">
@@ -2048,10 +2819,18 @@ const getStatusBadgeClass = (status) => {
 
           {/* RESIDENTS */}
           <div className="sb-sec">Residents Management</div>
+          <div className="sb-nav-group">
           <button
             type="button"
             className={`nav-btn toggle-parent ${['residents', 'households', 'add-resident'].includes(screen) ? 'active-parent' : ''}`}
-            onClick={() => setIsResidentsOpen(!isResidentsOpen)}
+            onClick={() => {
+              if (!sidebarOpen) {
+                setSidebarOpen(true);
+                setIsResidentsOpen(true);
+              } else {
+                setIsResidentsOpen(!isResidentsOpen);
+              }
+            }}
             aria-expanded={isResidentsOpen}
           >
             <span className="nav-ico">
@@ -2065,65 +2844,65 @@ const getStatusBadgeClass = (status) => {
             <span style={{ flex: 1 }}>Residents Profile</span>
             <span className="submenu-arrow">▶</span>
           </button>
-          {isResidentsOpen && (
-            <div className="sb-submenu-zone">
-              <button
-                className={`nav-btn sub-btn${screen === 'residents' ? ' active' : ''}`}
-                onClick={() => nav('residents')}
-              >
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                    <path d="M14 2v6h6" />
-                    <path d="M12 18v-6" />
-                    <path d="M9 15h6" />
-                  </svg>
-                </span>
-                Manage Ledger
-              </button>
-              <button
-                className={`nav-btn sub-btn${screen === 'households' ? ' active' : ''}`}
-                onClick={() => nav('households')}
-              >
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                    <path d="M9 22V12h6v10" />
-                  </svg>
-                </span>
-                Manage Households
-              </button>
-              <button
-                className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`}
-                onClick={() => nav('add-resident')}
-              >
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 5v14M5 12h14" />
-                  </svg>
-                </span>
-                Add Resident
-              </button>
-            </div>
-          )}
+
+          <div className="sb-submenu-zone">
+            <button
+              className={`nav-btn sub-btn${screen === 'residents' ? ' active' : ''}`}
+              onClick={() => nav('residents')}
+            >
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 18v-6" />
+                  <path d="M9 15h6" />
+                </svg>
+              </span>
+              Manage Ledger
+            </button>
+            <button
+              className={`nav-btn sub-btn${screen === 'households' ? ' active' : ''}`}
+              onClick={() => nav('households')}
+            >
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  <path d="M9 22V12h6v10" />
+                </svg>
+              </span>
+              Manage Households
+            </button>
+            <button
+              className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`}
+              onClick={() => nav('add-resident')}
+            >
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 5v14M5 12h14" />
+                </svg>
+              </span>
+              Add Resident
+            </button>
+          </div>
+        </div>
+          
 
           {/* CERTIFICATES */}
           <div className="sb-sec">Certificates</div>
-          <button
-            className={`nav-btn${screen === 'cert-req' ? ' active' : ''}`}
-            onClick={() => nav('cert-req')}
-          >
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M12 18v-6" />
-                <path d="M9 15h6" />
-              </svg>
-            </span>
-            Request & Approval
-            <span className="nb nb-amber">3</span>
-          </button>
+          <button className={`nav-btn${screen === 'cert-req' ? ' active' : ''}`} onClick={() => nav('cert-req')}>
+          <span className="nav-ico">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+              <path d="M14 2v6h6" />
+              <path d="M12 18v-6" />
+              <path d="M9 15h6" />
+            </svg>
+          </span>
+          Request & Approval 
+          {pendingRequestsCount > 0 && (
+            <span className="nb nb-amber">{pendingRequestsCount}</span>
+          )}
+        </button>
           <button
             className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`}
             onClick={() => nav('cert-print')}
@@ -2140,12 +2919,47 @@ const getStatusBadgeClass = (status) => {
             Issuance & Print
           </button>
 
+          <button className={`nav-btn${screen === 'brgy_clearance' ? ' active' : ''}`} onClick={() => nav('brgy_clearance')}>
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <path d="M14 2v6h6" />
+                <path d="M12 18v-6" />
+                <path d="M9 15h6" />
+              </svg>
+            </span>
+            Barangay Clearance (Individual)
+          </button>
+
+          <button className={`nav-btn${screen === 'business_clearance' ? ' active' : ''}`} onClick={() => nav('business_clearance')}>
+          <span className="nav-ico">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <path d="M9 22V12h6v10" />
+              <path d="M8 6h.01" />
+              <path d="M16 6h.01" />
+              <path d="M12 6h.01" />
+              <path d="M12 10h.01" />
+              <path d="M8 10h.01" />
+              <path d="M16 10h.01" />
+            </svg>
+          </span>
+          Business Clearance
+        </button>
+
           {/* AID DISTRIBUTION */}
           <div className="sb-sec">Aid Distribution</div>
           <button
             type="button"
             className={`nav-btn toggle-parent ${['programs', 'aid-encode', 'aid-logs', 'add-beneficiary'].includes(screen) ? 'active-parent' : ''}`}
-            onClick={() => setIsAidOpen(!isAidOpen)}
+            onClick={() => {
+              if (!sidebarOpen) {
+                setSidebarOpen(true);
+                setIsAidOpen(true);
+              } else {
+                setIsAidOpen(!isAidOpen);
+              }
+            }}
             aria-expanded={isAidOpen}
           >
             <span className="nav-ico">
@@ -2240,7 +3054,9 @@ const getStatusBadgeClass = (status) => {
               </svg>
             </span>
             Manage Blotter
-            <span className="nb nb-red">2</span>
+            {pendingBlotterCount > 0 && (
+              <span className="nb nb-red">{pendingBlotterCount}</span>
+            )}
           </button>
           {role === 'staff' && (
             <button
@@ -2280,7 +3096,9 @@ const getStatusBadgeClass = (status) => {
               </svg>
             </span>
             Feedback
-            <span className="nb nb-red">5</span>
+            {activeFeedbackCount > 0 && (
+              <span className="nb nb-red">{activeFeedbackCount}</span>
+            )}
           </button>
 
           {/* ADMIN-ONLY SECTION */}
@@ -2375,7 +3193,7 @@ const getStatusBadgeClass = (status) => {
           />
         </div>
         </aside>
-
+        
         {/* ════════════════ MAIN CONTENT ════════════════ */}
         <div className="main">
 
@@ -2442,12 +3260,7 @@ const getStatusBadgeClass = (status) => {
             {screen === 'dashboard' && (
               <div className="screen active">
                 {/* ── HEADER PANEL ── */}
-                <div className="ph">
-                  <div>
-                    <div className="pt">Barangay Bustrac Hub Dashboard</div>
-                    <div className="ps">Real-time community metrics overview and systems operation engine</div>
-                  </div>
-                </div>
+                
 
                 {/* =============================================
                     📈 1. DYNAMIC METRICS CARDS GRID (SVG Icons)
@@ -3005,40 +3818,6 @@ const getStatusBadgeClass = (status) => {
                 ════════════════════════════════════════ */}
             {screen === 'residents' && (
               <div className="screen active">
-                {/* =============================================
-                    📌 HEADER PANEL (Modern + Clean)
-                    ============================================= */}
-                <div className="ph">
-                  <div>
-                    <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                        <circle cx="9" cy="7" r="4" />
-                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                      </svg>
-                      Resident Masterlist
-                    </div>
-                    <div className="ps">
-                      <span style={{ color: 'var(--muted)' }}>1,248 registered residents</span>
-                      <span style={{ color: 'var(--hint)' }}> · Barangay Bustrac</span>
-                    </div>
-                  </div>
-                  <button
-                    className="btn btn-p"
-                    onClick={() => nav('add-resident')}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                    Add Resident
-                  </button>
-                </div>
-
-                {/* =============================================
-                    🔍 SEARCH & FILTER BAR (Glass-Morphism)
-                    ============================================= */}
                 <div
                   className="tw"
                   style={{
@@ -3056,7 +3835,7 @@ const getStatusBadgeClass = (status) => {
                         <path d="M21 21l-4.35-4.35" />
                       </svg>
                       <input
-                        placeholder="Search by name, purok, or ID..."
+                        placeholder="Search by name, purok, Resident ID, or RBI ID..."
                         value={searchTerm}
                         onChange={(e) => setSearchTerm(e.target.value)}
                         style={{ color: 'var(--text)' }}
@@ -3247,10 +4026,13 @@ const getStatusBadgeClass = (status) => {
                             }}
                             onClick={() => {
                               const selectedData = residentsList.filter(r => selectedResidents.includes(r.id));
-                              const csvHeaders = "Resident ID,Name,Purok,Age,Civil Status,Voter\n";
+                              const csvHeaders = "Resident ID,RBI ID,Name,Purok,Age,Civil Status,Voter\n";
                               const csvRows = selectedData
-                                .map(r => `"${r.id}","${r.name}","${r.purok}",${r.age},"${r.civilStatus}","${r.voter ? 'Yes' : 'No'}"`)
-                                .join("\n");
+                              .map(
+                                (r) =>
+                                  `"${r.id}","${r.rbiId || ''}","${r.name}","${r.purok}",${r.age},"${r.civilStatus}","${r.voter ? 'Yes' : 'No'}"`
+                              )
+                              .join("\n");
                               const blob = new Blob([csvHeaders + csvRows], { type: 'text/csv;charset=utf-8;' });
                               const url = URL.createObjectURL(blob);
                               const link = document.createElement("a");
@@ -3305,6 +4087,7 @@ const getStatusBadgeClass = (status) => {
                           />
                         </th>
                         <th>Resident ID</th>
+                        <th>RBI ID</th>
                         <th>Full Name</th>
                         <th>Purok</th>
                         <th>Age</th>
@@ -3346,6 +4129,8 @@ const getStatusBadgeClass = (status) => {
 
                             {/* Resident ID */}
                             <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{res.id}</td>
+
+                            <td style={{ fontFamily: 'var(--mono)' }}> {res.rbiId || '—'} </td>
 
                             {/* Full Name */}
                             <td>
@@ -3475,235 +4260,375 @@ const getStatusBadgeClass = (status) => {
             {/* ════════════════════════════════════════
                 SCREEN: ADD RESIDENT
                 ════════════════════════════════════════ */}
-            {screen === 'add-resident' && (
-              <div className="screen active">
-                <div className="ph">
-                  <div>
-                    <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <path d="M14 2v6h6" />
-                        <path d="M12 18v-6" />
-                        <path d="M9 15h6" />
-                      </svg>
-                      Add New Resident
-                    </div>
-                    <div className="ps">Fill in the resident's complete profile</div>
+                {screen === 'add-resident' && (
+                  <div className="screen active">
+                    <form onSubmit={submitAddResident}>
+                      <div
+                        className="fp"
+                        style={{
+                          background: 'var(--surface, rgba(26, 29, 36, 0.4))',
+                          backdropFilter: 'blur(8px)',
+                          border: '1px solid var(--border, rgba(79, 142, 247, 0.2))',
+                          padding: '24px',
+                          borderRadius: '12px',
+                        }}
+                      >
+                        <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '24px' }}>
+                          
+                          {/* ── LEFT SIDEBAR: PHOTO & BARANGAY STATUS ── */}
+                          <div style={{ borderRight: '1px solid var(--border)', paddingRight: '20px' }}>
+                            <div
+                              style={{
+                                width: '100%',
+                                height: '180px',
+                                border: '2px dashed var(--border)',
+                                borderRadius: '8px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                marginBottom: '12px',
+                                background: 'var(--surface2, #111)',
+                                overflow: 'hidden',
+                              }}
+                            >
+                              {residentForm.photoUrl ? (
+                                <img src={residentForm.photoUrl} alt="Resident" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                              ) : (
+                                <span style={{ color: 'var(--muted)', fontSize: '12px' }}>Picture (.Jpg)</span>
+                              )}
+                            </div>
+
+                            <button
+                              type="button"
+                              className="btn btn-g"
+                              style={{ width: '100%', marginBottom: '16px' }}
+                              onClick={() => {
+                                const samplePhoto = prompt('Enter Image URL / Base64 String:');
+                                if (samplePhoto) updateResidentField('photoUrl', samplePhoto);
+                              }}
+                            >
+                              📷 Take / Set Photo
+                            </button>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={residentForm.isBarangayOfficial}
+                                  onChange={(e) => updateResidentField('isBarangayOfficial', e.target.checked)}
+                                />
+                                Barangay Official
+                              </label>
+
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: '#ef4444' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={residentForm.isDeceased}
+                                  onChange={(e) => updateResidentField('isDeceased', e.target.checked)}
+                                />
+                                Mark as Deceased
+                              </label>
+                            </div>
+                          </div>
+
+                          {/* ── MAIN FORM CONTENT (RBI SECTIONS) ── */}
+                          <div>
+                            {/* Header / ID Info */}
+                            <div className="fg3" style={{ marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">RBI ID NO. *</label>
+                                <input
+                                  type="text"
+                                  className="fc"
+                                  required
+                                  placeholder="05-17-23-005-00000868"
+                                  value={residentForm.rbiNo}
+                                  onChange={(e) => updateResidentField('rbiNo', e.target.value.toUpperCase())}
+                                />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">HOUSEHOLD NUMBER</label>
+                                <input
+                                  type="text"
+                                  className="fc"
+                                  placeholder="HH-2026-001"
+                                  value={residentForm.householdNo}
+                                  onChange={(e) => updateResidentField('householdNo', e.target.value)}
+                                />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">FILE DATE UPDATED</label>
+                                <input
+                                  type="date"
+                                  className="fc"
+                                  value={residentForm.fileDateUpdated}
+                                  onChange={(e) => updateResidentField('fileDateUpdated', e.target.value)}
+                                />
+                              </div>
+                            </div>
+
+                            {/* Full Name Fields */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 120px 120px', gap: '10px', marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">LAST NAME *</label>
+                                <input type="text" className="fc" required value={residentForm.lastName} onChange={(e) => updateResidentField('lastName', e.target.value)} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">FIRST NAME *</label>
+                                <input type="text" className="fc" required value={residentForm.firstName} onChange={(e) => updateResidentField('firstName', e.target.value)} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">MIDDLE NAME</label>
+                                <input type="text" className="fc" value={residentForm.middleName} onChange={(e) => updateResidentField('middleName', e.target.value)} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">SUFFIX</label>
+                                <input type="text" className="fc" placeholder="Jr / Sr / III" value={residentForm.suffix} onChange={(e) => updateResidentField('suffix', e.target.value)} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">ALIAS</label>
+                                <input type="text" className="fc" value={residentForm.alias} onChange={(e) => updateResidentField('alias', e.target.value)} />
+                              </div>
+                            </div>
+
+                            {/* Birthdate, Age, Sex, LGBTQIA+ */}
+                            <div className="fg3" style={{ marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">BIRTHDATE *</label>
+                                <input
+                                  type="date"
+                                  className="fc"
+                                  required
+                                  value={residentForm.birthdate}
+                                  onChange={(e) => {
+                                    const bdate = e.target.value;
+                                    const calculatedAge = bdate ? Math.floor((new Date() - new Date(bdate)) / 31557600000) : 0;
+                                    updateResidentField('birthdate', bdate);
+                                    updateResidentField('age', calculatedAge > 0 ? calculatedAge : 0);
+                                  }}
+                                />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">AGE</label>
+                                <input type="number" className="fc" readOnly value={residentForm.age} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">BIRTH PLACE</label>
+                                <input type="text" className="fc" value={residentForm.birthPlace} onChange={(e) => updateResidentField('birthPlace', e.target.value)} />
+                              </div>
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">SEX *</label>
+                                <select className="fc" value={residentForm.sex} onChange={(e) => updateResidentField('sex', e.target.value)}>
+                                  <option value="Male">Male</option>
+                                  <option value="Female">Female</option>
+                                </select>
+                              </div>
+                              <div className="fg" style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '20px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={residentForm.isLgbtqia}
+                                    onChange={(e) => updateResidentField('isLgbtqia', e.target.checked)}
+                                  />
+                                  LGBTQIA+
+                                </label>
+                                {residentForm.isLgbtqia && (
+                                  <input
+                                    type="text"
+                                    className="fc"
+                                    placeholder="If Yes, Pls. Specify..."
+                                    value={residentForm.lgbtqiaSpecification}
+                                    onChange={(e) => updateResidentField('lgbtqiaSpecification', e.target.value)}
+                                  />
+                                )}
+                              </div>
+                            </div>
+
+                            {/* Civil Status, Citizenship, Religion, Tribe */}
+                            <div className="fg2" style={{ marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">CIVIL STATUS *</label>
+                                <select className="fc" value={residentForm.civilStatus} onChange={(e) => updateResidentField('civilStatus', e.target.value)}>
+                                  <option value="Single">Single</option>
+                                  <option value="Married">Married</option>
+                                  <option value="Widowed">Widowed</option>
+                                  <option value="Separated">Separated</option>
+                                  <option value="Divorced">Divorced</option>
+                                </select>
+                              </div>
+                              <div className="fg">
+                                <label className="fl">CITIZENSHIP</label>
+                                <input type="text" className="fc" value={residentForm.citizenship} onChange={(e) => updateResidentField('citizenship', e.target.value)} />
+                              </div>
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">RELIGION</label>
+                                <input type="text" className="fc" value={residentForm.religion} onChange={(e) => updateResidentField('religion', e.target.value)} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">INDIGENOUS TRIBE</label>
+                                <input type="text" className="fc" value={residentForm.indigenousTribe} onChange={(e) => updateResidentField('indigenousTribe', e.target.value)} />
+                              </div>
+                            </div>
+
+                            {/* Physical Attributes */}
+                            <div className="fg3" style={{ marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">WEIGHT (kg)</label>
+                                <input type="number" step="0.1" className="fc" value={residentForm.weightKg} onChange={(e) => updateResidentField('weightKg', e.target.value)} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">HEIGHT (cm)</label>
+                                <input type="number" step="0.1" className="fc" value={residentForm.heightCm} onChange={(e) => updateResidentField('heightCm', e.target.value)} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">BLOOD TYPE</label>
+                                <select className="fc" value={residentForm.bloodType} onChange={(e) => updateResidentField('bloodType', e.target.value)}>
+                                  <option value="">-- Select --</option>
+                                  <option value="A+">A+</option>
+                                  <option value="A-">A-</option>
+                                  <option value="B+">B+</option>
+                                  <option value="B-">B-</option>
+                                  <option value="AB+">AB+</option>
+                                  <option value="AB-">AB-</option>
+                                  <option value="O+">O+</option>
+                                  <option value="O-">O-</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            {/* Family Roles & Household Status */}
+                            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', background: 'var(--surface2)', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                                <input type="checkbox" checked={residentForm.isHouseholdHead} onChange={(e) => updateResidentField('isHouseholdHead', e.target.checked)} />
+                                Head of Household
+                              </label>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                                <input type="checkbox" checked={residentForm.isFamilyHead} onChange={(e) => updateResidentField('isFamilyHead', e.target.checked)} />
+                                Head of Family
+                              </label>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                                <input type="checkbox" checked={residentForm.isSoloParent} onChange={(e) => updateResidentField('isSoloParent', e.target.checked)} />
+                                Solo Parent
+                              </label>
+                            </div>
+                            
+                            {/* Relationship to Household Head */}
+                            <div className="fg" style={{ marginBottom: '16px' }}>
+                              <label className="fl">RELATIONSHIP TO HOUSEHOLD HEAD</label>
+                              <input
+                                type="text"
+                                className="fc"
+                                placeholder="e.g. Spouse, Son, Daughter, Self"
+                                value={residentForm.relationshipToHouseholdHead}
+                                onChange={(e) => updateResidentField('relationshipToHouseholdHead', e.target.value)}
+                              />
+                            </div>
+
+                            {/* Residency Information */}
+                            <div style={{ background: 'var(--surface2)', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
+                              <div style={{ display: 'flex', gap: '16px', marginBottom: '10px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                                  <input
+                                    type="checkbox"
+                                    checked={residentForm.isBarangayResident}
+                                    onChange={(e) => updateResidentField('isBarangayResident', e.target.checked)}
+                                  />
+                                  Resident of Barangay?
+                                </label>
+                              </div>
+                              <div className="fg2">
+                                <div className="fg">
+                                  <label className="fl">RESIDENT SINCE WHEN?</label>
+                                  <input
+                                    type="date"
+                                    className="fc"
+                                    value={residentForm.residentSince}
+                                    onChange={(e) => updateResidentField('residentSince', e.target.value)}
+                                  />
+                                </div>
+                                <div className="fg">
+                                  <label className="fl">STATUS OF RESIDENCY</label>
+                                  <select
+                                    className="fc"
+                                    value={residentForm.residencyStatus}
+                                    onChange={(e) => updateResidentField('residencyStatus', e.target.value)}
+                                  >
+                                    <option value="Permanent">Permanent</option>
+                                    <option value="Temporary">Temporary</option>
+                                    <option value="Transient">Transient</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Voter Registration Info */}
+                            <div style={{ background: 'var(--surface2)', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
+                              <div style={{ display: 'flex', gap: '16px', marginBottom: '10px' }}>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                                  <input type="checkbox" checked={residentForm.isRegisteredVoter} onChange={(e) => updateResidentField('isRegisteredVoter', e.target.checked)} />
+                                  Registered Voter?
+                                </label>
+                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer' }}>
+                                  <input type="checkbox" checked={residentForm.isVotingLocally} onChange={(e) => updateResidentField('isVotingLocally', e.target.checked)} />
+                                  Voting Here?
+                                </label>
+                              </div>
+                              <div className="fg2">
+                                <div className="fg">
+                                  <label className="fl">PRECINCT NO.</label>
+                                  <input type="text" className="fc" value={residentForm.precinctNo} onChange={(e) => updateResidentField('precinctNo', e.target.value)} />
+                                </div>
+                                <div className="fg">
+                                  <label className="fl">VOTING IN OTHER PLACE? (Indicate Place)</label>
+                                  <input type="text" className="fc" value={residentForm.votingOtherPlace} onChange={(e) => updateResidentField('votingOtherPlace', e.target.value)} />
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Address & Contact Info */}
+                            <div className="fg2" style={{ marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">CONTACT NOS.</label>
+                                <input type="text" className="fc" placeholder="09XX-XXX-XXXX" value={residentForm.contactNo} onChange={(e) => updateResidentField('contactNo', e.target.value)} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">EMAIL ADD</label>
+                                <input type="email" className="fc" value={residentForm.email} onChange={(e) => updateResidentField('email', e.target.value)} />
+                              </div>
+                            </div>
+
+                            <div className="fg" style={{ marginBottom: '16px' }}>
+                              <label className="fl">ST., LOT NO., SUBD., PUROK/ZONE</label>
+                              <input type="text" className="fc" placeholder="Purok 3, Zone 1" value={residentForm.purokZoneAddress} onChange={(e) => updateResidentField('purokZoneAddress', e.target.value)} />
+                            </div>
+
+                            <div className="fg" style={{ marginBottom: '20px' }}>
+                              <label className="fl">ADDRESS OUTSIDE IN THIS BARANGAY</label>
+                              <input type="text" className="fc" value={residentForm.addressOutsideBarangay} onChange={(e) => updateResidentField('addressOutsideBarangay', e.target.value)} />
+                            </div>
+
+                            {/* Action Buttons */}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
+                              <button type="button" className="btn btn-g" onClick={() => nav('residents')}>
+                                Cancel
+                              </button>
+                              <button type="submit" className="btn btn-p">
+                                💾 Save Resident Record
+                              </button>
+                            </div>
+
+                          </div>
+                        </div>
+                      </div>
+                    </form>
                   </div>
-                  <button
-                    className="btn btn-g"
-                    onClick={() => nav('residents')}
-                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                  >
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M19 12H5" />
-                      <path d="M12 19l-7-7 7-7" />
-                    </svg>
-                    Back
-                  </button>
-                </div>
-
-                {/* =============================================
-                    📋 FORM PANEL (Glass-Morphism + SVG Icons)
-                    ============================================= */}
-                <form onSubmit={role === 'admin' ? submitAddResident : (e) => e.preventDefault()}>
-                  <div className="fp" style={{
-                    background: 'rgba(26, 29, 36, 0.4)',
-                    backdropFilter: 'blur(8px)',
-                    border: '1px solid rgba(79, 142, 247, 0.2)'
-                  }}>
-                    <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      Personal Information
-                    </div>
-
-                    {/* Name Fields (3-Column Grid) */}
-                    <div className="fg3">
-                      <div className="fg">
-                        <label className="fl">First Name</label>
-                        <input
-                          className="fc"
-                          placeholder="e.g. Maria"
-                          required
-                          value={role === 'admin' ? residentForm.firstName : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('firstName', e.target.value) : undefined}
-                        />
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Middle Name</label>
-                        <input
-                          className="fc"
-                          placeholder="e.g. Dela Cruz"
-                          required
-                          value={role === 'admin' ? residentForm.middleName : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('middleName', e.target.value) : undefined}
-                        />
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Last Name</label>
-                        <input
-                          className="fc"
-                          placeholder="e.g. Santos"
-                          required
-                          value={role === 'admin' ? residentForm.lastName : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('lastName', e.target.value) : undefined}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Birthdate & Gender (2-Column Grid) */}
-                    <div className="fg2">
-                      <div className="fg">
-                        <label className="fl">Birthdate</label>
-                        <input
-                          className="fc"
-                          type="date"
-                          required
-                          value={role === 'admin' ? residentForm.birthdate : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('birthdate', e.target.value) : undefined}
-                        />
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Gender</label>
-                        <select
-                          className="fc"
-                          required
-                          value={role === 'admin' ? residentForm.gender : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('gender', e.target.value) : undefined}
-                        >
-                          <option value="">-- Select --</option>
-                          <option value="Male">Male</option>
-                          <option value="Female">Female</option>
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Civil Status & Contact (2-Column Grid) */}
-                    <div className="fg2">
-                      <div className="fg">
-                        <label className="fl">Civil Status</label>
-                        <select
-                          className="fc"
-                          required
-                          value={role === 'admin' ? residentForm.civilStatus : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('civilStatus', e.target.value) : undefined}
-                        >
-                          <option value="">-- Select --</option>
-                          <option value="Single">Single</option>
-                          <option value="Married">Married</option>
-                          <option value="Widowed">Widowed</option>
-                          <option value="Separated">Separated</option>
-                        </select>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Contact Number</label>
-                        <input
-                          className="fc"
-                          placeholder="09XX-XXX-XXXX"
-                          required
-                          value={role === 'admin' ? residentForm.contact : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('contact', e.target.value) : undefined}
-                        />
-                      </div>
-                    </div>
-
-                    {/* Purok & Household (2-Column Grid) */}
-                    <div className="fg2">
-                      <div className="fg">
-                        <label className="fl">Purok</label>
-                        <select
-                          className="fc"
-                          required
-                          value={role === 'admin' ? residentForm.purok : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('purok', e.target.value) : undefined}
-                        >
-                          <option value="">-- Select --</option>
-                          <option value="Purok 1">Purok 1</option>
-                          <option value="Purok 2">Purok 2</option>
-                          <option value="Purok 3">Purok 3</option>
-                          <option value="Purok 4">Purok 4</option>
-                          <option value="Purok 5">Purok 5</option>
-                        </select>
-                      </div>
-                      <div className="fg">
-                        <label className="fl">Household</label>
-                        <select
-                          className="fc"
-                          required
-                          value={role === 'admin' ? residentForm.household : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('household', e.target.value) : undefined}
-                        >
-                          <option value="">-- Select Household --</option>
-                          {householdsList.map((hh) => {
-                            const lastName = hh.head.split(',')[0].trim();
-                            return (
-                              <option key={hh.id} value={hh.id}>
-                                {hh.id} — {lastName} Family ({hh.purok})
-                              </option>
-                            );
-                          })}
-                        </select>
-                      </div>
-                    </div>
-
-                    {/* Voter Checkbox */}
-                    <div className="fg">
-                      <label style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        fontSize: '13px',
-                        cursor: 'pointer'
-                      }}>
-                        <input
-                          type="checkbox"
-                          checked={role === 'admin' ? residentForm.voter : undefined}
-                          onChange={role === 'admin' ? (e) => updateResidentField('voter', e.target.checked) : undefined}
-                        />
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M9 12l2 2 4-4" />
-                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                        </svg>
-                        Registered Voter
-                      </label>
-                    </div>
-                  </div>
-
-                  {/* Offline Mode Notice */}
-                  <div className="note note-i" style={{ marginBottom: '14px' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9 9 9 0 0 1 9 9z" />
-                      <path d="M12 12L12 12.01" />
-                      <path d="M12 6v6l4 4" />
-                    </svg>
-                    <strong>Offline mode ready:</strong> Record saved to local CouchDB and synced on reconnect.
-                  </div>
-
-                  {/* Action Buttons */}
-                  <div className="fa">
-                    <button type="submit" className="btn btn-p" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M19 21H5" />
-                        <path d="M19 3H5" />
-                        <path d="M19 12H5" />
-                        <path d="M5 21V3" />
-                      </svg>
-                      Save Resident
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-g"
-                      onClick={() => nav('residents')}
-                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 15l-6-6-6 6" />
-                      </svg>
-                      Cancel
-                    </button>
-                  </div>
-                </form>
-              </div>
-            )}
+                )}
             {/* ════════════════════════════════════════
                 SCREEN: VIEW RESIDENT PROFILE
                 ════════════════════════════════════════ */}
@@ -3726,13 +4651,7 @@ const getStatusBadgeClass = (status) => {
 
               return (
                 <div className="screen active">
-                  <div className="ph">
-                    <div>
-                      <div className="pt">👤 Resident Profile Card</div>
-                      <div className="ps">Personal dossier file index for {res.id}</div>
-                    </div>
-                    <button className="btn btn-g" onClick={() => nav('residents')}>← Back to Masterlist</button>
-                  </div>
+                  
 
                   <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr', gap: '20px' }}>
                     
@@ -3837,20 +4756,6 @@ const getStatusBadgeClass = (status) => {
                 ════════════════════════════════════════ */}
                 {screen === 'edit-resident' && (
                   <div className="screen active">
-                    <div className="ph">
-                      <div>
-                        <div className="pt">Edit Resident Record</div>
-                        <div className="ps">
-                          Updating record for ID: {' '}
-                          <strong style={{ color: '#3b82f6', fontFamily: 'var(--mono)' }}>
-                            {selectedResidentId}
-                          </strong>
-                        </div>
-                      </div>
-                      <button className="btn btn-g" onClick={() => nav('residents')}>
-                        ← Back to List
-                      </button>
-                    </div>
 
                     {/* RESIDENT DATA UPDATE FORM */}
                     <form onSubmit={handleUpdateResidentChanges}>
@@ -3939,14 +4844,6 @@ const getStatusBadgeClass = (status) => {
            
             {screen === 'add-household' && (
               <div className="screen active">
-                <div className="ph">
-                  <div>
-                    <div className="pt">Register New Household</div>
-                    <div className="ps">Create a primary household record for Barangay Bustrac</div>
-                  </div>
-                  <button className="btn btn-g" onClick={() => nav('households')}>← Back to List</button>
-                </div>
-
                 <div className="tw" style={{ padding: '24px', maxWidth: '600px', margin: '0 auto' }}>
                   <form onSubmit={role === 'admin' ? submitAddHousehold : (e) => e.preventDefault()}>
                     <div style={{ marginBottom: '16px' }}>
@@ -4001,19 +4898,10 @@ const getStatusBadgeClass = (status) => {
                 ════════════════════════════════════════ */}
             {screen === 'households' && (
             <div className="screen active">
-              <div className="ph">
-                <div>
-                  <div className="pt">Manage Households</div>
-                  <div className="ps">
-                  {householdsList ? householdsList.length : 0} households registered
-                </div>
-                </div>
-                <button className="btn btn-p" onClick={() => nav('add-household')}>＋ Add Household </button>
-              </div>
               <div className="tw">
                 <div className="tb">
                   <div className="sb-box">
-                    <span>🔍</span>
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" > <circle cx="11" cy="11" r="7" /> <path d="m21 21-4.3-4.3" /> </svg>
                     <input 
                           type="text"
                           className="fc" 
@@ -4104,106 +4992,255 @@ const getStatusBadgeClass = (status) => {
                 SCREEN: VIEW HOUSEHOLD PROFILE
                 ════════════════════════════════════════ */}
             {screen === 'view-household' && (() => {
-              // Hahanapin ang tugmang household sa state array
-              const hh = householdsList.find(h => h.id === selectedHouseholdId);
-              
-              // Awtomatikong kukunin ang lahat ng residente na kabilang sa household na ito
-              const familyMembers = residentsList.filter(r => r.household === selectedHouseholdId);
+            const hh = householdsList.find(h => h.id === selectedHouseholdId);
+            const familyMembers = residentsList.filter(r => r.household === selectedHouseholdId);
 
-              if (!hh) {
-                return (
-                  <div className="screen active">
-                    <div className="ph">
-                      <div className="pt">Household Not Found</div>
-                      <button className="btn btn-g" onClick={() => nav('households')}>← Back</button>
-                    </div>
-                    <div className="card">Mangyaring pumili ng valid na Household mula sa listahan.</div>
-                  </div>
-                );
-              }
-
+            if (!hh) {
               return (
                 <div className="screen active">
+                  {/* Error Header with SVG */}
                   <div className="ph">
                     <div>
-                      <div className="pt">🏡 Household Profile Dashboard</div>
-                      <div className="ps">Detailed management index for {hh.id}</div>
+                      <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                          <path d="M12 9v4" />
+                          <path d="M12 17h.01" />
+                        </svg>
+                        Household Not Found
+                      </div>
                     </div>
-                    <button className="btn btn-g" onClick={() => nav('households')}>← Back to List</button>
+                    <button
+                      className="btn btn-g"
+                      onClick={() => nav('households')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M19 12H5" />
+                        <path d="M12 19l-7-7 7-7" />
+                      </svg>
+                      Back to Households
+                    </button>
                   </div>
 
-                  <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
-                    
-                    {/* KALIWANG BAHAGI: HOUSEHOLD METADATA */}
-                    <div className="card" style={{ height: 'fit-content' }}>
-                      <div style={{ fontWeight: 'bold', marginBottom: '14px', color: '#3b82f6', borderBottom: '1px solid #334155', paddingBottom: '6px' }}>
-                        📍 Registration Specs
+                  {/* Error Card with Glass-Morphism */}
+                  <div style={{
+                    background: 'rgba(79, 41, 59, 0.4)',
+                    border: '1px solid rgba(248, 113, 113, 0.3)',
+                    borderRadius: '8px',
+                    padding: '24px',
+                    textAlign: 'center',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    alignItems: 'center',
+                    gap: '12px',
+                    backdropFilter: 'blur(8px)',
+                    margin: '20px auto',
+                    maxWidth: '400px'
+                  }}>
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#fca5a5" strokeWidth="2">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                      <path d="M12 9v4" />
+                      <path d="M12 17h.01" />
+                    </svg>
+                    <div>
+                      <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#fca5a5', marginBottom: '4px' }}>
+                        No Household Found
                       </div>
-                      <div style={{ marginBottom: '10px', fontSize: '13px' }}>
-                        <span style={{ color: 'var(--muted)' }}>Household Head:</span>
-                        <div style={{ fontWeight: 'bold', fontSize: '15px', marginTop: '2px' }}>{hh.head}</div>
-                      </div>
-                      <div style={{ marginBottom: '10px', fontSize: '13px' }}>
-                        <span style={{ color: 'var(--muted)' }}>Barangay Address:</span>
-                        <div style={{ fontWeight: 'bold', marginTop: '2px' }}>{hh.address}</div>
-                      </div>
-                      <div style={{ marginBottom: '10px', fontSize: '13px' }}>
-                        <span style={{ color: 'var(--muted)' }}>Jurisdiction Area:</span>
-                        <div><span className={`badge ${hh.purokClass}`} style={{ marginTop: '2px' }}>{hh.purok}</span></div>
-                      </div>
-                      <div style={{ fontSize: '13px' }}>
-                        <span style={{ color: 'var(--muted)' }}>Declared Members Count:</span>
-                        <div style={{ fontWeight: 'bold', color: '#eab308' }}>{hh.members} individuals</div>
+                      <div style={{ fontSize: '13px', color: '#94a3b8' }}>
+                        Please select a valid Household from the list.
                       </div>
                     </div>
-
-                    {/* KANANG BAHAGI: LIVE MEMBER ROSTER LIST */}
-                    <div className="card">
-                      <div style={{ fontWeight: 'bold', marginBottom: '12px', color: '#10b981', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                        <span>👨‍👩‍👧‍👦 Dynamic Family Roster ({familyMembers.length})</span>
-                        <span style={{ fontSize: '11px', fontWeight: 'normal', color: 'var(--muted)' }}>Cross-referenced from Resident Registry</span>
-                      </div>
-
-                      {familyMembers.length === 0 ? (
-                        <div style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)', fontStyle: 'italic', fontSize: '13px' }}>
-                          Walang indibidwal na residente ang kasalukuyang naka-link sa Household Code na ito.
-                        </div>
-                      ) : (
-                        <div className="tw">
-                          <table style={{ width: '100%' }}>
-                            <thead>
-                              <tr>
-                                <th>Resident ID</th>
-                                <th>Full Name</th>
-                                <th>Age</th>
-                                <th>Civil Status</th>
-                                <th>Voter status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {familyMembers.map((member) => (
-                                <tr key={member.id} style={{ cursor: 'pointer' }} onClick={() => { setSelectedResidentId(member.id); nav('view-resident'); }}>
-                                  <td style={monoMuted}>{member.id}</td>
-                                  <td><strong>{member.name}</strong></td>
-                                  <td>{member.age}</td>
-                                  <td>{member.civilStatus}</td>
-                                  <td>
-                                    <span className={`badge ${member.voter ? 'g' : 'gr'}`}>
-                                      {member.voter ? 'Registered' : 'Non-Voter'}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </div>
-
                   </div>
                 </div>
               );
-            })()}
+            }
+
+            return (
+              <div className="screen active">
+                {/* Header with SVG */}
+                <div className="ph">
+                  <div>
+                    <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        <path d="M9 22V12h6v10" />
+                      </svg>
+                      Household Profile Dashboard
+                    </div>
+                    <div className="ps">Detailed management index for {hh.id}</div>
+                  </div>
+                  <button
+                    className="btn btn-g"
+                    onClick={() => nav('households')}
+                    style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                  >
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M19 12H5" />
+                      <path d="M12 19l-7-7 7-7" />
+                    </svg>
+                    Back to Households
+                  </button>
+                </div>
+
+                {/* Two-Column Layout with Glass-Morphism */}
+                <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
+                  {/* Left Column: Household Metadata */}
+                  <div style={{
+                    background: 'rgba(30, 41, 59, 0.4)',
+                    border: '1px solid rgba(79, 142, 247, 0.2)',
+                    borderRadius: '8px',
+                    padding: '16px',
+                    backdropFilter: 'blur(8px)',
+                    height: 'fit-content'
+                  }}>
+                    <div style={{
+                      fontWeight: 'bold',
+                      marginBottom: '14px',
+                      color: '#3b82f6',
+                      borderBottom: '1px solid #334155',
+                      paddingBottom: '6px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px'
+                    }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                      Registration Specs
+                    </div>
+
+                    <div style={{ marginBottom: '12px', fontSize: '13px' }}>
+                      <div style={{ color: '#94a3b8', marginBottom: '2px' }}>Household Head:</div>
+                      <div style={{ fontWeight: 'bold', fontSize: '15px', color: '#f8fafc' }}>{hh.head}</div>
+                    </div>
+
+                    <div style={{ marginBottom: '12px', fontSize: '13px' }}>
+                      <div style={{ color: '#94a3b8', marginBottom: '2px' }}>Barangay Address:</div>
+                      <div style={{ fontWeight: 'bold', color: '#cbd5e1' }}>{hh.address}</div>
+                    </div>
+
+                    <div style={{ marginBottom: '12px', fontSize: '13px' }}>
+                      <div style={{ color: '#94a3b8', marginBottom: '2px' }}>Jurisdiction Area:</div>
+                      <span className={`badge ${hh.purokClass}`}>{hh.purok}</span>
+                    </div>
+
+                    <div style={{ fontSize: '13px' }}>
+                      <div style={{ color: '#94a3b8', marginBottom: '2px' }}>Declared Members Count:</div>
+                      <div style={{ fontWeight: 'bold', color: '#eab308' }}>{hh.members} individuals</div>
+                    </div>
+                  </div>
+
+                  {/* Right Column: Family Roster */}
+                  <div style={{
+                    background: 'rgba(30, 41, 59, 0.4)',
+                    border: '1px solid rgba(79, 142, 247, 0.2)',
+                    borderRadius: '8px',
+                    padding: '16px',
+                    backdropFilter: 'blur(8px)'
+                  }}>
+                    <div style={{
+                      fontWeight: 'bold',
+                      marginBottom: '12px',
+                      color: '#10b981',
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}>
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                        </svg>
+                        Dynamic Family Roster ({familyMembers.length})
+                      </span>
+                      <span style={{ fontSize: '11px', color: '#94a3b8' }}>Cross-referenced from Resident Registry</span>
+                    </div>
+
+                    {familyMembers.length === 0 ? (
+                      <div style={{
+                        padding: '24px',
+                        textAlign: 'center',
+                        color: '#94a3b8',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        alignItems: 'center',
+                        gap: '12px'
+                      }}>
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                        </svg>
+                        <div>
+                          <div style={{ fontSize: '14px', fontWeight: 'bold', color: '#f8fafc' }}>No Members Found</div>
+                          <div style={{ fontSize: '12px' }}>No individuals are currently linked to this Household ID.</div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{
+                        background: 'rgba(15, 23, 42, 0.3)',
+                        borderRadius: '6px',
+                        overflow: 'hidden'
+                      }}>
+                        <table style={{ width: '100%' }}>
+                          <thead>
+                            <tr>
+                              <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#94a3b8', padding: '10px 12px', textAlign: 'left' }}>ID</th>
+                              <th style={{ fontSize: '11px', color: '#94a3b8', padding: '10px 12px', textAlign: 'left' }}>Name</th>
+                              <th style={{ fontSize: '11px', color: '#94a3b8', padding: '10px 12px', textAlign: 'left' }}>Age</th>
+                              <th style={{ fontSize: '11px', color: '#94a3b8', padding: '10px 12px', textAlign: 'left' }}>Civil Status</th>
+                              <th style={{ fontSize: '11px', color: '#94a3b8', padding: '10px 12px', textAlign: 'left' }}>Voter</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {familyMembers.map((member) => (
+                              <tr
+                                key={member.id}
+                                style={{
+                                  cursor: 'pointer',
+                                  transition: 'background 0.2s ease',
+                                  borderBottom: '1px solid rgba(79, 142, 247, 0.1)'
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.05)')}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                                onClick={() => {
+                                  setSelectedResidentId(member.id);
+                                  nav('view-resident');
+                                }}
+                              >
+                                <td style={{ fontFamily: 'var(--mono)', color: '#94a3b8', padding: '10px 12px' }}>{member.id}</td>
+                                <td style={{ padding: '10px 12px' }}><strong>{member.name}</strong></td>
+                                <td style={{ padding: '10px 12px' }}>{member.age}</td>
+                                <td style={{ padding: '10px 12px' }}>{member.civilStatus}</td>
+                                <td style={{ padding: '10px 12px' }}>
+                                  <span className={`badge ${member.voter ? 'g' : 'gr'}`} style={{ fontSize: '10px' }}>
+                                    {member.voter ? (
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                        <path d="M22 4L12 14.01l-3-3" />
+                                      </svg>
+                                    ) : (
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <circle cx="12" cy="12" r="10" />
+                                      </svg>
+                                    )}
+                                    {member.voter ? 'Voter' : 'Non-Voter'}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            );
+          })()}
             {/* ════════════════════════════════════════
                 SCREEN: CERTIFICATE REQUEST
                 ════════════════════════════════════════ */}
@@ -4218,397 +5255,985 @@ const getStatusBadgeClass = (status) => {
             <div className="screen active">
               <CertificateLifecycle />
             </div>
-          )}
+            )}
+
             {/* ════════════════════════════════════════
                 SCREEN: ISSUANCE & PRINT
                 ════════════════════════════════════════ */}
-            {screen === 'cert-print' && (
-  <div className="screen active">
-    {/* =============================================
-         📜 HEADER PANEL (SVG + Modern)
-         ============================================= */}
-    <div className="ph">
-      <div>
-        <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <path d="M14 2v6h6" />
-            <path d="M12 18v-6" />
-            <path d="M9 15h6" />
-          </svg>
-          Certificate Issuance & Print
-        </div>
-        <div className="ps">Generate, track, and print approved local community clearances</div>
-      </div>
-    </div>
+              {screen === 'cert-print' && (
+              <div className="screen active">
 
-    {/* =============================================
-         📄 TWO-COLUMN LAYOUT (Glass-Morphism)
-         ============================================= */}
-    <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', alignItems: 'start' }}>
-      {/* LEFT COLUMN: TRANSACTION LIST TABLE (Glass-Morphism) */}
-      <div>
-        <div className="tw" style={{
-          background: 'rgba(26, 29, 36, 0.4)',
-          backdropFilter: 'blur(8px)',
-          border: '1px solid rgba(79, 142, 247, 0.2)',
-          borderRadius: '8px'
-        }}>
-          <div className="tb" style={{ borderBottom: '1px solid rgba(79, 142, 247, 0.2)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontWeight: '700', fontSize: '13px', color: 'var(--text)' }}>Approved Certificates</span>
-            </div>
-          </div>
-          <table>
-            <thead>
-              <tr>
-                <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>Cert #</th>
-                <th>Resident</th>
-                <th>Type</th>
-                <th>Status</th>
-                <th>Actions</th>
-              </tr>
-            </thead>
-            <tbody>
-              {approvedCertificates.length === 0 ? (
-                <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ marginRight: '6px' }}>
-                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                      <path d="M12 9v4" />
-                      <path d="M12 17h.01" />
-                    </svg>
-                    No approved certificates awaiting issuance.
-                  </td>
-                </tr>
-              ) : (
-                approvedCertificates.map((req) => {
-                  const residentName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
-                  const certificateType = req.certificateType || req.certType || 'Certificate';
-                  const isSelected = selectedCertificate?._id === req._id;
-                  return (
-                    <tr
-                      key={req._id}
-                      onClick={() => setSelectedCertificate(req)}
-                      style={{
-                        cursor: 'pointer',
-                        background: isSelected ? 'rgba(59, 130, 246, 0.12)' : undefined,
-                        borderLeft: isSelected ? '3px solid var(--accent)' : 'none'
-                      }}
-                    >
-                      <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{req._id}</td>
-                      <td><strong>{residentName || 'Unnamed Resident'}</strong></td>
-                      <td><span className="badge t">{certificateType}</span></td>
-                      <td><span className="badge g">Approved</span></td>
-                      <td>
-                        <button
-                          className="btn btn-p btn-sm"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            handlePrintRelease(req);
-                          }}
-                          style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                        >
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
-                            <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
-                            <path d="M12 7V5" />
-                            <path d="M10 19h4" />
-                            <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
-                          </svg>
-                          Print & Issue
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* RIGHT COLUMN: CERTIFICATE PREVIEW (White Background for Print) */}
-      <div>
-        {selectedCertificate ? (
-          <div
-            className="cert-p"
-            id="printable-certificate-card"
-            style={{
-              position: 'relative',
-              padding: '40px',
-              background: '#ffffff',
-              borderRadius: '8px',
-              boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)',
-              color: '#1e293b',
-              overflow: 'hidden'
-            }}
-          >
-            {Number(selectedCertificate.step) === 5 && (
-              <div
-                className="non-printable-watermark"
-                style={{
-                  position: 'absolute',
-                  top: '40%',
-                  left: '50%',
-                  transform: 'translate(-50%, -50%) rotate(-25deg)',
-                  fontSize: '75px',
-                  fontWeight: '900',
-                  color: 'rgba(22, 163, 74, 0.09)',
-                  border: '8px double rgba(22, 163, 74, 0.15)',
-                  padding: '10px 40px',
-                  borderRadius: '16px',
-                  letterSpacing: '6px',
-                  pointerEvents: 'none',
-                  userSelect: 'none',
-                  whiteSpace: 'nowrap',
-                  zIndex: 1
-                }}
-              >
-                RELEASED / ISSUED
-              </div>
-            )}
-
-            {/* LETTERHEAD HEADERS */}
-            <div style={{ textAlign: 'center', marginBottom: '16px' }}>
-              <h2 style={{ fontSize: '14px', margin: 0, color: '#475569', fontWeight: 'normal', textTransform: 'uppercase' }}>
-                Republic of the Philippines
-              </h2>
-              <h2 style={{ fontSize: '18px', margin: '4px 0', color: '#0f172a', fontWeight: 'bold', textTransform: 'uppercase' }}>
-                Barangay Bustrac
-              </h2>
-              <h3 style={{ fontSize: '13px', margin: 0, color: '#64748b', fontStyle: 'italic' }}>
-                Municipality of Nabua, Camarines Sur
-              </h3>
-            </div>
-            <hr style={{ borderColor: '#0f172a', borderWidth: '1.5px', margin: '12px 0' }} />
-
-            {/* DYNAMIC CERTIFICATE TITLE */}
-            <h2 style={{
-              textAlign: 'center',
-              margin: '24px 0',
-              color: '#2563eb',
-              letterSpacing: '1.5px',
-              fontSize: '22px',
-              fontWeight: 'bold',
-              textTransform: 'uppercase'
-            }}>
-              {((selectedCertificate.certificateType || 'CERTIFICATE').toString()).toUpperCase()}
-            </h2>
-            <hr style={{ borderColor: '#0f172a', borderWidth: '1.5px', margin: '12px 0' }} />
-
-            {/* BODY PARAGRAPHS */}
-            <p style={{
-              marginTop: '28px',
-              lineHeight: '2',
-              color: '#1e293b',
-              textIndent: '40px',
-              textAlign: 'justify',
-              fontSize: '15px'
-            }}>
-              This is to certify that <strong>{`${selectedCertificate.firstName || ''} ${selectedCertificate.lastName || ''}`.trim().toUpperCase()}</strong>, of legal age, a <em>bona fide</em> resident of <strong>
-                {selectedCertificate.purok || (typeof residentsList !== 'undefined' && residentsList.find(r => r.name?.toLowerCase().includes(selectedCertificate.lastName?.toLowerCase() || ''))?.purok) || 'Purok 1'}
-              </strong>, Barangay Bustrac, Nabua, Camarines Sur, has been found to be of <strong>good moral character</strong> and has no derogatory record or pending criminal case on file in this jurisdiction as of this date.
-            </p>
-            <p style={{
-              marginTop: '20px',
-              lineHeight: '2',
-              color: '#1e293b',
-              textIndent: '40px',
-              textAlign: 'justify',
-              fontSize: '15px'
-            }}>
-              This certification is issued upon the request of the above-named person for <strong>{selectedCertificate.purpose || 'any legal purpose'}</strong> and for whatever legal intent it may serve.
-            </p>
-
-            {/* SIGNATORY BLOCK */}
-            <div style={{ marginTop: '60px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-              <div style={{ textAlign: 'center', marginRight: '20px' }}>
-                <div style={{ color: '#475569', fontSize: '13px', marginBottom: '35px' }}>
-                  Issued on: {selectedCertificate.date_issued || selectedCertificate.updatedAt || selectedCertificate.createdAt || 'Today'}
-                </div>
-                <strong style={{
-                  color: '#0f172a',
-                  display: 'block',
-                  borderTop: '1px solid #0f172a',
-                  paddingTop: '8px',
-                  minWidth: '240px',
-                  fontSize: '15px',
-                  textTransform: 'uppercase'
-                }}>
-                  HON. MARK GIAN CORTERO
-                </strong>
-                <div style={{ fontSize: '13px', color: '#475569', marginTop: '2px' }}>Barangay Captain</div>
-              </div>
-            </div>
-          </div>
-        ) : (
-          <div style={{
-            background: '#1e293b',
-            borderRadius: '8px',
-            padding: '40px',
-            textAlign: 'center',
-            color: '#64748b',
-            border: '2px dashed #334155',
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            gap: '12px'
-          }}>
-            <span>Select an approved request from the table to preview the certificate.</span>
-          </div>
-        )}
-      </div>
-    </div>
-
-    {/* =============================================
-         📜 ISSUED HISTORY LOG (Glass-Morphism)
-         ============================================= */}
-    <div style={{ marginTop: '35px' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
-        <div>
-          <div style={{
-            fontSize: '16px',
-            fontWeight: 'bold',
-            color: 'var(--text)',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '8px'
-          }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6" />
-              <path d="M12 18v-6" />
-              <path d="M9 15h6" />
-            </svg>
-            Issued History Log
-          </div>
-          <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-            Official registry of previously printed and released community certificates
-          </div>
-        </div>
-        <span className="badge gr" style={{ padding: '6px 12px' }}>
-          Total Issued: {strictlyIssuedCertificates.length}
-        </span>
-      </div>
-      <div className="tw" style={{
-        background: 'rgba(26, 29, 36, 0.4)',
-        backdropFilter: 'blur(8px)',
-        border: '1px solid rgba(79, 142, 247, 0.2)',
-        borderRadius: '8px'
-      }}>
-        <table>
-          <thead>
-            <tr>
-              <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>Cert #</th>
-              <th>Resident</th>
-              <th>Type</th>
-              <th>Date Issued</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
-          <tbody>
-            {strictlyIssuedCertificates.length === 0 ? (
-              <tr>
-                <td colSpan="5" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
-                  No historical issuance records found.
-                </td>
-              </tr>
-            ) : (
-              strictlyIssuedCertificates.map((req) => {
-                const residentName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
-                const certificateType = req.certificateType || req.certType || 'Certificate';
-                const isSelected = selectedCertificate?._id === req._id;
-                return (
-                  <tr
-                    key={req._id}
-                    onClick={() => setSelectedCertificate(req)}
-                    style={{
-                      cursor: 'pointer',
-                      background: isSelected ? 'rgba(59, 130, 246, 0.12)' : undefined,
-                      borderLeft: isSelected ? '3px solid var(--accent)' : 'none'
+                <div style={{ marginBottom: '16px' }}>
+                  <select
+                    className="fc"
+                    style={{ width: '100%', maxWidth: '600px' }}
+                    value={selectedCertificate?._id || ''}
+                    onChange={(e) => {
+                      const cert = approvedCertificates.find(c => c._id === e.target.value);
+                      setSelectedCertificate(cert || null);
                     }}
                   >
-                    <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{req._id}</td>
-                    <td><strong>{residentName || 'Unnamed Resident'}</strong></td>
-                    <td><span className="badge t">{certificateType}</span></td>
-                    <td style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                      {req.issuedAt ? new Date(req.issuedAt).toLocaleDateString() : 'Recent'}
-                    </td>
-                    <td>
-                      <button
-                        className="btn btn-g btn-sm"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setSelectedCertificate(req);
-                          setTimeout(() => {
-                            window.print();
-                          }, 350);
-                        }}
-                        style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
-                          <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
-                          <path d="M12 7V5" />
-                          <path d="M10 19h4" />
-                          <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
-                        </svg>
-                        Reprint
+                    <option value="">-- Select Approved Certificate --</option>
+                    {approvedCertificates.map((req) => (
+                      <option key={req._id} value={req._id}>
+                        {req._id} - {req.firstName} {req.lastName} ({req.certificateType})
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {selectedCertificate ? (
+                  <>
+                    <div style={{ display: 'grid', gridTemplateColumns: '360px 1fr', gap: '20px', alignItems: 'start', marginBottom: '24px' }}>
+                      {/* LEFT COLUMN: BLOTTER VERIFICATION */}
+                      <div className="fp" style={{ margin: 0, background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)' }}>
+                        <div className="fp-t">Blotters Verification</div>
+
+                        <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', marginBottom: '12px', cursor: 'pointer', color: 'var(--text)', fontWeight: 600 }}>
+                          <input
+                            type="checkbox"
+                            checked={issuanceMeta.noDerogatoryRecord}
+                            onChange={(e) => setIssuanceMeta({ ...issuanceMeta, noDerogatoryRecord: e.target.checked })}
+                          />
+                          Respondents Files
+                        </label>
+
+                        <input
+                          className="fc"
+                          placeholder="SEARCH FOR LAST NAME"
+                          value={blotterVerifyQuery}
+                          onChange={(e) => setBlotterVerifyQuery(e.target.value)}
+                          style={{ marginBottom: '10px', fontFamily: 'var(--mono)', fontSize: '12px' }}
+                        />
+
+                        <div style={{ border: '1px solid var(--border)', borderRadius: '6px', overflow: 'hidden', background: 'var(--surface)', maxHeight: '300px', overflowY: 'auto' }}>
+                          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '12px' }}>
+                            <thead>
+                              <tr style={{ background: 'var(--surface2)' }}>
+                                <th style={{ padding: '8px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>Last Name</th>
+                                <th style={{ padding: '8px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>First Name</th>
+                                <th style={{ padding: '8px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)', fontWeight: 600 }}>Status</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {blotterMatches.length > 0 ? (
+                                blotterMatches.map((b, idx) => {
+                                  const parts = (b.respondent || b.respName || '').split(',');
+                                  return (
+                                    <tr key={b.id || b._id || idx} style={{ borderBottom: '1px solid var(--border)' }}>
+                                      <td style={{ padding: '8px', color: 'var(--text)' }}>{parts[0]?.trim() || '-'}</td>
+                                      <td style={{ padding: '8px', color: 'var(--text)' }}>{parts[1]?.trim() || ''}</td>
+                                      <td style={{ padding: '8px' }}>
+                                        <span className={`badge ${b.status === 'Resolved' ? 'g' : b.status === 'Under Mediation' ? 'a' : 'r'}`}>
+                                          {b.status || 'Open'}
+                                        </span>
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              ) : (
+                                <tr>
+                                  <td colSpan="3" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)', fontSize: '11px' }}>
+                                    {blotterVerifyQuery ? 'No records found.' : 'Type above to search respondents.'}
+                                  </td>
+                                </tr>
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+
+                        <div style={{ marginTop: '12px', padding: '10px', background: 'var(--surface2)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', cursor: 'pointer', color: 'var(--text)', fontWeight: 600 }}>
+                            <input
+                              type="checkbox"
+                              id="blotter-check"
+                              checked={issuanceMeta.noDerogatoryRecord}
+                              onChange={(e) => setIssuanceMeta({ ...issuanceMeta, noDerogatoryRecord: e.target.checked })}
+                            />
+                            No Derogatory / Respondent Record Found
+                          </label>
+                        </div>
+
+                        <div style={{ marginTop: '10px', fontSize: '11px', fontWeight: 'bold', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                          Report
+                        </div>
+                      </div>
+
+                      {/* RIGHT COLUMN: TRANSACTION FORM */}
+                      <div>
+                        {/* Resident Name Display */}
+                        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', padding: '14px 18px', fontSize: '18px', fontWeight: 'bold', color: 'var(--text)', marginBottom: '16px', borderRadius: '8px', fontFamily: 'var(--mono)', letterSpacing: '0.5px', textTransform: 'uppercase' }}>
+                          {`${selectedCertificate.lastName || ''}, ${selectedCertificate.firstName || ''} ${selectedCertificate.middleName || ''}`.trim()}
+                        </div>
+
+                        {/* RECEIPT DETAILS */}
+                        <div className="fp" style={{ marginBottom: '16px', marginTop: 0 }}>
+                          <div className="fp-t" style={{ background: 'rgba(79, 142, 247, 0.15)', color: 'var(--accent)', padding: '8px 12px', margin: '-20px -20px 14px -20px', borderRadius: '8px 8px 0 0', borderBottom: '1px solid rgba(79, 142, 247, 0.2)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                            Receipt Details and other Information
+                          </div>
+                          <div className="fg2">
+                            <div className="fg">
+                              <label className="fl">PURPOSE <span style={{ color: 'var(--red)' }}>*</span></label>
+                              <input className="fc" value={issuanceMeta.purpose || selectedCertificate.purpose || ''} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, purpose: e.target.value })} />
+                            </div>
+                            <div className="fg">
+                              <label className="fl">REMARKS</label>
+                              <input className="fc" value={issuanceMeta.remarks} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, remarks: e.target.value })} />
+                            </div>
+                          </div>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">VALIDITY <span style={{ color: 'var(--red)' }}>*</span></label>
+                            <select className="fc" value={issuanceMeta.validity} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, validity: e.target.value })}>
+                              <option value="6 months">(6) Six Months Validity</option>
+                              <option value="1 year">(12) One Year Validity</option>
+                            </select>
+                          </div>
+                          <div className="fg3" style={{ marginTop: '12px', marginBottom: 0 }}>
+                            <div className="fg">
+                              <label className="fl">DATE ISSUED <span style={{ color: 'var(--red)' }}>*</span></label>
+                              <input type="date" className="fc" value={issuanceMeta.dateIssued} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, dateIssued: e.target.value })} />
+                            </div>
+                            <div className="fg">
+                              <label className="fl">OR NO. <span style={{ color: 'var(--red)' }}>*</span></label>
+                              <input className="fc" value={issuanceMeta.orNumber} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, orNumber: e.target.value })} />
+                            </div>
+                            <div className="fg">
+                              <label className="fl">AMT. PAID <span style={{ color: 'var(--red)' }}>*</span></label>
+                              <input type="number" className="fc" value={issuanceMeta.amountPaid} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, amountPaid: e.target.value })} />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CTC DETAILS */}
+                        <div className="fp" style={{ marginBottom: '16px', marginTop: 0 }}>
+                          <div className="fp-t" style={{ background: 'rgba(79, 142, 247, 0.15)', color: 'var(--accent)', padding: '8px 12px', margin: '-20px -20px 14px -20px', borderRadius: '8px 8px 0 0', borderBottom: '1px solid rgba(79, 142, 247, 0.2)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                            CTC Details
+                          </div>
+                          <div style={{ position: 'relative', marginBottom: '14px' }}>
+                            <label className="fl">SELECT CTC NO. from CTC TABLE</label>
+                            <div style={{ display: 'flex', gap: '8px' }}>
+                              <input 
+                                className="fc" 
+                                style={{ fontSize: '13px' }} 
+                                placeholder="Select CTC Number..." 
+                                value={ctcQuery} 
+                                onChange={(e) => { 
+                                  setCtcQuery(e.target.value); 
+                                  setShowCtcMatches(true); 
+                                }} 
+                                onFocus={() => setShowCtcMatches(true)} 
+                              />
+                              {/* SVG Add CTC Modal Trigger Button */}
+                              <button 
+  type="button" 
+  className="btn btn-g" 
+  style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', padding: '0 10px', fontWeight: 600, fontSize: '12px' }} 
+  onClick={() => setShowCtcModal(true)}
+  title="Add New CTC Record"
+>
+  {/* SVG Plus Icon */}
+  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <line x1="12" y1="5" x2="12" y2="19"></line>
+    <line x1="5" y1="12" x2="19" y2="12"></line>
+  </svg>
+  Add CTC
+</button>
+                            </div>
+
+                            {/* Auto-complete Matches Dropdown */}
+                            {showCtcMatches && ctcQuery && (
+                              <div style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', zIndex: 50, maxHeight: '160px', overflowY: 'auto', marginTop: '4px', boxShadow: '0 10px 15px -3px rgba(0,0,0,0.3)' }}>
+                                {ctcMasterlist
+                                  .filter(c => c.ctcNo.includes(ctcQuery) || c.ctcName.toLowerCase().includes(ctcQuery.toLowerCase()))
+                                  .map(ctc => (
+                                    <div 
+                                      key={ctc._id} 
+                                      onClick={() => handleSelectCtc(ctc)} 
+                                      style={{ padding: '10px 12px', fontSize: '12px', cursor: 'pointer', borderBottom: '1px solid var(--border)', color: 'var(--text)' }}
+                                      onMouseEnter={(e) => { e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'; }}
+                                      onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
+                                    >
+                                      <strong>{ctc.ctcNo}</strong> - {ctc.ctcName}
+                                    </div>
+                                  ))}
+                                {ctcMasterlist.filter(c => c.ctcNo.includes(ctcQuery) || c.ctcName.toLowerCase().includes(ctcQuery.toLowerCase())).length === 0 && (
+                                  <div style={{ padding: '10px', fontSize: '12px', color: 'var(--muted)' }}>No CTC records found.</div>
+                                )}
+                              </div>
+                            )}
+                            </div>
+                            <div className="fp" style={{ background: 'var(--surface)', border: '1px solid var(--border)', margin: 0 }}>
+                              <div className="fp-t" style={{ fontSize: '12px', marginBottom: '10px' }}>CTC INFORMATION</div>
+                              <div className="fg">
+                                <label className="fl">CTC / NAME</label>
+                                <input className="fc" value={issuanceMeta.ctcName || `${selectedCertificate.firstName || ''} ${selectedCertificate.lastName || ''}`.trim()} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, ctcName: e.target.value })} />
+                              </div>
+                              <div className="fg3">
+                                <div className="fg">
+                                  <label className="fl">CTC NO.</label>
+                                  <input className="fc" value={issuanceMeta.ctcNumber} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, ctcNumber: e.target.value })} />
+                                </div>
+                                <div className="fg">
+                                  <label className="fl">CTC AMT. PAID</label>
+                                  <input type="number" className="fc" value={issuanceMeta.ctcAmountPaid} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, ctcAmountPaid: e.target.value })} />
+                                </div>
+                                <div className="fg">
+                                  <label className="fl">CTC DATE ISSUED</label>
+                                  <input type="date" className="fc" value={issuanceMeta.ctcDateIssued || issuanceMeta.dateIssued} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, ctcDateIssued: e.target.value })} />
+                                </div>
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">PLACE ISSUED</label>
+                                <input className="fc" value={issuanceMeta.placeIssued} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, placeIssued: e.target.value })} />
+                              </div>
+                            </div>
+                            </div>
+
+                            {/* REPORT SIGNATORIES */}
+                            <div className="fp" style={{ marginBottom: '16px', marginTop: 0 }}>
+                              <div className="fp-t" style={{ background: 'rgba(79, 142, 247, 0.15)', color: 'var(--accent)', padding: '8px 12px', margin: '-20px -20px 14px -20px', borderRadius: '8px 8px 0 0', borderBottom: '1px solid rgba(79, 142, 247, 0.2)', fontSize: '12px', textTransform: 'uppercase', letterSpacing: '0.5px', fontWeight: 700 }}>
+                                Report Signatories
+                              </div>
+                              <div className="fg2" style={{ marginBottom: 0 }}>
+                                <div className="fg">
+                                  <label className="fl">SECRETARY</label>
+                                  <select className="fc" value={issuanceMeta.secretary || barangaySettings.signatories?.secretary || 'MRS. MELY M. PRESADO'} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, secretary: e.target.value })}>
+                                    <option>MRS. MELY M. PRESADO</option>
+                                    <option>Other Secretary</option>
+                                  </select>
+                                </div>
+                                <div className="fg">
+                                  <label className="fl">PUNONG BARANGAY</label>
+                                  <select className="fc" value={issuanceMeta.punongBarangay || barangaySettings.signatories?.punongBarangay || 'HON. ANNABELLE E. RULL'} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, punongBarangay: e.target.value })}>
+                                    <option>HON. ANNABELLE E. RULL</option>
+                                    <option>Other Punong Barangay</option>
+                                  </select>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* ACTION BUTTONS: PRINT(a), PRINT(b), SAVE */}
+                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                              <button type="button" className="btn btn-g" onClick={() => handlePrintFormat('a')} style={{ minWidth: '100px', justifyContent: 'center' }}>
+                                PRINT(a)
+                              </button>
+                              <button type="button" className="btn btn-g" onClick={() => handlePrintFormat('b')} style={{ minWidth: '100px', justifyContent: 'center' }}>
+                                PRINT(b)
+                              </button>
+                              <button type="button" className="btn btn-p" onClick={handleSaveOnly} style={{ minWidth: '100px', justifyContent: 'center' }}>
+                                SAVE
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* CERTIFICATE PREVIEW */}
+                        {selectedCertificate && (
+                          <div style={{ marginTop: '24px' }}>
+                            <div className="cert-p" id="printable-certificate-card" style={{ position: 'relative', padding: '40px', background: '#ffffff', borderRadius: '8px', boxShadow: '0 4px 6px -1px rgba(0,0,0,0.1)', color: '#1e293b', overflow: 'hidden', marginBottom: '24px' }}>
+                              {Number(selectedCertificate.step) === 5 && (
+                                <div style={{ position: 'absolute', top: '40%', left: '50%', transform: 'translate(-50%, -50%) rotate(-25deg)', fontSize: '75px', fontWeight: '900', color: 'rgba(22, 163, 74, 0.09)', border: '8px double rgba(22, 163, 74, 0.15)', padding: '10px 40px', borderRadius: '16px', letterSpacing: '6px', pointerEvents: 'none', userSelect: 'none', whiteSpace: 'nowrap', zIndex: 1 }}>
+                                  RELEASED / ISSUED
+                                </div>
+                              )}
+                              <div style={{ textAlign: 'center', marginBottom: '16px' }}>
+                                <h2 style={{ fontSize: '14px', margin: 0, color: '#475569', fontWeight: 'normal', textTransform: 'uppercase' }}>Republic of the Philippines</h2>
+                                <h2 style={{ fontSize: '18px', margin: '4px 0', color: '#0f172a', fontWeight: 'bold', textTransform: 'uppercase' }}>Barangay Bustrac</h2>
+                                <h3 style={{ fontSize: '13px', margin: 0, color: '#64748b', fontStyle: 'italic' }}>Municipality of Nabua, Camarines Sur</h3>
+                              </div>
+                              <hr style={{ borderColor: '#0f172a', borderWidth: '1.5px', margin: '12px 0' }} />
+                              <h2 style={{ textAlign: 'center', margin: '24px 0', color: '#2563eb', letterSpacing: '1.5px', fontSize: '22px', fontWeight: 'bold', textTransform: 'uppercase' }}>
+                                {((selectedCertificate.certificateType || 'CERTIFICATE').toString()).toUpperCase()}
+                              </h2>
+                              <hr style={{ borderColor: '#0f172a', borderWidth: '1.5px', margin: '12px 0' }} />
+                              <p style={{ marginTop: '28px', lineHeight: '2', color: '#1e293b', textIndent: '40px', textAlign: 'justify', fontSize: '15px' }}>
+                                This is to certify that <strong>{`${selectedCertificate.firstName || ''} ${selectedCertificate.lastName || ''}`.trim().toUpperCase()}</strong>, of legal age, a <em>bona fide</em> resident of <strong>{selectedCertificate.purok || (typeof residentsList !== 'undefined' && residentsList.find(r => r.name?.toLowerCase().includes(selectedCertificate.lastName?.toLowerCase() || ''))?.purok) || 'Purok 1'}</strong>, Barangay Bustrac, Nabua, Camarines Sur, has been found to be of <strong>good moral character</strong> and has no derogatory record or pending criminal case on file in this jurisdiction as of this date.
+                              </p>
+                              <p style={{ marginTop: '20px', lineHeight: '2', color: '#1e293b', textIndent: '40px', textAlign: 'justify', fontSize: '15px' }}>
+                                This certification is issued upon the request of the above-named person for <strong>{selectedCertificate.purpose || 'any legal purpose'}</strong> and for whatever legal intent it may serve.
+                              </p>
+                              {(selectedCertificate.ctc || issuanceMeta.ctcNumber) && (
+                                <div style={{ marginTop: '24px', padding: '14px 18px', background: '#f8fafc', borderRadius: '6px', border: '1px solid #e2e8f0', fontSize: '13px', color: '#334155' }}>
+                                  <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#0f172a', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Community Tax Certificate (CTC)</div>
+                                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 16px', lineHeight: '1.6' }}>
+                                    <div><strong>Name:</strong> {selectedCertificate.ctc?.name || issuanceMeta.ctcName}</div>
+                                    <div><strong>O.R. No.:</strong> {selectedCertificate.ctc?.number || issuanceMeta.ctcNumber}</div>
+                                    <div><strong>Amount Paid:</strong> PHP {Number(selectedCertificate.ctc?.amountPaid || issuanceMeta.ctcAmountPaid || 0).toFixed(2)}</div>
+                                    <div><strong>Date Issued:</strong> {selectedCertificate.ctc?.dateIssued || issuanceMeta.ctcDateIssued}</div>
+                                    <div style={{ gridColumn: '1 / -1' }}><strong>Place Issued:</strong> {selectedCertificate.ctc?.placeIssued || issuanceMeta.placeIssued}</div>
+                                  </div>
+                                </div>
+                              )}
+                              <div style={{ marginTop: '60px', display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
+                                <div style={{ textAlign: 'center', marginRight: '20px' }}>
+                                  {selectedCertificate.orNumber && (
+                                    <div style={{ color: '#475569', fontSize: '13px', marginBottom: '8px', fontFamily: 'var(--mono)' }}>O.R. No.: <strong>{selectedCertificate.orNumber}</strong></div>
+                                  )}
+                                  <div style={{ color: '#475569', fontSize: '13px', marginBottom: '35px' }}>Issued on: {selectedCertificate.date_issued || selectedCertificate.updatedAt || selectedCertificate.createdAt || 'Today'}</div>
+                                  <strong style={{ color: '#0f172a', display: 'block', borderTop: '1px solid #0f172a', paddingTop: '8px', minWidth: '240px', fontSize: '15px', textTransform: 'uppercase' }}>
+                                    {issuanceMeta.punongBarangay || barangaySettings.signatories?.punongBarangay || 'HON. ANNABELLE E. RULL'}
+                                  </strong>
+                                  <div style={{ fontSize: '13px', color: '#475569', marginTop: '2px' }}>Punong Barangay</div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* ISSUED HISTORY LOG */}
+                            <div>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                                <div>
+                                  <div style={{ fontSize: '16px', fontWeight: 'bold', color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                    Issued History Log
+                                  </div>
+                                  <div style={{ fontSize: '12px', color: 'var(--muted)' }}>Official registry of previously printed and released community certificates</div>
+                                </div>
+                                <span className="badge gr" style={{ padding: '6px 12px' }}>Total Issued: {strictlyIssuedCertificates.length}</span>
+                              </div>
+                              <div className="tw" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px' }}>
+                                <table>
+                                  <thead>
+                                    <tr>
+                                      <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>Cert #</th>
+                                      <th>Resident</th>
+                                      <th>Type</th>
+                                      <th>Date Issued</th>
+                                      <th>Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {strictlyIssuedCertificates.length === 0 ? (
+                                      <tr>
+                                        <td colSpan="5" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>No historical issuance records found.</td>
+                                      </tr>
+                                    ) : (
+                                      strictlyIssuedCertificates.map((req) => {
+                                        const residentName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
+                                        const certificateType = req.certificateType || req.certType || 'Certificate';
+                                        const isSelected = selectedCertificate?._id === req._id;
+                                        return (
+                                          <tr key={req._id} onClick={() => setSelectedCertificate(req)} style={{ cursor: 'pointer', background: isSelected ? 'rgba(59, 130, 246, 0.12)' : undefined, borderLeft: isSelected ? '3px solid var(--accent)' : 'none' }}>
+                                            <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{req._id}</td>
+                                            <td><strong>{residentName || 'Unnamed Resident'}</strong></td>
+                                            <td><span className="badge t">{certificateType}</span></td>
+                                            <td style={{ fontSize: '12px', color: 'var(--muted)' }}>{req.issuedAt ? new Date(req.issuedAt).toLocaleDateString() : 'Recent'}</td>
+                                            <td>
+                                              <button className="btn btn-g btn-sm" onClick={(event) => { event.stopPropagation(); setSelectedCertificate(req); setTimeout(() => { window.print(); }, 350); }} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                                  <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
+                                                  <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
+                                                  <path d="M12 7V5" />
+                                                  <path d="M10 19h4" />
+                                                  <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+                                                </svg>
+                                                Reprint
+                                              </button>
+                                            </td>
+                                          </tr>
+                                        );
+                                      })
+                                    )}
+                                  </tbody>
+                                </table>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
+                        Please select an approved certificate from the dropdown above to proceed.
+                      </div>
+                    )}
+                  </div>
+              )}
+            
+                {screen === 'brgy_clearance' && (
+                <div className="screen active">
+
+                  {/* ── CLEARANCE DATA CAPTURE FORM ── */}
+                  <form onSubmit={handleSaveClearance}>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px', marginBottom: '20px' }}>
+
+                      {/* LEFT COLUMN: RESIDENT & BLOTTER VERIFICATION */}
+                      <div className="fp" style={{ margin: 0, padding: '16px' }}>
+                        <div className="fp-t" style={{ fontSize: '13px', fontWeight: 700, marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                          APPLICANT & BLOTTER VERIFICATION
+                        </div>
+
+                        <div className="fg2" style={{ marginBottom: '10px' }}>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">CLEARANCE NO. *</label>
+                            <input type="text" className="fc" readOnly style={{ fontWeight: 'bold', opacity: 0.8 }} value={clearanceForm.clearanceNo} />
+                          </div>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">DATE ISSUED</label>
+                            <input type="date" className="fc" value={clearanceForm.dateIssued} onChange={(e) => setClearanceForm({ ...clearanceForm, dateIssued: e.target.value })} />
+                          </div>
+                        </div>
+
+                        <div className="fg" style={{ marginBottom: '10px' }}>
+                          <label className="fl">RESIDENT FULL NAME (LAST NAME, FIRST NAME MIDDLE) *</label>
+                          <input type="text" className="fc" required placeholder="e.g. PANIZAL, JOAN REBUSQUILLO" value={clearanceForm.fullName} onChange={(e) => setClearanceForm({ ...clearanceForm, fullName: e.target.value })} />
+                        </div>
+
+                        <div className="fg" style={{ marginBottom: '10px' }}>
+                          <label className="fl">PURPOSE OF CLEARANCE *</label>
+                          <input type="text" className="fc" required placeholder="e.g. Employment Requirement, Local Travel, License" value={clearanceForm.purpose} onChange={(e) => setClearanceForm({ ...clearanceForm, purpose: e.target.value })} />
+                        </div>
+
+                        <div className="fg2" style={{ marginBottom: '10px' }}>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">REMARKS</label>
+                            <input type="text" className="fc" value={clearanceForm.remarks} onChange={(e) => setClearanceForm({ ...clearanceForm, remarks: e.target.value })} />
+                          </div>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">VALIDITY</label>
+                            <input type="text" className="fc" value={clearanceForm.validity} onChange={(e) => setClearanceForm({ ...clearanceForm, validity: e.target.value })} />
+                          </div>
+                        </div>
+
+                        {/* BLOTTER RECORD STATUS CARD */}
+                        <div style={{ padding: '12px', borderRadius: '6px', background: clearanceForm.hasBlotterRecord ? '#fef2f2' : 'var(--surface)', border: `1px solid ${clearanceForm.hasBlotterRecord ? '#fca5a5' : 'var(--border)'}`, marginTop: '12px' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                            <div style={{ fontSize: '11px', fontWeight: 700, color: clearanceForm.hasBlotterRecord ? '#b91c1c' : 'var(--text)' }}>
+                              BLOTTER RECORD STATUS:
+                            </div>
+                            <label style={{ fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+                              <input type="checkbox" checked={clearanceForm.hasBlotterRecord} onChange={(e) => setClearanceForm({ ...clearanceForm, hasBlotterRecord: e.target.checked, remarks: e.target.checked ? 'With Active Blotter Case' : 'No Derogatory Record' })} />
+                              Mark as Respondent/With Blotter
+                            </label>
+                          </div>
+                          <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>
+                            {clearanceForm.hasBlotterRecord ? '⚠️ Warning: Applicant has pending blotter entries on local registry.' : '✓ Verified: Clean record on local barangay blotter masterlist.'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* RIGHT COLUMN: RECEIPT, CTC & SIGNATORIES */}
+                      <div className="fp" style={{ margin: 0, padding: '16px' }}>
+                        <div className="fp-t" style={{ fontSize: '13px', fontWeight: 700, marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                          RECEIPT, CTC & REPORT SIGNATORIES
+                        </div>
+
+                        {/* O.R. DETAILS */}
+                        <div className="fg2" style={{ marginBottom: '10px' }}>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">O.R. NUMBER</label>
+                            <input type="text" className="fc" placeholder="e.g. 1234567" value={clearanceForm.orNo} onChange={(e) => setClearanceForm({ ...clearanceForm, orNo: e.target.value })} />
+                          </div>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">CLEARANCE FEE (₱)</label>
+                            <input type="number" className="fc" value={clearanceForm.amtPaid} onChange={(e) => setClearanceForm({ ...clearanceForm, amtPaid: e.target.value })} />
+                          </div>
+                        </div>
+
+                        {/* CTC DETAILS SECTION */}
+                        <div style={{ border: '1px dashed var(--border)', padding: '12px', borderRadius: '6px', background: 'var(--surface)', marginBottom: '12px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 700 }}>COMMUNITY TAX CERTIFICATE (CTC) DETAILS</span>
+                            <button type="button" className="btn btn-g" style={{ padding: '2px 8px', fontSize: '10px', fontWeight: 700 }} onClick={() => setShowCtcModal(true)}>
+                              + Issue / Record CTC
+                            </button>
+                          </div>
+
+                          <div className="fg2" style={{ marginBottom: '6px' }}>
+                            <div className="fg" style={{ marginBottom: 0 }}>
+                              <label className="fl">CTC NO.</label>
+                              <input type="text" className="fc" placeholder="e.g. CTC-00981" value={clearanceForm.ctcNo} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcNo: e.target.value })} />
+                            </div>
+                            <div className="fg" style={{ marginBottom: 0 }}>
+                              <label className="fl">CTC AMT. PAID (₱)</label>
+                              <input type="number" className="fc" value={clearanceForm.ctcAmtPaid} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcAmtPaid: e.target.value })} />
+                            </div>
+                          </div>
+
+                          <div className="fg2" style={{ marginBottom: 0 }}>
+                            <div className="fg" style={{ marginBottom: 0 }}>
+                              <label className="fl">CTC DATE ISSUED</label>
+                              <input type="date" className="fc" value={clearanceForm.ctcDateIssued} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcDateIssued: e.target.value })} />
+                            </div>
+                            <div className="fg" style={{ marginBottom: 0 }}>
+                              <label className="fl">PLACE ISSUED</label>
+                              <input type="text" className="fc" value={clearanceForm.ctcPlaceIssued} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcPlaceIssued: e.target.value })} />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* SIGNATORIES */}
+                        <div className="fg2" style={{ marginBottom: 0 }}>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">BARANGAY SECRETARY</label>
+                            <input type="text" className="fc" value={clearanceForm.secretary} onChange={(e) => setClearanceForm({ ...clearanceForm, secretary: e.target.value })} />
+                          </div>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">PUNONG BARANGAY</label>
+                            <input type="text" className="fc" value={clearanceForm.captain} onChange={(e) => setClearanceForm({ ...clearanceForm, captain: e.target.value })} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* FORM ACTION BUTTONS */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginBottom: '24px' }}>
+                      <button type="button" className="btn btn-g" onClick={resetClearanceForm}>
+                        Clear Form
                       </button>
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
-)}
-             
+                      <button type="submit" className="btn btn-p" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                        {clearanceForm._id ? 'Update Clearance Record' : 'Save & Issue Clearance'}
+                      </button>
+                    </div>
+                  </form>
+
+                  {/* ── REGISTERED BARANGAY CLEARANCES MASTERLIST TABLE ── */}
+                  <div className="card" style={{ padding: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700 }}>
+                        Issued Individual Barangay Clearances ({clearanceList.length})
+                      </h4>
+                    </div>
+
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                        <thead>
+                          <tr style={{ background: 'var(--surface)', borderBottom: '2px solid var(--border)' }}>
+                            <th style={{ padding: '8px' }}>Clearance No.</th>
+                            <th style={{ padding: '8px' }}>Resident Full Name</th>
+                            <th style={{ padding: '8px' }}>Purpose</th>
+                            <th style={{ padding: '8px' }}>Date Issued</th>
+                            <th style={{ padding: '8px' }}>O.R. No.</th>
+                            <th style={{ padding: '8px' }}>Amount</th>
+                            <th style={{ padding: '8px', textAlign: 'center' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {clearanceList.length === 0 ? (
+                            <tr>
+                              <td colSpan="7" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
+                                No individual barangay clearances found in local database.
+                              </td>
+                            </tr>
+                          ) : (
+                            clearanceList.map((rec) => (
+                              <tr key={rec._id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                <td style={{ padding: '8px', fontWeight: 'bold' }}>{rec.clearanceNo}</td>
+                                <td style={{ padding: '8px', textTransform: 'uppercase' }}>{rec.fullName}</td>
+                                <td style={{ padding: '8px' }}>{rec.purpose}</td>
+                                <td style={{ padding: '8px' }}>{rec.dateIssued}</td>
+                                <td style={{ padding: '8px' }}>{rec.orNo || 'N/A'}</td>
+                                <td style={{ padding: '8px' }}>₱{parseFloat(rec.amtPaid || 0).toFixed(2)}</td>
+                                <td style={{ padding: '8px', textAlign: 'center' }}>
+                                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                                    <button type="button" className="btn btn-g" style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={() => handleEditClearance(rec)}>
+                                      Edit
+                                    </button>
+                                    <button type="button" className="btn btn-p" style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }} onClick={() => handlePrintClearance(rec)}>
+                                      Print
+                                    </button>
+                                  </div>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+                )}
+
+            {/* ════════════════════════════════════════
+                SCREEN: BUSINESS CLEARANCE DATA ENTRY
+                ════════════════════════════════════════ */}
+                {screen === 'business_clearance' && (
+                  <div className="screen active">
+
+                    {/* ── TAB BUTTONS (PAGE 1 / PAGE 2) ── */}
+                    <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', borderBottom: '2px solid var(--border)', paddingBottom: '2px' }}>
+                      <button 
+                        type="button" 
+                        className={`btn ${businessTab === 'page1' ? 'btn-p' : 'btn-g'}`} 
+                        style={{ padding: '6px 18px', fontWeight: 700, fontSize: '12px' }} 
+                        onClick={() => setBusinessTab('page1')} 
+                      > 
+                        Page 1 (Data Entry) 
+                      </button> 
+                      <button 
+                        type="button" 
+                        className={`btn ${businessTab === 'page2' ? 'btn-p' : 'btn-g'}`} 
+                        style={{ padding: '6px 18px', fontWeight: 700, fontSize: '12px' }} 
+                        onClick={() => setBusinessTab('page2')} 
+                      > 
+                        Page 2 (O.R. & Assessment Details) 
+                      </button> 
+                    </div>
+
+                    {/* SINGLE FORM WRAPPER FOR BOTH TABS */}
+                    <form onSubmit={handleSaveBusinessClearance}>
+                      
+                      {/* ── PAGE 1 CONTENT ── */}
+                      <div style={{ display: businessTab === 'page1' ? 'block' : 'none' }}>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                          
+                          {/* LEFT COLUMN: APPLICANT INFORMATION */}
+                          <div className="fp" style={{ margin: 0, padding: '16px' }}>
+                            <div className="fp-t" style={{ fontSize: '13px', fontWeight: 700, marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                              APPLICANTS INFORMATION
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: '10px' }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">BC ID NO. *</label>
+                                <input type="text" className="fc" readOnly style={{ fontWeight: 'bold', opacity: 0.8 }} value={businessForm.bcIdNo} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">CIVIL STATUS</label>
+                                <input type="text" className="fc" placeholder="Single / Married" value={businessForm.civilStatus} onChange={(e) => setBusinessForm({ ...businessForm, civilStatus: e.target.value })} />
+                              </div>
+                            </div>
+
+                            <div className="fg3" style={{ marginBottom: '10px' }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">LAST NAME *</label>
+                                <input type="text" className="fc" required value={businessForm.lastName} onChange={(e) => setBusinessForm({ ...businessForm, lastName: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">FIRST NAME *</label>
+                                <input type="text" className="fc" required value={businessForm.firstName} onChange={(e) => setBusinessForm({ ...businessForm, firstName: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">MIDDLE NAME</label>
+                                <input type="text" className="fc" value={businessForm.middleName} onChange={(e) => setBusinessForm({ ...businessForm, middleName: e.target.value })} />
+                              </div>
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: '10px' }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">CONTACT NOS.</label>
+                                <input type="text" className="fc" placeholder="09123456789" value={businessForm.contactNo} onChange={(e) => setBusinessForm({ ...businessForm, contactNo: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">EMAIL ADDRESS</label>
+                                <input type="email" className="fc" placeholder="applicant@email.com" value={businessForm.email} onChange={(e) => setBusinessForm({ ...businessForm, email: e.target.value })} />
+                              </div>
+                            </div>
+
+                            <div className="fg" style={{ marginBottom: '10px' }}>
+                              <label className="fl">HOUSE NO./BLDG./PUROK/STREET/SUBDIVISION</label>
+                              <input type="text" className="fc" value={businessForm.applicantAddress} onChange={(e) => setBusinessForm({ ...businessForm, applicantAddress: e.target.value })} />
+                            </div>
+
+                            <div className="fg" style={{ marginBottom: '10px' }}>
+                              <label className="fl">BARANGAY / CITY-MUNICIPALITY / PROVINCE</label>
+                              <input type="text" className="fc" value={businessForm.applicantBgyCityProv} onChange={(e) => setBusinessForm({ ...businessForm, applicantBgyCityProv: e.target.value })} />
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: '10px' }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">OCCUPATION</label>
+                                <input type="text" className="fc" value={businessForm.occupation} onChange={(e) => setBusinessForm({ ...businessForm, occupation: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">NATIONALITY</label>
+                                <input type="text" className="fc" value={businessForm.nationality} onChange={(e) => setBusinessForm({ ...businessForm, nationality: e.target.value })} />
+                              </div>
+                            </div>
+
+                            <div style={{ margin: '12px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <input type="checkbox" id="isFemaleCheck" checked={businessForm.isFemale} onChange={(e) => setBusinessForm({ ...businessForm, isFemale: e.target.checked })} />
+                              <label htmlFor="isFemaleCheck" style={{ fontSize: '12px', cursor: 'pointer', fontWeight: 600 }}> GENDER: is Female? </label>
+                            </div>
+
+                            <div className="fg2" style={{ marginTop: '12px', marginBottom: 0 }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">REMARKS</label>
+                                <textarea className="fc" rows="3" style={{ resize: 'none' }} value={businessForm.remarks} onChange={(e) => setBusinessForm({ ...businessForm, remarks: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0, textAlign: 'center' }}>
+                                <label className="fl">PICTURE (.JPG)</label>
+                                <div style={{ border: '1px dashed var(--border)', borderRadius: '6px', padding: '12px', height: '70px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--surface)', overflow: 'hidden' }}>
+                                  {businessForm.photoUrl ? (
+                                    <img src={businessForm.photoUrl} alt="Applicant" style={{ maxHeight: '100%', maxWidth: '100%', objectFit: 'contain' }} />
+                                  ) : (
+                                    <span style={{ fontSize: '11px', color: 'var(--muted)' }}>No Image Captured</span>
+                                  )}
+                                </div>
+                                <label className="btn btn-g" style={{ width: '100%', marginTop: '6px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '6px', cursor: 'pointer' }}>
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                                    <circle cx="12" cy="13" r="4"/>
+                                  </svg> Upload / Take Picture
+                                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={(e) => {
+                                    const file = e.target.files?.[0];
+                                    if (file) {
+                                      const reader = new FileReader();
+                                      reader.onloadend = () => setBusinessForm(prev => ({ ...prev, photoUrl: reader.result }));
+                                      reader.readAsDataURL(file);
+                                    }
+                                  }} />
+                                </label>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* RIGHT COLUMN: BUSINESS INFORMATION & REQUIREMENTS */}
+                          <div className="fp" style={{ margin: 0, padding: '16px' }}>
+                            <div className="fp-t" style={{ fontSize: '13px', fontWeight: 700, marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                              BUSINESS INFORMATION AND OTHER REQUIREMENTS
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: '10px' }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">DATE OF REGISTRATION</label>
+                                <input type="date" className="fc" value={businessForm.regDate} onChange={(e) => setBusinessForm({ ...businessForm, regDate: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">STORE AREA (SQM)</label>
+                                <input type="number" className="fc" placeholder="e.g. 25" value={businessForm.storeAreaSqm} onChange={(e) => setBusinessForm({ ...businessForm, storeAreaSqm: e.target.value })} />
+                              </div>
+                            </div>
+
+                            <div className="fg" style={{ marginBottom: '10px' }}>
+                              <label className="fl">BUSINESS NAME *</label>
+                              <input type="text" className="fc" required placeholder="e.g. Bustrac Convenience Store" value={businessForm.businessName} onChange={(e) => setBusinessForm({ ...businessForm, businessName: e.target.value })} />
+                            </div>
+
+                            <div className="fg3" style={{ marginBottom: '10px' }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">NATURE OF BUSINESS</label>
+                                <input type="text" className="fc" placeholder="Retail / Wholesale" value={businessForm.natureOfBusiness} onChange={(e) => setBusinessForm({ ...businessForm, natureOfBusiness: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">BUSINESS CATEGORY</label>
+                                <input type="text" className="fc" value={businessForm.businessCategory} onChange={(e) => setBusinessForm({ ...businessForm, businessCategory: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">TYPE OF BUSINESS</label>
+                                <input type="text" className="fc" placeholder="Single Prop / Corp" value={businessForm.typeOfBusiness} onChange={(e) => setBusinessForm({ ...businessForm, typeOfBusiness: e.target.value })} />
+                              </div>
+                            </div>
+
+                            <div className="fg" style={{ marginBottom: '10px' }}>
+                              <label className="fl">BUSINESS ADDRESS (HOUSE/BLDG/PUROK/STREET)</label>
+                              <input type="text" className="fc" value={businessForm.businessAddress} onChange={(e) => setBusinessForm({ ...businessForm, businessAddress: e.target.value })} />
+                            </div>
+
+                            <div className="fg" style={{ marginBottom: '10px' }}>
+                              <label className="fl">BARANGAY / CITY-MUNICIPALITY / PROVINCE</label>
+                              <input type="text" className="fc" value={businessForm.businessBgyCityProv} onChange={(e) => setBusinessForm({ ...businessForm, businessBgyCityProv: e.target.value })} />
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: '12px' }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">CONTACT NOS.</label>
+                                <input type="text" className="fc" value={businessForm.businessContactNo} onChange={(e) => setBusinessForm({ ...businessForm, businessContactNo: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">EMAIL ADDRESS</label>
+                                <input type="email" className="fc" value={businessForm.businessEmail} onChange={(e) => setBusinessForm({ ...businessForm, businessEmail: e.target.value })} />
+                              </div>
+                            </div>
+
+                            {/* CHECKBOXES & COMPLIANCE */}
+                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', padding: '10px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', marginBottom: '12px' }}>
+                              <label style={{ fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <input type="checkbox" checked={businessForm.cctvEnabled} onChange={(e) => setBusinessForm({ ...businessForm, cctvEnabled: e.target.checked })} /> CCTV Enable?
+                              </label>
+                              <label style={{ fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <input type="checkbox" checked={businessForm.sanitaryWasteDisposal} onChange={(e) => setBusinessForm({ ...businessForm, sanitaryWasteDisposal: e.target.checked })} /> Sanitary Waste Disposal
+                              </label>
+                              <label style={{ fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <input type="checkbox" checked={businessForm.hasFireExtinguisher} onChange={(e) => setBusinessForm({ ...businessForm, hasFireExtinguisher: e.target.checked })} /> With Fire Extinguisher
+                              </label>
+                              <label style={{ fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <input type="checkbox" checked={businessForm.hasFireExit} onChange={(e) => setBusinessForm({ ...businessForm, hasFireExit: e.target.checked })} /> With Fire Exit
+                              </label>
+                              <label style={{ fontSize: '11px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '6px', gridColumn: 'span 2' }}>
+                                <input type="checkbox" checked={businessForm.sanitaryCompliant} onChange={(e) => setBusinessForm({ ...businessForm, sanitaryCompliant: e.target.checked })} /> Sanitary/Health Compliant
+                              </label>
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: 0 }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">NO. OF EMPLOYEES</label>
+                                <input type="number" className="fc" value={businessForm.employeeCount} onChange={(e) => setBusinessForm({ ...businessForm, employeeCount: e.target.value })} />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">EMPLOYEES MASTERLIST FILE</label>
+                                <input type="text" className="fc" placeholder="Excel/Word File Name" value={businessForm.employeeMasterlistName} onChange={(e) => setBusinessForm({ ...businessForm, employeeMasterlistName: e.target.value })} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* ACTION BUTTONS (PAGE 1) */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
+                          <button type="button" className="btn btn-g" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                              <polyline points="14 2 14 8 20 8"></polyline>
+                            </svg> SAVE AS DRAFT
+                          </button>
+                          <button type="button" className="btn btn-p" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={() => setBusinessTab('page2')}>
+                            Next: O.R. & Assessment Details ➔
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* ── PAGE 2 CONTENT ── */}
+                      <div style={{ display: businessTab === 'page2' ? 'block' : 'none' }}>
+                        <div className="card" style={{ padding: '20px' }}>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                            
+                            {/* LEFT COLUMN: OFFICIAL RECEIPT & ASSESSMENT */}
+                            <div className="fp" style={{ margin: 0, padding: '16px' }}>
+                              <div className="fp-t" style={{ fontSize: '13px', fontWeight: 700, marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                                PAYMENT & O.R. DETAILS
+                              </div>
+                              <div className="fg2" style={{ marginBottom: '10px' }}>
+                                <div className="fg" style={{ marginBottom: 0 }}>
+                                  <label className="fl">O.R. NUMBER *</label>
+                                  <input type="text" className="fc" placeholder="e.g. 9876543" value={businessForm.orNo || ''} onChange={(e) => setBusinessForm({ ...businessForm, orNo: e.target.value })} />
+                                </div>
+                                <div className="fg" style={{ marginBottom: 0 }}>
+                                  <label className="fl">DATE ISSUED</label>
+                                  <input type="date" className="fc" value={businessForm.orDateIssued || new Date().toISOString().split('T')[0]} onChange={(e) => setBusinessForm({ ...businessForm, orDateIssued: e.target.value })} />
+                                </div>
+                              </div>
+                              <div className="fg2" style={{ marginBottom: '10px' }}>
+                                <div className="fg" style={{ marginBottom: 0 }}>
+                                  <label className="fl">CLEARANCE FEE (₱) *</label>
+                                  <input type="number" className="fc" placeholder="500.00" value={businessForm.clearanceFee || ''} onChange={(e) => setBusinessForm({ ...businessForm, clearanceFee: e.target.value })} />
+                                </div>
+                                <div className="fg" style={{ marginBottom: 0 }}>
+                                  <label className="fl">GARBAGE FEE (₱)</label>
+                                  <input type="number" className="fc" placeholder="200.00" value={businessForm.garbageFee || ''} onChange={(e) => setBusinessForm({ ...businessForm, garbageFee: e.target.value })} />
+                                </div>
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">TOTAL AMOUNT PAID (₱)</label>
+                                <input type="number" className="fc" readOnly style={{ fontWeight: 'bold', color: 'var(--accent)', fontSize: '14px' }} value={(parseFloat(businessForm.clearanceFee || 0) + parseFloat(businessForm.garbageFee || 0)).toFixed(2)} />
+                              </div>
+                            </div>
+
+                            {/* RIGHT COLUMN: SIGNATORIES & APPROVAL */}
+                            <div className="fp" style={{ margin: 0, padding: '16px' }}>
+                              <div className="fp-t" style={{ fontSize: '13px', fontWeight: 700, marginBottom: '14px', borderBottom: '1px solid var(--border)', paddingBottom: '6px' }}>
+                                REPORT SIGNATORIES & PERMIT VALIDITY
+                              </div>
+                              <div className="fg" style={{ marginBottom: '10px' }}>
+                                <label className="fl">SECRETARY</label>
+                                <select className="fc">
+                                  <option>MRS. MELY M. PRESADO</option>
+                                </select>
+                              </div>
+                              <div className="fg" style={{ marginBottom: '10px' }}>
+                                <label className="fl">PUNONG BARANGAY</label>
+                                <select className="fc">
+                                  <option>HON. ANNABELLE E. RULL</option>
+                                </select>
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">PERMIT VALIDITY / EXPIRATION</label>
+                                <input type="text" className="fc" readOnly value="Valid until December 31, 2026" />
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* ACTION BUTTONS (PAGE 2) */}
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
+                            <button type="button" className="btn btn-g" onClick={() => setBusinessTab('page1')}>
+                              ◄ Back to Page 1
+                            </button>
+                            <button type="submit" className="btn btn-p" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
+                                <polyline points="17 21 17 13 7 13 7 21"></polyline>
+                                <polyline points="7 3 7 8 15 8"></polyline>
+                              </svg> Save & Complete Record
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    </form>
+
+                    {/* ── REGISTERED BUSINESS CLEARANCES TABLE ── */}
+                    <div className="card" style={{ marginTop: '20px', padding: '16px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                        <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700 }}>
+                          Registered Business Clearances ({businessMasterlist.length})
+                        </h4>
+                      </div>
+                      <div style={{ overflowX: 'auto' }}>
+                        <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                          <thead>
+                            <tr style={{ background: 'var(--surface)', borderBottom: '2px solid var(--border)' }}>
+                              <th style={{ padding: '8px' }}>BC ID</th>
+                              <th style={{ padding: '8px' }}>Business Name</th>
+                              <th style={{ padding: '8px' }}>Owner Name</th>
+                              <th style={{ padding: '8px' }}>Nature</th>
+                              <th style={{ padding: '8px' }}>Date Issued</th>
+                              <th style={{ padding: '8px' }}>O.R. No.</th>
+                              <th style={{ padding: '8px', textAlign: 'center' }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {businessMasterlist.length === 0 ? (
+                              <tr>
+                                <td colSpan="7" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
+                                  No business clearance records found in local database.
+                                </td>
+                              </tr>
+                            ) : (
+                              businessMasterlist.map((rec) => (
+                                <tr key={rec._id} style={{ borderBottom: '1px solid var(--border)' }}>
+                                  <td style={{ padding: '8px', fontWeight: 'bold' }}>{rec.bcIdNo}</td>
+                                  <td style={{ padding: '8px' }}>{rec.businessName}</td>
+                                  <td style={{ padding: '8px' }}>{`${rec.lastName}, ${rec.firstName}`}</td>
+                                  <td style={{ padding: '8px' }}>{rec.natureOfBusiness || 'N/A'}</td>
+                                  <td style={{ padding: '8px' }}>{rec.regDate}</td>
+                                  <td style={{ padding: '8px' }}>{rec.orNo || 'N/A'}</td>
+                                  <td style={{ padding: '8px', textAlign: 'center' }}>
+                                    <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                                      <button 
+                                        type="button" 
+                                        className="btn btn-g" 
+                                        style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        onClick={() => handleEditBusinessClearance(rec)}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                        </svg> Edit
+                                      </button>
+                                      <button 
+                                        type="button" 
+                                        className="btn btn-p" 
+                                        style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        onClick={() => handlePrintBusinessClearance(rec)}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                          <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                                          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                                          <rect x="6" y="14" width="12" height="8"></rect>
+                                        </svg> Print
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  </div>
+                )}
             {/* ════════════════════════════════════════
                 SCREEN: DISTRIBUTION PROGRAMS
                 ════════════════════════════════════════ */}
             {screen === 'programs' && (
             <div className="screen active">
-              <div className="ph">
-                <div>
-                  <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                    </svg>
-                    Distribution Programs
-                  </div>
-                  <div className="ps">Manage aid distribution programs, targets, lifecycle configurations, and logs</div>
-                </div>
-                <button
-                  className="btn btn-p"
-                  onClick={() => setShowNewProgramForm(!showNewProgramForm)}
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  {showNewProgramForm ? (
-                    <>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M18 15l-6-6-6 6" />
-                      </svg>
-                      Close Form
-                    </>
-                  ) : (
-                    <>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M12 5v14M5 12h14" />
-                      </svg>
-                      New Program
-                    </>
-                  )}
-                </button>
-              </div>
 
-              {/* =============================================
-                  📝 PROGRAM CREATION FORM (Glass-Morphism + SVG)
-                  ============================================= */}
               {showNewProgramForm && (
                 <form
                   onSubmit={handleCreateProgram}
@@ -4727,9 +6352,6 @@ const getStatusBadgeClass = (status) => {
                 </form>
               )}
 
-              {/* =============================================
-                  🔍 SEARCH, FILTER & SORT BAR (Glass-Morphism + SVG)
-                  ============================================= */}
               <div
                 className="tb"
                 style={{
@@ -4835,7 +6457,7 @@ const getStatusBadgeClass = (status) => {
               </div>
 
               {/* =============================================
-                  📊 PROGRAMS GRID (Glass-Morphism + SVG)
+                  PROGRAMS GRID 
                   ============================================= */}
               {processedPrograms.length === 0 ? (
                 <div style={{
@@ -4905,360 +6527,360 @@ const getStatusBadgeClass = (status) => {
                     }
 
                     return (
-  <div
-    className="card"
-    key={prog.id}
-    style={{
-      display: 'flex',
-      flexDirection: 'column',
-      justifyContent: 'space-between',
-      border: '1px solid rgba(79, 142, 247, 0.2)',
-      position: 'relative',
-      background: 'rgba(30, 41, 59, 0.4)',
-      backdropFilter: 'blur(8px)',
-      borderRadius: '8px',
-      padding: '16px',
-      transition: 'all 0.3s ease'
-    }}
-    onMouseEnter={(e) => {
-      e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)';
-      e.currentTarget.style.background = 'rgba(30, 41, 59, 0.6)';
-    }}
-    onMouseLeave={(e) => {
-      e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.2)';
-      e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)';
-    }}
-  >
-    <div>
-      <div style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        marginBottom: '8px',
-        alignItems: 'center'
-      }}>
-        <span className={statusBadgeClass} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          {statusIcon}
-          {prog.status}
-        </span>
-        <span className="badge gr" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <path d="M14 2v6h6" />
-            <path d="M12 18v-6" />
-            <path d="M9 15h6" />
-          </svg>
-          {prog.dateLabel || 'Campaign'}
-        </span>
-      </div>
+                      <div
+                        className="card"
+                        key={prog.id}
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          border: '1px solid rgba(79, 142, 247, 0.2)',
+                          position: 'relative',
+                          background: 'rgba(30, 41, 59, 0.4)',
+                          backdropFilter: 'blur(8px)',
+                          borderRadius: '8px',
+                          padding: '16px',
+                          transition: 'all 0.3s ease'
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+                          e.currentTarget.style.background = 'rgba(30, 41, 59, 0.6)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.2)';
+                          e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)';
+                        }}
+                      >
+                        <div>
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            marginBottom: '8px',
+                            alignItems: 'center'
+                          }}>
+                            <span className={statusBadgeClass} style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              {statusIcon}
+                              {prog.status}
+                            </span>
+                            <span className="badge gr" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <path d="M14 2v6h6" />
+                                <path d="M12 18v-6" />
+                                <path d="M9 15h6" />
+                              </svg>
+                              {prog.dateLabel || 'Campaign'}
+                            </span>
+                          </div>
 
-      <div className="ct" style={{
-        fontWeight: 'bold',
-        fontSize: '15px',
-        color: '#f8fafc',
-        marginBottom: '4px'
-      }}>
-        {prog.title}
-      </div>
+                          <div className="ct" style={{
+                            fontWeight: 'bold',
+                            fontSize: '15px',
+                            color: '#f8fafc',
+                            marginBottom: '4px'
+                          }}>
+                            {prog.title}
+                          </div>
 
-      <div className="cm" style={{
-        fontFamily: 'var(--mono)',
-        fontSize: '11px',
-        color: '#94a3b8',
-        marginBottom: '10px'
-      }}>
-        {prog.id}
-      </div>
+                          <div className="cm" style={{
+                            fontFamily: 'var(--mono)',
+                            fontSize: '11px',
+                            color: '#94a3b8',
+                            marginBottom: '10px'
+                          }}>
+                            {prog.id}
+                          </div>
 
-      {/* Progress Bar */}
-      <div className="prog" style={{
-        margin: '10px 0',
-        background: '#334155',
-        borderRadius: '4px',
-        height: '8px',
-        overflow: 'hidden'
-      }}>
-        <div
-          className="prog-b"
-          style={{
-            width: `${percent}%`,
-            height: '100%',
-            background: prog.status === 'Completed'
-              ? 'linear-gradient(90deg, #10b981, #14b8a6)'
-              : prog.status === 'Upcoming'
-                ? '#64748b'
-                : '#3b82f6',
-            transition: 'width 0.4s ease-in-out'
-          }}
-        />
-      </div>
+                          {/* Progress Bar */}
+                          <div className="prog" style={{
+                            margin: '10px 0',
+                            background: '#334155',
+                            borderRadius: '4px',
+                            height: '8px',
+                            overflow: 'hidden'
+                          }}>
+                            <div
+                              className="prog-b"
+                              style={{
+                                width: `${percent}%`,
+                                height: '100%',
+                                background: prog.status === 'Completed'
+                                  ? 'linear-gradient(90deg, #10b981, #14b8a6)'
+                                  : prog.status === 'Upcoming'
+                                    ? '#64748b'
+                                    : '#3b82f6',
+                                transition: 'width 0.4s ease-in-out'
+                              }}
+                            />
+                          </div>
 
-      <div style={{
-        fontSize: '11px',
-        color: '#94a3b8',
-        display: 'flex',
-        justifyContent: 'space-between'
-      }}>
-        <span>{prog.current} / {prog.target} targets</span>
-        <strong>{percent}%</strong>
-      </div>
-    </div>
+                          <div style={{
+                            fontSize: '11px',
+                            color: '#94a3b8',
+                            display: 'flex',
+                            justifyContent: 'space-between'
+                          }}>
+                            <span>{prog.current} / {prog.target} targets</span>
+                            <strong>{percent}%</strong>
+                          </div>
+                        </div>
 
-    {/* Action Buttons */}
-    <div style={{
-      display: 'flex',
-      gap: '6px',
-      marginTop: '16px',
-      borderTop: '1px solid rgba(79, 142, 247, 0.2)',
-      paddingTop: '12px',
-      flexWrap: 'wrap'
-    }}>
-      {prog.status === 'Active' && (
-        <>
-          <button
-            className="btn btn-p btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => nav('aid-encode')}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-            </svg>
-            Encode
-          </button>
+                        {/* Action Buttons */}
+                        <div style={{
+                          display: 'flex',
+                          gap: '6px',
+                          marginTop: '16px',
+                          borderTop: '1px solid rgba(79, 142, 247, 0.2)',
+                          paddingTop: '12px',
+                          flexWrap: 'wrap'
+                        }}>
+                          {prog.status === 'Active' && (
+                            <>
+                              <button
+                                className="btn btn-p btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => nav('aid-encode')}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                </svg>
+                                Encode
+                              </button>
 
-          <button
-            className="btn btn-g btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => nav('aid-logs')}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6" />
-              <path d="M12 18v-6" />
-              <path d="M9 15h6" />
-            </svg>
-            Logs
-          </button>
+                              <button
+                                className="btn btn-g btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => nav('aid-logs')}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <path d="M14 2v6h6" />
+                                  <path d="M12 18v-6" />
+                                  <path d="M9 15h6" />
+                                </svg>
+                                Logs
+                              </button>
 
-          <button
-            className="btn btn-a btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              background: '#d97706',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => setEditingProgram(prog)}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-            </svg>
-            Edit
-          </button>
+                              <button
+                                className="btn btn-a btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  background: '#d97706',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => setEditingProgram(prog)}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                </svg>
+                                Edit
+                              </button>
 
-          <button
-            className="btn btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              background: '#10b981',
-              color: 'white',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => {
-              const updated = programsList.map(p =>
-                p.id === prog.id ? { ...p, status: 'Completed' } : p
-              );
-              setProgramsList(updated);
-              alert(`Program campaign ${prog.title} has been successfully closed and marked as Completed.`);
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <path d="M22 4L12 14.01l-3-3" />
-            </svg>
-            Complete
-          </button>
-        </>
-      )}
+                              <button
+                                className="btn btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  background: '#10b981',
+                                  color: 'white',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => {
+                                  const updated = programsList.map(p =>
+                                    p.id === prog.id ? { ...p, status: 'Completed' } : p
+                                  );
+                                  setProgramsList(updated);
+                                  alert(`Program campaign ${prog.title} has been successfully closed and marked as Completed.`);
+                                }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                  <path d="M22 4L12 14.01l-3-3" />
+                                </svg>
+                                Complete
+                              </button>
+                            </>
+                          )}
 
-      <button
-        className="btn btn-sm"
-        style={{
-          padding: '4px 8px',
-          fontSize: '11px',
-          background: '#475569',
-          color: '#cbd5e1',
-          display: 'flex',
-          alignItems: 'center',
-          gap: '4px'
-        }}
-        onClick={async () => {
-          const updated = programsList.map(p =>
-            p.id === prog.id ? { ...p, status: 'Archived' } : p
-          );
-          setProgramsList(updated);
-          await createAuditLog({
-            action: 'ARCHIVE',
-            module: 'PROGRAMS',
-            recordId: prog.id,
-            details: `Archived program: ${prog.title}`,
-          });
-          alert(`Campaign historical logs archived successfully.`);
-        }}
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-        </svg>
-        Archive
-      </button>
+                          <button
+                            className="btn btn-sm"
+                            style={{
+                              padding: '4px 8px',
+                              fontSize: '11px',
+                              background: '#475569',
+                              color: '#cbd5e1',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '4px'
+                            }}
+                            onClick={async () => {
+                              const updated = programsList.map(p =>
+                                p.id === prog.id ? { ...p, status: 'Archived' } : p
+                              );
+                              setProgramsList(updated);
+                              await createAuditLog({
+                                action: 'ARCHIVE',
+                                module: 'PROGRAMS',
+                                recordId: prog.id,
+                                details: `Archived program: ${prog.title}`,
+                              });
+                              alert(`Campaign historical logs archived successfully.`);
+                            }}
+                          >
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                            </svg>
+                            Archive
+                          </button>
 
-      {prog.status === 'Upcoming' && (
-        <>
-          <button
-            className="btn btn-p btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => {
-              const updated = programsList.map(p =>
-                p.id === prog.id ? { ...p, status: 'Active' } : p
-              );
-              setProgramsList(updated);
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 2v4" />
-              <path d="M12 18v4" />
-              <path d="M4.93 4.93l2.83 2.83" />
-              <path d="M16.24 16.24l2.83 2.83" />
-              <path d="M2 12h2" />
-              <path d="M20 12h2" />
-              <path d="M4.93 19.07l2.83-2.83" />
-              <path d="M16.24 7.76l2.83-2.83" />
-            </svg>
-            Activate
-          </button>
+                          {prog.status === 'Upcoming' && (
+                            <>
+                              <button
+                                className="btn btn-p btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => {
+                                  const updated = programsList.map(p =>
+                                    p.id === prog.id ? { ...p, status: 'Active' } : p
+                                  );
+                                  setProgramsList(updated);
+                                }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M12 2v4" />
+                                  <path d="M12 18v4" />
+                                  <path d="M4.93 4.93l2.83 2.83" />
+                                  <path d="M16.24 16.24l2.83 2.83" />
+                                  <path d="M2 12h2" />
+                                  <path d="M20 12h2" />
+                                  <path d="M4.93 19.07l2.83-2.83" />
+                                  <path d="M16.24 7.76l2.83-2.83" />
+                                </svg>
+                                Activate
+                              </button>
 
-          <button
-            className="btn btn-a btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => setEditingProgram(prog)}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-            </svg>
-            Edit
-          </button>
+                              <button
+                                className="btn btn-a btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => setEditingProgram(prog)}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                  <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                </svg>
+                                Edit
+                              </button>
 
-          <button
-            className="btn btn-r btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => setConfirmDeleteId(prog.id)}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-            </svg>
-            Archive
-          </button>
-        </>
-      )}
+                              <button
+                                className="btn btn-r btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => setConfirmDeleteId(prog.id)}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                                </svg>
+                                Archive
+                              </button>
+                            </>
+                          )}
 
-      {prog.status === 'Archived' && (
-        <>
-          <button
-            className="btn btn-p btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              background: '#6366f1',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => setViewingProgram(prog)}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6" />
-              <path d="M12 18v-6" />
-              <path d="M9 15h6" />
-            </svg>
-            View
-          </button>
+                          {prog.status === 'Archived' && (
+                            <>
+                              <button
+                                className="btn btn-p btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  background: '#6366f1',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => setViewingProgram(prog)}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <path d="M14 2v6h6" />
+                                  <path d="M12 18v-6" />
+                                  <path d="M9 15h6" />
+                                </svg>
+                                View
+                              </button>
 
-          <button
-            className="btn btn-g btn-sm"
-            style={{
-              padding: '4px 8px',
-              fontSize: '11px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '4px'
-            }}
-            onClick={() => {
-              const updated = programsList.map(p =>
-                p.id === prog.id ? { ...p, status: 'Active' } : p
-              );
-              setProgramsList(updated);
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 2v4" />
-              <path d="M12 18v4" />
-              <path d="M4.93 4.93l2.83 2.83" />
-              <path d="M16.24 16.24l2.83 2.83" />
-              <path d="M2 12h2" />
-              <path d="M20 12h2" />
-              <path d="M4.93 19.07l2.83-2.83" />
-              <path d="M16.24 7.76l2.83-2.83" />
-            </svg>
-            Restore
-          </button>
-        </>
-      )}
-    </div>
-  </div>
-);
+                              <button
+                                className="btn btn-g btn-sm"
+                                style={{
+                                  padding: '4px 8px',
+                                  fontSize: '11px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                onClick={() => {
+                                  const updated = programsList.map(p =>
+                                    p.id === prog.id ? { ...p, status: 'Active' } : p
+                                  );
+                                  setProgramsList(updated);
+                                }}
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M12 2v4" />
+                                  <path d="M12 18v4" />
+                                  <path d="M4.93 4.93l2.83 2.83" />
+                                  <path d="M16.24 16.24l2.83 2.83" />
+                                  <path d="M2 12h2" />
+                                  <path d="M20 12h2" />
+                                  <path d="M4.93 19.07l2.83-2.83" />
+                                  <path d="M16.24 7.76l2.83-2.83" />
+                                </svg>
+                                Restore
+                              </button>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    );
                   })}
                 </div>
               )}
 
               {/* =============================================
-                  📋 MODAL 1: VIEW PROGRAM DETAILS (Glass-Morphism + SVG)
+                  MODAL 1: VIEW PROGRAM DETAILS
                   ============================================= */}
               {viewingProgram && (
                 <div style={{
@@ -5563,9 +7185,6 @@ const getStatusBadgeClass = (status) => {
                 </div>
               )}
 
-              {/* =============================================
-                  🗑️ MODAL 3: DELETE CONFIRMATION (Glass-Morphism + SVG)
-                  ============================================= */}
               {confirmDeleteId && (
                 <div style={{
                   position: 'fixed',
@@ -5674,376 +7293,289 @@ const getStatusBadgeClass = (status) => {
                 SCREEN: ENCODE DISTRIBUTION
                 ════════════════════════════════════════ */}
             {screen === 'aid-encode' && (
-                  <div className="screen active">
-                    {/* Page Header */}
-                    <div className="ph">
-                      <div>
-                        <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                            <path d="M3.27 6.96L12 12.01l8.73-5.05" />
-                            <path d="M12 22.08V12" />
-                          </svg>
-                          Aid Distribution Encoding
-                        </div>
-                        <div className="ps">Log a beneficiary entry for an active relief program</div>
-                      </div>
+              <div className="screen active">
+                {/* Page Header */}
+
+                {/* Success Message Banner */}
+                {successMessage && (
+                  <div className="note note-s" style={{ marginBottom: '16px' }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                      <polyline points="20 6 9 17 4 12" />
+                    </svg>
+                    {successMessage}
+                  </div>
+                )}
+
+                {/* Batch Mode Indicator */}
+                {selectedResidents.length > 0 && (
+                  <div className="note note-i" style={{ marginBottom: '16px', flexDirection: 'column', alignItems: 'flex-start' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', width: '100%' }}>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                      </svg>
+                      <strong>Batch Mode Active:</strong> {selectedResidents.length} residents queued.
                       <button 
-                        className="btn btn-g" 
-                        onClick={() => nav('programs')} 
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                        className="btn btn-g btn-sm" 
+                        onClick={() => setSelectedResidents([])} 
+                        style={{ marginLeft: 'auto', color: 'var(--red)', borderColor: 'rgba(248, 113, 113, 0.3)' }}
                       >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M19 12H5" />
-                          <path d="M12 19l-7-7 7-7" />
-                        </svg>
-                        Back to Programs
+                        Cancel Batch
                       </button>
                     </div>
-
-                    {/* Success Message Banner */}
-                    {successMessage && (
-                      <div style={{ padding: '10px 14px', borderRadius: '8px', background: 'rgba(6, 95, 70, 0.4)', color: '#34d399', border: '1px solid #059669', fontSize: '13px', fontWeight: '500', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                        {successMessage}
-                      </div>
-                    )}
-
-                    {/* Batch Mode Indicator */}
-                    {selectedResidents.length > 0 && (
-                      <div style={{ background: 'rgba(59, 130, 246, 0.15)', border: '1px dashed #3b82f6', padding: '12px', borderRadius: '8px', marginBottom: '15px', fontSize: '12px', backdropFilter: 'blur(8px)' }}>
-                        <span style={{ color: '#3b82f6', fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                          </svg>
-                          Batch Mode Active:
-                        </span>
-                        {' '}<strong>{selectedResidents.length}</strong> residents are queued for processing from the Masterlist Selection.
-                        <div style={{ marginTop: '5px', maxHeight: '60px', overflowY: 'auto', fontSize: '11px', color: '#94a3b8', padding: '4px 8px', background: '#0f172a', borderRadius: '4px' }}>
-                          Queued: {residentsList.filter(r => selectedResidents.includes(r.id)).map(r => r.name).join(', ')}
-                        </div>
-                        <button 
-                          style={{ background: 'transparent', border: 'none', color: '#ef4444', fontSize: '11px', cursor: 'pointer', textDecoration: 'underline', padding: '0', marginTop: '6px', display: 'block' }}
-                          onClick={() => setSelectedResidents([])}
-                        >
-                          Cancel Batch Mode
-                        </button>
-                      </div>
-                    )}
-
-                    <div className="tc">
-                      {/* 📝 FORM PANEL */}
-                      <div className="fp" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px' }}>
-                        <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                          </svg>
-                          Distribution Entry Form
-                        </div>
-
-                        {/* Relief Program Field */}
-                        <div className="fg" style={{ marginBottom: '16px' }}>
-                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                              <polyline points="3.27 6.96 12 12.01 20.73 6.96" />
-                              <line x1="12" y1="22.08" x2="12" y2="12" />
-                            </svg>
-                            Relief Program <span style={{ color: '#ef4444' }}>*</span>
-                          </label>
-                          <select
-                            className="fc"
-                            value={selectedProgramId}
-                            onChange={(e) => {
-                              const progId = e.target.value;
-                              setSelectedProgramId(progId);
-                              const foundProg = programsList.find((p) => p.id === progId);
-                              if (foundProg) {
-                                setAidType(
-                                  foundProg.title.includes('Rice') ? 'Rice — 5kg Pack' : 'Financial / Cash Aid'
-                                );
-                              }
-                            }}
-                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: selectedProgramId ? '#f8fafc' : '#64748b', border: '1px solid #334155', fontSize: '13px', outline: 'none', cursor: 'pointer', transition: 'border-color 0.2s ease' }}
-                          >
-                            <option value="" disabled hidden>Choose active relief campaign...</option>
-                            {programsList
-                              .filter((prog) => prog.status === 'Active')
-                              .map((prog) => {
-                                const isFull = (prog.current || 0) >= (prog.target || 1);
-                                return (
-                                  <option key={prog.id} value={prog.id} disabled={isFull} style={{ background: '#1e293b', color: isFull ? '#94a3b8' : '#f8fafc', padding: '8px' }}>
-                                    {prog.title} ({prog.id}) — {prog.current}/{prog.target} {isFull ? '⚠️ (FULL)' : ''}
-                                  </option>
-                                );
-                              })}
-                          </select>
-                        </div>
-
-                        {/* Beneficiary Resident Selector with Filter & Clean Purok Text */}
-                        <div className="fg" style={{ marginBottom: '16px' }}>
-                          <label style={{ fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                              <circle cx="12" cy="7" r="4" />
-                            </svg>
-                            Beneficiary Resident <span style={{ color: '#ef4444' }}>*</span>
-                          </label>
-                          <div style={{ position: 'relative', marginBottom: '8px' }}>
-                            <input
-                              type="text"
-                              placeholder="Type to filter resident name, ID, or purok..."
-                              value={residentSearch}
-                              onChange={(e) => setResidentSearch(e.target.value)}
-                              style={{ width: '100%', padding: '8px 12px 8px 32px', borderRadius: '6px', background: '#1e293b', color: '#f8fafc', border: '1px solid #334155', fontSize: '12px', outline: 'none', boxSizing: 'border-box' }}
-                            />
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#64748b" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>
-                              <circle cx="11" cy="11" r="8" />
-                              <line x1="21" y1="21" x2="16.65" y2="16.65" />
-                            </svg>
-                            {residentSearch && (
-                              <button
-                                type="button"
-                                onClick={() => setResidentSearch('')}
-                                style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: '#94a3b8', cursor: 'pointer', fontSize: '12px', padding: '2px' }}
-                              >
-                                ✕
-                              </button>
-                            )}
-                          </div>
-
-                          <select
-                            className="fc"
-                            value={selectedResidentId}
-                            onChange={(e) => setSelectedResidentId(e.target.value)}
-                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: selectedResidentId ? '#f8fafc' : '#64748b', border: '1px solid #334155', fontSize: '13px', outline: 'none', cursor: 'pointer' }}
-                          >
-                            <option value="" disabled hidden>
-                              {filteredBeneficiaries.length > 0 ? "Select beneficiary from filtered list..." : "No matching resident found..."}
-                            </option>
-                            {filteredBeneficiaries.map((res) => (
-                              <option key={res.id} value={res.id} style={{ background: '#1e293b', color: '#f8fafc', padding: '8px' }}>
-                                {res.name} ({res.id || 'Resident'}) — {res.purok?.toString().toLowerCase().startsWith('purok') ? res.purok : `Purok ${res.purok || '1'}`}
-                              </option>
-                            ))}
-                          </select>
-                        </div>
-
-                        {/* Aid Type Field */}
-                        <div className="fg" style={{ marginBottom: '16px' }}>
-                          <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M20 7h-9" />
-                              <path d="M14 17H5" />
-                              <path d="M9 7v10" />
-                            </svg>
-                            Aid Type <span style={{ color: '#ef4444' }}>*</span>
-                          </label>
-                          <input
-                            type="text"
-                            className="fc"
-                            value={aidType}
-                            onChange={(e) => setAidType(e.target.value)}
-                            placeholder="e.g., Rice — 5kg"
-                            style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', background: '#0f172a', color: '#f8fafc', border: '1px solid #334155', fontSize: '13px', outline: 'none' }}
-                          />
-                        </div>
-
-                        {/* 🔢 Custom Stepper + Add Entry Action Grid */}
-                        <div className="fg2" style={{ marginBottom: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                          {/* Custom Quantity Stepper */}
-                          <div className="fg">
-                            <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: '600', color: '#94a3b8', marginBottom: '6px' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 11.25v8.75a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-8.75" />
-                                <path d="M18 11l-3-3-3 3" />
-                              </svg>
-                              Quantity <span style={{ color: '#ef4444' }}>*</span>
-                            </label>
-                            <div style={{ display: 'flex', alignItems: 'center', background: '#0f172a', border: '1px solid #334155', borderRadius: '8px', overflow: 'hidden' }}>
-                              <button
-                                type="button"
-                                onClick={() => setQuantity(prev => Math.max(1, (Number(prev) || 1) - 1))}
-                                style={{ padding: '0 12px', height: '38px', background: '#1e293b', border: 'none', color: '#94a3b8', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 0.2s ease, color 0.2s ease' }}
-                                onMouseEnter={(e) => { e.currentTarget.style.background = '#334155'; e.currentTarget.style.color = '#f8fafc'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = '#1e293b'; e.currentTarget.style.color = '#94a3b8'; }}
-                              >
-                                −
-                              </button>
-                              <input
-                                type="number"
-                                min="1"
-                                value={quantity}
-                                onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                                style={{ width: '100%', textAlign: 'center', background: 'transparent', border: 'none', color: '#f8fafc', fontSize: '13px', fontWeight: '600', outline: 'none' }}
-                              />
-                              <button
-                                type="button"
-                                onClick={() => setQuantity(prev => (Number(prev) || 0) + 1)}
-                                style={{ padding: '0 12px', height: '38px', background: '#1e293b', border: 'none', color: '#94a3b8', fontSize: '16px', fontWeight: 'bold', cursor: 'pointer', transition: 'background 0.2s ease, color 0.2s ease' }}
-                                onMouseEnter={(e) => { e.currentTarget.style.background = '#334155'; e.currentTarget.style.color = '#f8fafc'; }}
-                                onMouseLeave={(e) => { e.currentTarget.style.background = '#1e293b'; e.currentTarget.style.color = '#94a3b8'; }}
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-
-                          {/* Integrated Add / Log Entry Button */}
-                          <div className="fg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                            <button
-                              type="button"
-                              className="btn btn-p"
-                              onClick={handleEncodeSubmit}
-                              disabled={!selectedProgramId || !selectedResidentId}
-                              style={{
-                                height: '38px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justify: 'center',
-                                gap: '6px',
-                                borderRadius: '8px',
-                                background: '#0284c7',
-                                color: '#ffffff',
-                                fontWeight: '600',
-                                fontSize: '13px',
-                                border: 'none',
-                                cursor: (!selectedProgramId || !selectedResidentId) ? 'not-allowed' : 'pointer',
-                                opacity: (!selectedProgramId || !selectedResidentId) ? 0.5 : 1,
-                                transition: 'background 0.2s ease'
-                              }}
-                              onMouseEnter={(e) => { if (selectedProgramId && selectedResidentId) e.currentTarget.style.background = '#0369a1'; }}
-                              onMouseLeave={(e) => { if (selectedProgramId && selectedResidentId) e.currentTarget.style.background = '#0284c7'; }}
-                            >
-                              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                <line x1="12" y1="5" x2="12" y2="19" />
-                                <line x1="5" y1="12" x2="19" y2="12" />
-                              </svg>
-                              Add Entry
-                            </button>
-                          </div>
-                        </div>
-
-                        {/* Remarks */}
-                        <div className="fg">
-                          <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                              <path d="M14 2v6h6" />
-                              <path d="M12 18v-6" />
-                              <path d="M9 15h6" />
-                            </svg>
-                            Remarks
-                          </label>
-                          <textarea
-                            className="fc"
-                            placeholder="Optional notes..."
-                            value={remarks}
-                            onChange={(e) => setRemarks(e.target.value)}
-                            style={{ minHeight: '70px' }}
-                          />
-                        </div>
-
-                        {/* Duplicate Validation Status */}
-                        {!duplicateAlert && selectedResidentId && (
-                          <div className="note note-s" style={{ marginTop: '12px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                              <path d="M22 4L12 14.01l-3-3" />
-                            </svg>
-                            No duplicate — resident not yet recorded under this program.
-                          </div>
-                        )}
-                      </div>
-
-                      {/* 📊 AID LOGS TABLE */}
-                      <div>
-                        {duplicateAlert && (
-                          <div className="note note-e" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                              <path d="M12 9v4" />
-                              <path d="M12 17h.01" />
-                            </svg>
-                            <strong>{duplicateAlert}</strong>
-                          </div>
-                        )}
-
-                        <div className="tw" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px' }}>
-                          <table style={{ width: '100%' }}>
-                            <thead>
-                              <tr>
-                                <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>Resident</th>
-                                <th style={{ fontSize: '11px', color: 'var(--muted)' }}>Aid</th>
-                                <th style={{ fontSize: '11px', color: 'var(--muted)' }}>By</th>
-                                <th style={{ fontSize: '11px', color: 'var(--muted)' }}>Time</th>
-                                <th style={{ fontSize: '11px', color: 'var(--muted)' }}>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {aidLogs.map((log) => (
-                                <tr
-                                  key={log.id}
-                                  style={{ borderBottom: '1px solid rgba(79, 142, 247, 0.1)', transition: 'background 0.2s ease' }}
-                                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.05)')}
-                                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-                                >
-                                  <td>{log.residentName}</td>
-                                  <td>{log.aid}</td>
-                                  <td>{log.officer}</td>
-                                  <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#94a3b8' }}>{log.time}</td>
-                                  <td>
-                                    <span className={`badge ${log.status === 'OK' ? 'g' : log.status === 'Synced' ? 't' : 'r'}`}>
-                                      {log.status === 'OK' && (
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                                          <path d="M22 4L12 14.01l-3-3" />
-                                        </svg>
-                                      )}
-                                      {log.status === 'Synced' && (
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                                        </svg>
-                                      )}
-                                      {log.status === 'Error' && (
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                                          <path d="M12 9v4" />
-                                          <path d="M12 17h.01" />
-                                        </svg>
-                                      )}
-                                      {' '}{log.status}
-                                    </span>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      </div>
+                    <div style={{ width: '100%', maxHeight: '60px', overflowY: 'auto', fontSize: '11px', color: 'var(--muted)', padding: '8px', background: 'var(--surface2)', borderRadius: '6px', fontFamily: 'var(--mono)' }}>
+                      {residentsList.filter(r => selectedResidents.includes(r.id)).map(r => r.name).join(', ')}
                     </div>
                   </div>
                 )}
+
+                <div className="tc">
+                  {/* FORM PANEL */}
+                  <div className="fp">
+                    <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      Distribution Entry Form
+                    </div>
+
+                    {/* Relief Program Field */}
+                    <div className="fg">
+                      <label className="fl">Relief Program <span style={{ color: 'var(--red)' }}>*</span></label>
+                      <select 
+                        className="fc" 
+                        value={selectedProgramId} 
+                        onChange={(e) => {
+                          const progId = e.target.value;
+                          setSelectedProgramId(progId);
+                          const foundProg = programsList.find((p) => p.id === progId);
+                          if (foundProg) {
+                            setAidType(foundProg.title.includes('Rice') ? 'Rice — 5kg Pack' : 'Financial / Cash Aid');
+                          }
+                        }}
+                      >
+                        <option value="" disabled hidden>Choose active relief campaign...</option>
+                        {programsList
+                          .filter((prog) => prog.status === 'Active')
+                          .map((prog) => {
+                            const isFull = (prog.current || 0) >= (prog.target || 1);
+                            return (
+                              <option key={prog.id} value={prog.id} disabled={isFull}>
+                                {prog.title} ({prog.id}) — {prog.current}/{prog.target} {isFull ? '• FULL' : ''}
+                              </option>
+                            );
+                          })}
+                      </select>
+                    </div>
+
+                    {/* Beneficiary Resident Selector */}
+                    <div className="fg">
+                      <label className="fl">Beneficiary Resident <span style={{ color: 'var(--red)' }}>*</span></label>
+                      <div style={{ position: 'relative', marginBottom: '8px' }}>
+                        <input
+                          type="text"
+                          className="fc"
+                          placeholder="Type to filter name, ID, or purok..."
+                          value={residentSearch}
+                          onChange={(e) => setResidentSearch(e.target.value)}
+                          style={{ paddingLeft: '32px' }}
+                        />
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)' }}>
+                          <circle cx="11" cy="11" r="8" />
+                          <line x1="21" y1="21" x2="16.65" y2="16.65" />
+                        </svg>
+                        {residentSearch && (
+                          <button
+                            type="button"
+                            onClick={() => setResidentSearch('')}
+                            style={{ position: 'absolute', right: '10px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', display: 'flex' }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                          </button>
+                        )}
+                      </div>
+                      <select 
+                        className="fc" 
+                        value={selectedResidentId} 
+                        onChange={(e) => setSelectedResidentId(e.target.value)}
+                      >
+                        <option value="" disabled hidden>
+                          {filteredBeneficiaries.length > 0 ? "Select beneficiary from filtered list..." : "No matching resident found..."}
+                        </option>
+                        {filteredBeneficiaries.map((res) => (
+                          <option key={res.id} value={res.id}>
+                            {res.name} ({res.id || 'Resident'}) — {res.purok?.toString().toLowerCase().startsWith('purok') ? res.purok : `Purok ${res.purok || '1'}`}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Aid Type & Quantity Grid */}
+                    <div className="fg2">
+                      <div className="fg">
+                        <label className="fl">Aid Type <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <input
+                          type="text"
+                          className="fc"
+                          value={aidType}
+                          onChange={(e) => setAidType(e.target.value)}
+                          placeholder="e.g., Rice — 5kg"
+                        />
+                      </div>
+                      <div className="fg">
+                        <label className="fl">Quantity <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <div style={{ display: 'flex', alignItems: 'center', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', overflow: 'hidden', background: 'var(--surface2)' }}>
+                          <button
+                            type="button"
+                            onClick={() => setQuantity(prev => Math.max(1, (Number(prev) || 1) - 1))}
+                            className="btn btn-g"
+                            style={{ borderRadius: 0, border: 'none', borderRight: '1px solid var(--border)', padding: '8px 12px' }}
+                          >
+                            −
+                          </button>
+                          <input
+                            type="number"
+                            min="1"
+                            value={quantity}
+                            onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
+                            className="fc"
+                            style={{ textAlign: 'center', border: 'none', background: 'transparent', boxShadow: 'none' }}
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setQuantity(prev => (Number(prev) || 0) + 1)}
+                            className="btn btn-g"
+                            style={{ borderRadius: 0, border: 'none', borderLeft: '1px solid var(--border)', padding: '8px 12px' }}
+                          >
+                            +
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Remarks */}
+                    <div className="fg">
+                      <label className="fl">Remarks</label>
+                      <textarea
+                        className="fc"
+                        placeholder="Optional notes..."
+                        value={remarks}
+                        onChange={(e) => setRemarks(e.target.value)}
+                        rows={3}
+                      />
+                    </div>
+
+                    {/* Duplicate Validation Status */}
+                    {!duplicateAlert && selectedResidentId && (
+                      <div className="note note-s" style={{ marginTop: '12px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                          <path d="M22 4L12 14.01l-3-3" />
+                        </svg>
+                        No duplicate — resident not yet recorded under this program.
+                      </div>
+                    )}
+
+                    {/* Submit Button */}
+                    <div className="fa" style={{ marginTop: '16px' }}>
+                      <button
+                        type="button"
+                        className="btn btn-p"
+                        onClick={handleEncodeSubmit}
+                        disabled={!selectedProgramId || !selectedResidentId}
+                        style={{ width: '100%', justifyContent: 'center', opacity: (!selectedProgramId || !selectedResidentId) ? 0.5 : 1 }}
+                      >
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                          <line x1="12" y1="5" x2="12" y2="19" />
+                          <line x1="5" y1="12" x2="19" y2="12" />
+                        </svg>
+                        Add Entry
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* 📊 AID LOGS TABLE */}
+                  <div>
+                    {duplicateAlert && (
+                      <div className="note note-e" style={{ marginBottom: '14px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                          <path d="M12 9v4" />
+                          <path d="M12 17h.01" />
+                        </svg>
+                        <strong>{duplicateAlert}</strong>
+                      </div>
+                    )}
+
+                    <div className="tw">
+                      <table>
+                        <thead>
+                          <tr>
+                            <th>Resident</th>
+                            <th>Aid</th>
+                            <th>By</th>
+                            <th>Time</th>
+                            <th>Status</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {aidLogs.length === 0 ? (
+                            <tr>
+                              <td colSpan="5" style={{ textAlign: 'center', padding: '32px', color: 'var(--muted)' }}>
+                                No logs recorded yet for this session.
+                              </td>
+                            </tr>
+                          ) : (
+                            aidLogs.map((log) => (
+                              <tr key={log.id}>
+                                <td style={{ fontWeight: 600 }}>{log.residentName}</td>
+                                <td>{log.aid}</td>
+                                <td>{log.officer}</td>
+                                <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>{log.time}</td>
+                                <td>
+                                  <span className={`badge ${log.status === 'OK' ? 'g' : log.status === 'Synced' ? 't' : 'r'}`}>
+                                    {log.status === 'OK' && (
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                                        <path d="M22 4L12 14.01l-3-3" />
+                                      </svg>
+                                    )}
+                                    {log.status === 'Synced' && (
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                                      </svg>
+                                    )}
+                                    {log.status === 'Error' && (
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                        <path d="M12 9v4" />
+                                        <path d="M12 17h.01" />
+                                      </svg>
+                                    )}
+                                    {' '}{log.status}
+                                  </span>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* ════════════════════════════════════════
                 SCREEN: DISTRIBUTION LOGS
                ════════════════════════════════════════ */}
               {screen === 'aid-logs' && (
                 <div className="screen active">
-                  <div className="ph">
-                    <div>
-                      <div className="pt">Aid Distribution Logs</div>
-                      <div className="ps">Full transaction log</div>
-                    </div>
-                  </div>
                   
                   <div className="tw">
                     <div className="tb">
                       {/* 🔍 GUMAGANANG SEARCH INPUT */}
                       <div className="sb-box">
-                        <span>🔍</span>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"> <circle cx="11" cy="11" r="8" /> <path d="M21 21l-4.35-4.35" /> </svg>
                         <input 
                           placeholder="Search beneficiary or log ID..." 
                           value={logSearchQuery}
@@ -6059,189 +7591,7 @@ const getStatusBadgeClass = (status) => {
                         onChange={(e) => setProgramFilter(e.target.value)}
                       >
                         <option value="All">All Programs</option>
-                        {programsList.map((prog) => {
-  // Calculate percentage for the progress bar
-  const percent = Math.min(100, Math.round(((prog.current || 0) / (prog.target || 1)) * 100));
-
-  return (
-    <div
-      className="card"
-      key={prog.id}
-      style={{
-        display: 'flex',
-        flexDirection: 'column',
-        justify: 'space-between',
-        border: '1px solid rgba(79, 142, 247, 0.2)',
-        position: 'relative',
-        background: 'rgba(30, 41, 59, 0.4)',
-        backdropFilter: 'blur(8px)',
-        borderRadius: '8px',
-        padding: '16px',
-        transition: 'all 0.3s ease',
-      }}
-      onMouseEnter={(e) => {
-        e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)';
-        e.currentTarget.style.background = 'rgba(30, 41, 59, 0.6)';
-      }}
-      onMouseLeave={(e) => {
-        e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.2)';
-        e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)';
-      }}
-    >
-      <div>
-        {/* CARD HEADER WITH DYNAMIC BADGE */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
-          {/* Call the helper function here */}
-          <span className={`badge ${getStatusBadgeClass(prog.status)}`} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <span style={{ height: '6px', width: '6px', borderRadius: '50%', backgroundColor: 'currentColor', display: 'inline-block' }}></span>
-            {prog.status}
-          </span>
-
-          <span className="badge gr" style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <path d="M14 2v6h6" />
-              <path d="M12 18v-6" />
-              <path d="M9 15h6" />
-            </svg>
-            {prog.dateLabel || 'Campaign'}
-          </span>
-        </div>
-
-        <div className="ct" style={{ fontWeight: 'bold', fontSize: '15px', color: '#f8fafc', marginBottom: '4px' }}>
-          {prog.title}
-        </div>
-        <div className="cm" style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#94a3b8', marginBottom: '10px' }}>
-          {prog.id}
-        </div>
-
-        {/* PROGRESS BAR */}
-        <div className="prog" style={{ margin: '10px 0', background: '#334155', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-          <div
-            className="prog-b"
-            style={{
-              width: `${percent}%`,
-              height: '100%',
-              background: prog.status === 'Completed' ? 'linear-gradient(90deg, #10b981, #14b8a6)' : prog.status === 'Upcoming' ? '#64748b' : '#3b82f6',
-              transition: 'width 0.4s ease-in-out',
-            }}
-          />
-        </div>
-
-        <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', justifyContent: 'space-between' }}>
-          <span>
-            {prog.current} / {prog.target} targets
-          </span>
-          <strong>{percent}%</strong>
-        </div>
-      </div>
-
-      {/* ACTION BUTTONS */}
-      <div style={{ display: 'flex', gap: '6px', marginTop: '16px', borderTop: '1px solid rgba(79, 142, 247, 0.2)', paddingTop: '12px', flexWrap: 'wrap' }}>
-        {prog.status === 'Active' && (
-          <>
-            <button className="btn btn-p btn-sm" style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => nav('aid-encode')}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-              </svg>
-              Encode
-            </button>
-            <button className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => nav('aid-logs')}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M12 18v-6" />
-                <path d="M9 15h6" />
-              </svg>
-              Logs
-            </button>
-            <button className="btn btn-a btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#d97706', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => setEditingProgram(prog)}>
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-              Edit
-            </button>
-            <button
-              className="btn btn-sm"
-              style={{ padding: '4px 8px', fontSize: '11px', background: '#10b981', color: 'white', display: 'flex', alignItems: 'center', gap: '4px' }}
-              onClick={() => {
-                const updated = programsList.map((p) => (p.id === prog.id ? { ...p, status: 'Completed' } : p));
-                setProgramsList(updated);
-                alert(`Program campaign ${prog.title} has been successfully closed and marked as Completed.`);
-              }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                <path d="M22 4L12 14.01l-3-3" />
-              </svg>
-              Complete
-            </button>
-          </>
-        )}
-
-        <button
-          className="btn btn-sm"
-          style={{ padding: '4px 8px', fontSize: '11px', background: '#475569', color: '#cbd5e1', display: 'flex', alignItems: 'center', gap: '4px' }}
-          onClick={async () => {
-            const updated = programsList.map((p) => (p.id === prog.id ? { ...p, status: 'Archived' } : p));
-            setProgramsList(updated);
-            if (typeof createAuditLog === 'function') {
-              await createAuditLog({
-                action: 'ARCHIVE',
-                module: 'PROGRAMS',
-                recordId: prog.id,
-                details: `Archived program: ${prog.title}`,
-              });
-            }
-            alert(`Campaign historical logs archived successfully.`);
-          }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-          </svg>
-          Archive
-        </button>
-
-        {prog.status === 'Upcoming' && (
-          <>
-            <button
-              className="btn btn-p btn-sm"
-              style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
-              onClick={() => {
-                const updated = programsList.map((p) => (p.id === prog.id ? { ...p, status: 'Active' } : p));
-                setProgramsList(updated);
-              }}
-            >
-              Activate
-            </button>
-            <button className="btn btn-a btn-sm" style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => setEditingProgram(prog)}>
-              Edit
-            </button>
-          </>
-        )}
-
-        {prog.status === 'Archived' && (
-          <>
-            <button className="btn btn-p btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#6366f1', display: 'flex', alignItems: 'center', gap: '4px' }} onClick={() => setViewingProgram(prog)}>
-              View
-            </button>
-            <button
-              className="btn btn-g btn-sm"
-              style={{ padding: '4px 8px', fontSize: '11px', display: 'flex', alignItems: 'center', gap: '4px' }}
-              onClick={() => {
-                const updated = programsList.map((p) => (p.id === prog.id ? { ...p, status: 'Active' } : p));
-                setProgramsList(updated);
-              }}
-            >
-              Restore
-            </button>
-          </>
-        )}
-      </div>
-    </div>
-  );
-})}
+                        
                       </select>
                       
                       {/* 🔄 GUMAGANANG STATUS FILTER DROPDOWN */}
@@ -6305,10 +7655,6 @@ const getStatusBadgeClass = (status) => {
                 ════════════════════════════════════════ */}
             {role === 'admin' && screen === 'add-beneficiary' && (
               <div className="screen active">
-                <div className="ph">
-                  <div className="pt">Add Beneficiaries</div>
-                  <button className="btn btn-g" onClick={() => nav('aid-encode')}>← Back</button>
-                </div>
                 <div className="fp">
                   <div className="fp-t"> Add Beneficiary List</div>
                   <div className="fg2">
@@ -6472,137 +7818,76 @@ const getStatusBadgeClass = (status) => {
 
             {/* ════════════════════════════════════════
                 SCREEN: FILE BLOTTER ENTRY
-             {/* ════════════════════════════════════════ */}
+                ════════════════════════════════════════ */}
               {screen === 'blotter-new' && (
                 <div className="screen active" style={{ position: 'relative' }}>
-                  <div className="ph">
-                    <div>
-                      <div className="pt" style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                          <path d="M12 9v4" />
-                          <path d="M12 17h.01" />
-                        </svg>
-                        File Blotter Entry
-                      </div>
-                      <div className="ps">
-                        Record a new community incident in the digital legal blotter engine
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-g"
-                      onClick={() => nav('blotter-manage')}
-                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                    >
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M19 12H5" />
-                        <path d="M12 19l-7-7 7-7" />
-                      </svg>
-                      Back to Registry
-                    </button>
-                  </div>
 
-                  {/* =============================================
-                      🔐 SECTION 1: SYSTEM METADATA (Read-Only + Glass-Morphism)
-                      ============================================= */}
                   <form onSubmit={handleCreateBlotterEntry}>
-                    <div className="fp" style={{
-                      background: 'rgba(15, 23, 42, 0.6)',
-                      backdropFilter: 'blur(10px)',
-                      borderLeft: '4px solid var(--accent)',
-                      borderRadius: '8px',
-                      marginBottom: '16px'
-                    }}>
-                      <div className="fp-t" style={{
-                        color: 'var(--accent)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                        </svg>
+                    {/* System Metadata */}
+                    <div className="fp" style={{ marginBottom: '16px' }}>
+                      <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         System Metadata (Read-Only)
                       </div>
-                      <div className="fg3" style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                        gap: '12px',
-                        marginTop: '8px'
-                      }}>
+                      <div
+                        className="fg3"
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                          gap: '12px',
+                          marginTop: '8px',
+                        }}
+                      >
                         <div className="fg">
-                          <label className="fl" style={{ color: '#94a3b8' }}>Blotter Tracking No.</label>
+                          <label className="fl">Blotter Tracking No.</label>
                           <input
                             className="fc"
-                            style={{
-                              background: '#1e293b',
-                              color: '#60a5fa',
-                              fontWeight: 'bold',
-                              fontFamily: 'var(--mono)'
-                            }}
                             readOnly
                             value={`BLT-2026-${String(blotterList.length + 125).padStart(5, '0')}`}
+                            style={{ fontFamily: 'var(--mono)', fontWeight: 'bold', color: 'var(--accent)' }}
                           />
                         </div>
                         <div className="fg">
-                          <label className="fl" style={{ color: '#94a3b8' }}>Officer Handling Case</label>
-                          <input
-                            className="fc"
-                            style={{ background: '#1e293b', color: '#cbd5e1' }}
-                            readOnly
-                            value="Juhairo Macabangon"
-                          />
+                          <label className="fl">Officer Handling Case</label>
+                          <input className="fc" readOnly value="Juhairo Macabangon" />
                         </div>
                         <div className="fg">
-                          <label className="fl" style={{ color: '#94a3b8' }}>Date Logged</label>
+                          <label className="fl">Date Logged</label>
                           <input
                             className="fc"
-                            style={{ background: '#1e293b', color: '#cbd5e1' }}
                             readOnly
                             value={new Date().toLocaleDateString('en-PH', {
                               year: 'numeric',
                               month: 'long',
-                              day: 'numeric'
+                              day: 'numeric',
                             })}
                           />
                         </div>
                       </div>
                     </div>
 
-                    {/* =============================================
-                      🚨 SECTION 2: INCIDENT CHARACTERISTICS (SVG Icons + Priority Badges)
-                      ============================================= */}
-                    <div className="fp" style={{
-                      background: 'rgba(26, 29, 36, 0.4)',
-                      backdropFilter: 'blur(8px)',
-                      border: '1px solid rgba(79, 142, 247, 0.2)',
-                      borderRadius: '8px',
-                      marginBottom: '16px'
-                    }}>
-                      <div className="fp-t" style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                          <path d="M12 9v4" />
-                          <path d="M12 17h.01" />
-                        </svg>
+                    {/* Incident Parameters & Priority */}
+                    <div
+                      className="fp"
+                      style={{
+                        background: 'rgba(26, 29, 36, 0.4)',
+                        backdropFilter: 'blur(8px)',
+                        border: '1px solid rgba(79, 142, 247, 0.2)',
+                        borderRadius: '8px',
+                        marginBottom: '16px',
+                      }}
+                    >
+                      <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         Incident Parameters & Priority
                       </div>
 
-                      {/* Date, Time, Priority */}
-                      <div className="fg3" style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
-                        gap: '12px'
-                      }}>
+                      <div
+                        className="fg3"
+                        style={{
+                          display: 'grid',
+                          gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+                          gap: '12px',
+                        }}
+                      >
                         <div className="fg">
                           <label className="fl">Date of Incident</label>
                           <input
@@ -6610,7 +7895,7 @@ const getStatusBadgeClass = (status) => {
                             type="date"
                             required
                             value={blotterForm.date}
-                            onChange={(e) => setBlotterForm({...blotterForm, date: e.target.value})}
+                            onChange={(e) => setBlotterForm({ ...blotterForm, date: e.target.value })}
                           />
                         </div>
                         <div className="fg">
@@ -6620,7 +7905,7 @@ const getStatusBadgeClass = (status) => {
                             type="time"
                             required
                             value={blotterForm.time}
-                            onChange={(e) => setBlotterForm({...blotterForm, time: e.target.value})}
+                            onChange={(e) => setBlotterForm({ ...blotterForm, time: e.target.value })}
                           />
                         </div>
                         <div className="fg">
@@ -6628,34 +7913,25 @@ const getStatusBadgeClass = (status) => {
                           <select
                             className="fc"
                             value={blotterForm.priority}
-                            onChange={(e) => setBlotterForm({...blotterForm, priority: e.target.value})}
+                            onChange={(e) => setBlotterForm({ ...blotterForm, priority: e.target.value })}
                           >
-                            <option value="Low">
-                              <span style={{ color: '#10b981' }}>●</span> Low Priority
-                            </option>
-                            <option value="Medium">
-                              <span style={{ color: '#fbbf24' }}>●</span> Medium Priority
-                            </option>
-                            <option value="High">
-                              <span style={{ color: '#f87171' }}>●</span> High Priority
-                            </option>
+                            <option value="Low">Low Priority</option>
+                            <option value="Medium">Medium Priority</option>
+                            <option value="High">High Priority</option>
                           </select>
                         </div>
                       </div>
 
-                      {/* Incident Type & Location */}
-                      <div className="fg2" style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 1fr',
-                        gap: '12px',
-                        marginTop: '12px'
-                      }}>
+                      <div
+                        className="fg2"
+                        style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}
+                      >
                         <div className="fg">
                           <label className="fl">Incident Type Classification</label>
                           <select
                             className="fc"
                             value={blotterForm.type}
-                            onChange={(e) => setBlotterForm({...blotterForm, type: e.target.value})}
+                            onChange={(e) => setBlotterForm({ ...blotterForm, type: e.target.value })}
                           >
                             <option value="Noise Complaint">Noise Complaint</option>
                             <option value="Physical Altercation">Physical Altercation</option>
@@ -6676,58 +7952,51 @@ const getStatusBadgeClass = (status) => {
                             required
                             placeholder="e.g. Purok 5, near the public plaza"
                             value={blotterForm.location}
-                            onChange={(e) => setBlotterForm({...blotterForm, location: e.target.value})}
+                            onChange={(e) => setBlotterForm({ ...blotterForm, location: e.target.value })}
                           />
                         </div>
                       </div>
                     </div>
 
-                    {/* =============================================
-                      👥 SECTION 3: PARTIES INVOLVED (SVG Icons + Intelligent Search)
-                      ============================================= */}
-                    <div className="fp" style={{
-                      background: 'rgba(26, 29, 36, 0.4)',
-                      backdropFilter: 'blur(8px)',
-                      border: '1px solid rgba(79, 142, 247, 0.2)',
-                      borderRadius: '8px',
-                      marginBottom: '16px'
-                    }}>
-                      <div className="fp-t" style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                          <circle cx="9" cy="7" r="4" />
-                          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                        </svg>
+                    {/* Parties Involved */}
+                    <div
+                      className="fp"
+                      style={{
+                        background: 'rgba(26, 29, 36, 0.4)',
+                        backdropFilter: 'blur(8px)',
+                        border: '1px solid rgba(79, 142, 247, 0.2)',
+                        borderRadius: '8px',
+                        marginBottom: '16px',
+                      }}
+                    >
+                      <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         Legal Parties Involved
                       </div>
 
-                      <div className="fg2" style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 1fr',
-                        gap: '20px'
-                      }}>
-                        {/* COMPLAINANT */}
+                      <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                        {/* Complainant */}
                         <div className="fg" style={{ position: 'relative' }}>
-                          <div style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            marginBottom: '4px'
-                          }}>
-                            <label className="fl" style={{ margin: 0 }}>Complainant (Nagrereklamo)</label>
-                            <label style={{
-                              fontSize: '11px',
-                              color: '#64748b',
+                          <div
+                            style={{
                               display: 'flex',
+                              justifyContent: 'space-between',
                               alignItems: 'center',
-                              gap: '4px',
-                              cursor: 'pointer'
-                            }}>
+                              marginBottom: '4px',
+                            }}
+                          >
+                            <label className="fl" style={{ margin: 0 }}>
+                              Complainant (Nagrereklamo)
+                            </label>
+                            <label
+                              style={{
+                                fontSize: '11px',
+                                color: '#64748b',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                cursor: 'pointer',
+                              }}
+                            >
                               <input
                                 type="checkbox"
                                 checked={blotterForm.isComplainantNonResident}
@@ -6736,15 +8005,11 @@ const getStatusBadgeClass = (status) => {
                                   setBlotterForm({
                                     ...blotterForm,
                                     isComplainantNonResident: checked,
-                                    complainant: ''
+                                    complainant: '',
                                   });
                                   setComplainantQuery('');
                                 }}
                               />
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                                <circle cx="9" cy="7" r="4" />
-                              </svg>
                               Non-resident
                             </label>
                           </div>
@@ -6755,7 +8020,9 @@ const getStatusBadgeClass = (status) => {
                               required
                               placeholder="Enter full name of non-resident complainant"
                               value={blotterForm.complainant}
-                              onChange={(e) => setBlotterForm({...blotterForm, complainant: e.target.value})}
+                              onChange={(e) =>
+                                setBlotterForm({ ...blotterForm, complainant: e.target.value })
+                              }
                             />
                           ) : (
                             <>
@@ -6778,14 +8045,16 @@ const getStatusBadgeClass = (status) => {
                                   />
                                 </div>
                                 {blotterForm.complainant && (
-                                  <div style={{
-                                    fontSize: '11px',
-                                    color: '#10b981',
-                                    marginTop: '2px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '4px'
-                                  }}>
+                                  <div
+                                    style={{
+                                      fontSize: '11px',
+                                      color: '#10b981',
+                                      marginTop: '2px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                    }}
+                                  >
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                                     </svg>
@@ -6795,22 +8064,26 @@ const getStatusBadgeClass = (status) => {
                               </div>
 
                               {showComplainantDropdown && complainantQuery && (
-                                <div style={{
-                                  position: 'absolute',
-                                  top: '64px',
-                                  left: 0,
-                                  width: '100%',
-                                  background: '#1e293b',
-                                  border: '1px solid #334155',
-                                  borderRadius: '4px',
-                                  zIndex: 10,
-                                  maxHeight: '150px',
-                                  overflowY: 'auto',
-                                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)'
-                                }}>
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: '64px',
+                                    left: 0,
+                                    width: '100%',
+                                    background: '#1e293b',
+                                    border: '1px solid #334155',
+                                    borderRadius: '4px',
+                                    zIndex: 10,
+                                    maxHeight: '150px',
+                                    overflowY: 'auto',
+                                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
+                                  }}
+                                >
                                   {residentsRegistry
-                                    .filter(r => r.name.toLowerCase().includes(complainantQuery.toLowerCase()))
-                                    .map(res => (
+                                    .filter((r) =>
+                                      r.name.toLowerCase().includes(complainantQuery.toLowerCase())
+                                    )
+                                    .map((res) => (
                                       <div
                                         key={res.id}
                                         style={{
@@ -6822,21 +8095,25 @@ const getStatusBadgeClass = (status) => {
                                           display: 'flex',
                                           alignItems: 'center',
                                           gap: '6px',
-                                          transition: 'background 0.2s ease'
+                                          transition: 'background 0.2s ease',
                                         }}
                                         onClick={() => {
-                                          setBlotterForm({...blotterForm, complainant: res.name});
+                                          setBlotterForm({ ...blotterForm, complainant: res.name });
                                           setComplainantQuery(res.name);
                                           setShowComplainantDropdown(false);
                                         }}
-                                        onMouseEnter={(e) => (e.target.style.background = 'rgba(79, 142, 247, 0.1)')}
-                                        onMouseLeave={(e) => (e.target.style.background = 'transparent')}
+                                        onMouseEnter={(e) =>
+                                          (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)')
+                                        }
+                                        onMouseLeave={(e) =>
+                                          (e.currentTarget.style.background = 'transparent')
+                                        }
                                       >
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                                           <circle cx="9" cy="7" r="4" />
                                         </svg>
-                                        {res.name} ({res.purok}) —
+                                        {res.name} ({res.purok}) —{' '}
                                         <span style={{ color: '#64748b', fontSize: '10px' }}>{res.id}</span>
                                       </div>
                                     ))}
@@ -6846,23 +8123,29 @@ const getStatusBadgeClass = (status) => {
                           )}
                         </div>
 
-                        {/* RESPONDENT */}
+                        {/* Respondent */}
                         <div className="fg" style={{ position: 'relative' }}>
-                          <div style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            marginBottom: '4px'
-                          }}>
-                            <label className="fl" style={{ margin: 0 }}>Respondent (Inirereklamo)</label>
-                            <label style={{
-                              fontSize: '11px',
-                              color: '#64748b',
+                          <div
+                            style={{
                               display: 'flex',
+                              justifyContent: 'space-between',
                               alignItems: 'center',
-                              gap: '4px',
-                              cursor: 'pointer'
-                            }}>
+                              marginBottom: '4px',
+                            }}
+                          >
+                            <label className="fl" style={{ margin: 0 }}>
+                              Respondent (Inirereklamo)
+                            </label>
+                            <label
+                              style={{
+                                fontSize: '11px',
+                                color: '#64748b',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '4px',
+                                cursor: 'pointer',
+                              }}
+                            >
                               <input
                                 type="checkbox"
                                 checked={blotterForm.isRespondentNonResident}
@@ -6871,15 +8154,11 @@ const getStatusBadgeClass = (status) => {
                                   setBlotterForm({
                                     ...blotterForm,
                                     isRespondentNonResident: checked,
-                                    respondent: ''
+                                    respondent: '',
                                   });
                                   setRespondentQuery('');
                                 }}
                               />
-                              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                                <circle cx="9" cy="7" r="4" />
-                              </svg>
                               Non-resident
                             </label>
                           </div>
@@ -6890,7 +8169,9 @@ const getStatusBadgeClass = (status) => {
                               required
                               placeholder="Enter full name of non-resident respondent"
                               value={blotterForm.respondent}
-                              onChange={(e) => setBlotterForm({...blotterForm, respondent: e.target.value})}
+                              onChange={(e) =>
+                                setBlotterForm({ ...blotterForm, respondent: e.target.value })
+                              }
                             />
                           ) : (
                             <>
@@ -6913,14 +8194,16 @@ const getStatusBadgeClass = (status) => {
                                   />
                                 </div>
                                 {blotterForm.respondent && (
-                                  <div style={{
-                                    fontSize: '11px',
-                                    color: '#10b981',
-                                    marginTop: '2px',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '4px'
-                                  }}>
+                                  <div
+                                    style={{
+                                      fontSize: '11px',
+                                      color: '#10b981',
+                                      marginTop: '2px',
+                                      display: 'flex',
+                                      alignItems: 'center',
+                                      gap: '4px',
+                                    }}
+                                  >
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                       <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
                                     </svg>
@@ -6930,22 +8213,26 @@ const getStatusBadgeClass = (status) => {
                               </div>
 
                               {showRespondentDropdown && respondentQuery && (
-                                <div style={{
-                                  position: 'absolute',
-                                  top: '64px',
-                                  left: 0,
-                                  width: '100%',
-                                  background: '#1e293b',
-                                  border: '1px solid #334155',
-                                  borderRadius: '4px',
-                                  zIndex: 10,
-                                  maxHeight: '150px',
-                                  overflowY: 'auto',
-                                  boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)'
-                                }}>
+                                <div
+                                  style={{
+                                    position: 'absolute',
+                                    top: '64px',
+                                    left: 0,
+                                    width: '100%',
+                                    background: '#1e293b',
+                                    border: '1px solid #334155',
+                                    borderRadius: '4px',
+                                    zIndex: 10,
+                                    maxHeight: '150px',
+                                    overflowY: 'auto',
+                                    boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.3)',
+                                  }}
+                                >
                                   {residentsRegistry
-                                    .filter(r => r.name.toLowerCase().includes(respondentQuery.toLowerCase()))
-                                    .map(res => (
+                                    .filter((r) =>
+                                      r.name.toLowerCase().includes(respondentQuery.toLowerCase())
+                                    )
+                                    .map((res) => (
                                       <div
                                         key={res.id}
                                         style={{
@@ -6957,21 +8244,25 @@ const getStatusBadgeClass = (status) => {
                                           display: 'flex',
                                           alignItems: 'center',
                                           gap: '6px',
-                                          transition: 'background 0.2s ease'
+                                          transition: 'background 0.2s ease',
                                         }}
                                         onClick={() => {
-                                          setBlotterForm({...blotterForm, respondent: res.name});
+                                          setBlotterForm({ ...blotterForm, respondent: res.name });
                                           setRespondentQuery(res.name);
                                           setShowRespondentDropdown(false);
                                         }}
-                                        onMouseEnter={(e) => (e.target.style.background = 'rgba(79, 142, 247, 0.1)')}
-                                        onMouseLeave={(e) => (e.target.style.background = 'transparent')}
+                                        onMouseEnter={(e) =>
+                                          (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)')
+                                        }
+                                        onMouseLeave={(e) =>
+                                          (e.currentTarget.style.background = 'transparent')
+                                        }
                                       >
                                         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                           <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                                           <circle cx="9" cy="7" r="4" />
                                         </svg>
-                                        {res.name} ({res.purok}) —
+                                        {res.name} ({res.purok}) —{' '}
                                         <span style={{ color: '#64748b', fontSize: '10px' }}>{res.id}</span>
                                       </div>
                                     ))}
@@ -6982,39 +8273,30 @@ const getStatusBadgeClass = (status) => {
                         </div>
                       </div>
 
-                      {/* WITNESSES */}
+                      {/* Witnesses */}
                       <div className="fg" style={{ marginTop: '12px' }}>
                         <label className="fl">Witnesses Block (Optional)</label>
                         <input
                           className="fc"
                           placeholder="Comma-separated names (e.g. Pedro Oliver, Maria Santos)"
                           value={blotterForm.witnesses}
-                          onChange={(e) => setBlotterForm({...blotterForm, witnesses: e.target.value})}
+                          onChange={(e) => setBlotterForm({ ...blotterForm, witnesses: e.target.value })}
                         />
                       </div>
                     </div>
 
-                    {/* =============================================
-                      📜 SECTION 4: CASE NARRATIVE & RESOLUTION (SVG Icons + Glass-Morphism)
-                      ============================================= */}
-                    <div className="fp" style={{
-                      background: 'rgba(26, 29, 36, 0.4)',
-                      backdropFilter: 'blur(8px)',
-                      border: '1px solid rgba(79, 142, 247, 0.2)',
-                      borderRadius: '8px',
-                      marginBottom: '16px'
-                    }}>
-                      <div className="fp-t" style={{
-                        display: 'flex',
-                        alignItems: 'center',
-                        gap: '8px'
-                      }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <path d="M14 2v6h6" />
-                          <path d="M12 18v-6" />
-                          <path d="M9 15h6" />
-                        </svg>
+                    {/* Case Narrative & Resolution */}
+                    <div
+                      className="fp"
+                      style={{
+                        background: 'rgba(26, 29, 36, 0.4)',
+                        backdropFilter: 'blur(8px)',
+                        border: '1px solid rgba(79, 142, 247, 0.2)',
+                        borderRadius: '8px',
+                        marginBottom: '16px',
+                      }}
+                    >
+                      <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                         Narrative & Executive Barangay Action
                       </div>
 
@@ -7026,22 +8308,20 @@ const getStatusBadgeClass = (status) => {
                           style={{ minHeight: '100px' }}
                           placeholder="Provide a detailed chronological presentation statement of the incident..."
                           value={blotterForm.narrative}
-                          onChange={(e) => setBlotterForm({...blotterForm, narrative: e.target.value})}
+                          onChange={(e) => setBlotterForm({ ...blotterForm, narrative: e.target.value })}
                         />
                       </div>
 
-                      <div className="fg2" style={{
-                        display: 'grid',
-                        gridTemplateColumns: '1fr 1fr',
-                        gap: '12px',
-                        marginTop: '12px'
-                      }}>
+                      <div
+                        className="fg2"
+                        style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}
+                      >
                         <div className="fg">
                           <label className="fl">Barangay Formal Action Taken</label>
                           <select
                             className="fc"
                             value={blotterForm.actionTaken}
-                            onChange={(e) => setBlotterForm({...blotterForm, actionTaken: e.target.value})}
+                            onChange={(e) => setBlotterForm({ ...blotterForm, actionTaken: e.target.value })}
                           >
                             <option value="Summoned Parties">Summoned Parties</option>
                             <option value="Conducted Mediation">Conducted Mediation</option>
@@ -7056,7 +8336,7 @@ const getStatusBadgeClass = (status) => {
                           <select
                             className="fc"
                             value={blotterForm.status}
-                            onChange={(e) => setBlotterForm({...blotterForm, status: e.target.value})}
+                            onChange={(e) => setBlotterForm({ ...blotterForm, status: e.target.value })}
                           >
                             <option value="Open">Open (Pending Mediation)</option>
                             <option value="Under Mediation">Under Mediation Process</option>
@@ -7066,21 +8346,10 @@ const getStatusBadgeClass = (status) => {
                         </div>
                       </div>
 
-                      {/* NEXT MEDIATION HEARING (Conditional) */}
+                      {/* Next Mediation Hearing */}
                       {(blotterForm.status === 'Open' || blotterForm.status === 'Under Mediation') && (
-                        <div className="fg" style={{
-                          marginTop: '12px',
-                          background: '#1e293b',
-                          padding: '12px',
-                          borderRadius: '6px',
-                          borderLeft: '3px solid var(--amber)'
-                        }}>
-                          <label className="fl" style={{
-                            color: 'var(--amber)',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px'
-                          }}>
+                        <div className="fg" style={{ marginTop: '16px' }}>
+                          <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M12 2v4" />
                               <path d="M12 18v4" />
@@ -7097,19 +8366,16 @@ const getStatusBadgeClass = (status) => {
                             className="fc"
                             type="date"
                             value={blotterForm.nextHearingDate}
-                            onChange={(e) => setBlotterForm({...blotterForm, nextHearingDate: e.target.value})}
+                            onChange={(e) =>
+                              setBlotterForm({ ...blotterForm, nextHearingDate: e.target.value })
+                            }
                           />
                         </div>
                       )}
 
-                      {/* EVIDENCE ATTACHMENTS (Disabled) */}
+                      {/* Evidence Attachments */}
                       <div className="fg" style={{ marginTop: '12px' }}>
-                        <label className="fl" style={{
-                          color: '#94a3b8',
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px'
-                        }}>
+                        <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                             <path d="M7 10l5 5 5-5" />
@@ -7122,12 +8388,7 @@ const getStatusBadgeClass = (status) => {
                             type="button"
                             disabled
                             className="btn btn-g btn-sm"
-                            style={{
-                              cursor: 'not-allowed',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
+                            style={{ cursor: 'not-allowed', display: 'flex', alignItems: 'center', gap: '4px' }}
                           >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
@@ -7139,12 +8400,7 @@ const getStatusBadgeClass = (status) => {
                             type="button"
                             disabled
                             className="btn btn-g btn-sm"
-                            style={{
-                              cursor: 'not-allowed',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
+                            style={{ cursor: 'not-allowed', display: 'flex', alignItems: 'center', gap: '4px' }}
                           >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -7158,12 +8414,7 @@ const getStatusBadgeClass = (status) => {
                             type="button"
                             disabled
                             className="btn btn-g btn-sm"
-                            style={{
-                              cursor: 'not-allowed',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '4px'
-                            }}
+                            style={{ cursor: 'not-allowed', display: 'flex', alignItems: 'center', gap: '4px' }}
                           >
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
@@ -7175,135 +8426,125 @@ const getStatusBadgeClass = (status) => {
                       </div>
                     </div>
 
-                    <div className="fa" style={{
-                      display: 'flex',
-                      gap: '10px',
-                      marginTop: '20px',
-                      borderTop: '1px solid #334155',
-                      paddingTop: '16px'
-                    }}>
+                    {/* Form Actions */}
+                    <div
+                      className="fa"
+                      style={{
+                        display: 'flex',
+                        gap: '10px',
+                        marginTop: '20px',
+                        borderTop: '1px solid #334155',
+                        paddingTop: '16px',
+                      }}
+                    >
                       <button
                         type="submit"
                         className="btn btn-p"
-                        style={{
-                          flex: 2,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          justifyContent: 'center'
-                        }}
+                        style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}
                       >
                         Save Blotter Case Record
                       </button>
-
                       <button
                         type="button"
-                        className="btn btn-a"
+                        className="btn"
+                        onClick={handleClearBlotterForm}
                         style={{
-                          background: '#475569',
                           flex: 1,
                           display: 'flex',
                           alignItems: 'center',
                           gap: '6px',
-                          justifyContent: 'center'
+                          justifyContent: 'center',
+                          background: 'rgba(71, 85, 105, 0.6)',
+                          border: '1px solid rgba(148, 163, 184, 0.2)',
+                          color: '#e2e8f0',
+                          fontWeight: 600,
+                          borderRadius: '6px',
+                          padding: '8px 14px',
+                          cursor: 'pointer',
+                          transition: 'all 0.2s ease',
                         }}
-                        onClick={handleClearBlotterForm}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.background = 'rgba(71, 85, 105, 0.8)';
+                          e.currentTarget.style.borderColor = 'rgba(148, 163, 184, 0.4)';
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.background = 'rgba(71, 85, 105, 0.6)';
+                          e.currentTarget.style.borderColor = 'rgba(148, 163, 184, 0.2)';
+                        }}
                       >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M3 6h18" />
+                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                        </svg>
                         Clear Form
                       </button>
-
                       <button
                         type="button"
                         className="btn btn-g"
-                        style={{
-                          flex: 1,
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: '6px',
-                          justifyContent: 'center'
-                        }}
+                        style={{ flex: 1, display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}
                         onClick={() => nav('blotter-manage')}
                       >
                         Cancel
                       </button>
                     </div>
                   </form>
+
+                  {/* Success Modal */}
                   {showSuccessModal && (
-                    <div style={{
-                      position: 'fixed',
-                      top: 0,
-                      left: 0,
-                      width: '100%',
-                      height: '100%',
-                      background: 'rgba(0,0,0,0.85)',
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'center',
-                      zIndex: 99999
-                    }}>
-                      <div style={{
-                        background: '#1e293b',
-                        border: '1px solid #10b981',
-                        padding: '30px',
-                        borderRadius: '12px',
-                        width: '90%',
-                        maxWidth: '420px',
-                        textAlign: 'center',
-                        boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
-                        backdropFilter: 'blur(10px)'
-                      }}>
-                        <div style={{
-                          fontSize: '42px',
-                          marginBottom: '12px',
-                          color: '#10b981'
-                        }}>
+                    <div
+                      style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        background: 'rgba(0,0,0,0.85)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 99999,
+                      }}
+                    >
+                      <div
+                        style={{
+                          background: '#1e293b',
+                          border: '1px solid #10b981',
+                          padding: '30px',
+                          borderRadius: '12px',
+                          width: '90%',
+                          maxWidth: '420px',
+                          textAlign: 'center',
+                          boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
+                          backdropFilter: 'blur(10px)',
+                        }}
+                      >
+                        <div style={{ fontSize: '42px', marginBottom: '12px', color: '#10b981' }}>
                           <svg width="42" height="42" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
                             <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
                             <path d="M22 4L12 14.01l-3-3" />
                           </svg>
                         </div>
-
-                        <div style={{
-                          fontSize: '18px',
-                          fontWeight: 'bold',
-                          color: '#f8fafc',
-                          marginBottom: '4px'
-                        }}>
+                        <div style={{ fontSize: '18px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '4px' }}>
                           Blotter Successfully Recorded
                         </div>
-
-                        <div style={{
-                          fontSize: '13px',
-                          color: '#60a5fa',
-                          fontFamily: 'var(--mono)',
-                          marginBottom: '16px',
-                          fontWeight: 'bold'
-                        }}>
+                        <div
+                          style={{
+                            fontSize: '13px',
+                            color: '#60a5fa',
+                            fontFamily: 'var(--mono)',
+                            marginBottom: '16px',
+                            fontWeight: 'bold',
+                          }}
+                        >
                           {recentlyFiledId}
                         </div>
-
-                        <div style={{
-                          fontSize: '12px',
-                          color: '#94a3b8',
-                          marginBottom: '24px'
-                        }}>
-                          The formal incident report context has been cataloged into Nabua’s local database schema registry successfully.
+                        <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '24px' }}>
+                          The formal incident report context has been cataloged into Nabua's local database schema registry successfully.
                         </div>
-
-                        <div style={{
-                          display: 'flex',
-                          flexDirection: 'column',
-                          gap: '8px'
-                        }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
                           <button
                             className="btn btn-p"
-                            style={{
-                              width: '100%',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              justifyContent: 'center'
-                            }}
+                            style={{ width: '100%', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}
                             onClick={() => {
                               setShowSuccessModal(false);
                               nav('blotter-manage');
@@ -7317,18 +8558,9 @@ const getStatusBadgeClass = (status) => {
                             </svg>
                             View Case File Logs
                           </button>
-
                           <button
                             className="btn btn-g"
-                            style={{
-                              width: '100%',
-                              background: '#10b981',
-                              color: 'white',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              justifyContent: 'center'
-                            }}
+                            style={{ width: '100%', background: '#10b981', color: 'white', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}
                             onClick={() => {
                               setShowSuccessModal(false);
                               handleClearBlotterForm();
@@ -7339,17 +8571,9 @@ const getStatusBadgeClass = (status) => {
                             </svg>
                             File New Blotter Entry
                           </button>
-
                           <button
                             className="btn btn-a"
-                            style={{
-                              width: '100%',
-                              background: '#334155',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '6px',
-                              justifyContent: 'center'
-                            }}
+                            style={{ width: '100%', background: '#334155', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }}
                             onClick={() => {
                               setShowSuccessModal(false);
                               nav('blotter-manage');
@@ -7371,128 +8595,158 @@ const getStatusBadgeClass = (status) => {
             {/* ════════════════════════════════════════
                 SCREEN: MANAGE BLOTTER
                 ════════════════════════════════════════ */}
-            {screen === 'blotter-manage' && (
-  <div className="screen active">
-    <div className="ph">
-      <div>
-        <div className="pt">Blotter Records</div>
-        <div className="ps">Manage filed barangay cases dynamically</div>
-      </div>
-      <button className="btn btn-p" onClick={() => nav('blotter-new')}>＋ File Blotter</button>
-    </div>
-    
-    <div className="tw">
-      {/* ── SEARCH & FILTER CONTROLS ── */}
-      <div className="tb">
-        <div className="sb-box">
-          <span>🔍</span>
-          <input 
-            placeholder="Search case #, name..." 
-            value={blotterSearch}
-            onChange={(e) => setBlotterSearch(e.target.value)}
-          />
-        </div>
-        <select className="fc" style={{ width: '150px' }} value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-          <option value="All Types">All Types</option>
-          <option value="Noise Complaint">Noise Complaint</option>
-          <option value="Physical Altercation">Physical Altercation</option>
-          <option value="Property Dispute">Property Dispute</option>
-          <option value="Domestic Concern">Domestic Concern</option>
-          <option value="Theft">Theft</option>
-          <option value="Other">Other</option>
-        </select>
-        <select className="fc" style={{ width: '140px' }} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-          <option value="All Status">All Status</option>
-          <option value="Open">Open</option>
-          <option value="Under Mediation">Under Mediation</option>
-          <option value="Resolved">Resolved</option>
-          <option value="Referred to Higher Authority">Referred</option>
-        </select>
-      </div>
+                {screen === 'blotter-manage' && (
+                <div className="screen active">
+                  <div className="tw">
+                    {/* ── SEARCH & FILTER CONTROLS (UNIFIED & UPDATED) ── */}
+                    <div className="tb" style={{ flexWrap: 'wrap', gap: '10px', marginBottom: '16px' }}>
+                      {/* Search Input */}
+                      <div className="sb-box">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="11" cy="11" r="8" />
+                          <path d="M21 21l-4.35-4.35" />
+                        </svg>
+                        <input
+                          placeholder="Search case #, complainant, respondent..."
+                          value={blotterSearch}
+                          onChange={(e) => setBlotterSearch(e.target.value)}
+                        />
+                      </div>
 
-      {/* ── MAIN LEDGER TABLE ── */}
-      <table>
-        <thead>
-          <tr>
-            <th>Case #</th><th>Type</th><th>Complainant</th><th>Respondent</th>
-            <th>Location</th><th>Date</th><th>Status</th><th>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredBlotters.length === 0 ? (
-            <tr>
-              <td colSpan="8" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
-                Walang nahanap na tugmang record sa blotter log data storage.
-              </td>
-            </tr>
-          ) : (
-            filteredBlotters.map((b) => (
-              <tr key={b.id}>
-                <td style={mono10}>{b.id}</td>
-                <td>{b.type}</td>
-                <td><strong>{b.complainant}</strong></td>
-                <td>{b.respondent}</td>
-                <td>{b.location}</td>
-                <td style={{ fontSize: '11px' }}>{b.date}</td>
-                <td>
-                  <span className={`badge ${b.status === 'Open' ? 'r' : b.status === 'Resolved' ? 'g' : 'a'}`}>
-                    {b.status}
-                  </span>
-                </td>
-                <td>
-                  <button 
-                    className="btn btn-g btn-sm" 
-                    onClick={() => {
-                      setSelectedBlotterId(b.id);
-                      nav('blotter-detail');
-                    }}
-                  >
-                    View
-                  </button>
-                  {' '}
-                  <button className="btn btn-g btn-sm" onClick={() => window.print()}>Print</button>
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  </div>
-)}
+                      {/* Crime Type Filter */}
+                      <select className="fc" style={{ width: '150px' }} value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+                        <option value="All Types">All Types</option>
+                        <option value="Noise Complaint">Noise Complaint</option> <option value="Physical Altercation">Physical Altercation</option>
+                        <option value="Property Dispute">Property Dispute</option>
+                        <option value="Domestic Concern">Domestic Concern</option>
+                        <option value="Theft">Theft</option>
+                        <option value="Other">Other</option>
+                      </select>
+
+                      {/* Status Filter */}
+                      <select className="fc" style={{ width: '140px' }} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                        <option value="All Status">All Status</option>
+                        <option value="Open">Open</option>
+                        <option value="Under Mediation">Under Mediation</option>
+                        <option value="Resolved">Resolved</option>
+                        <option value="Referred to Higher Authority">Referred</option>
+                      </select>
+
+                      {/* Date Range Filters (From / To) */}
+                      <input
+                        type="date"
+                        className="fc"
+                        style={{ width: '130px' }}
+                        value={dateFrom}
+                        onChange={(e) => setDateFrom(e.target.value)}
+                        title="From Date"
+                      />
+                      <input
+                        type="date"
+                        className="fc"
+                        style={{ width: '130px' }}
+                        value={dateTo}
+                        onChange={(e) => setDateTo(e.target.value)}
+                        title="To Date"
+                      />
+
+                      {/* VAWC Filter Toggle */}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', background: 'var(--surface2)', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                        <input
+                          type="checkbox"
+                          checked={filterVawc}
+                          onChange={(e) => setFilterVawc(e.target.checked)}
+                        />
+                        <span>🌸 VAWC Only</span>
+                      </label>
+
+                      {/* Export / Print Action */}
+                      <button className="btn btn-g" onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                        📥 Export / Print Log
+                      </button>
+                    </div>
+
+                    {/* ── MAIN LEDGER TABLE ── */}
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Case #</th>
+                          <th>Type</th>
+                          <th>Complainant</th>
+                          <th>Respondent</th>
+                          <th>Location</th>
+                          <th>Date</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredBlotters.length === 0 ? (
+                          <tr>
+                            <td colSpan="8" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
+                              Walang nahanap na tugmang record sa blotter log data storage.
+                            </td>
+                          </tr>
+                        ) : (
+                          filteredBlotters.map((b) => (
+                            <tr key={b.id}>
+                              <td style={mono10}>{b.id}</td>
+                              <td>{b.type}</td>
+                              <td><strong>{b.complainant}</strong></td>
+                              <td>{b.respondent}</td>
+                              <td>{b.location}</td>
+                              <td style={{ fontSize: '11px' }}>{b.date}</td>
+                              <td>
+                                <span className={`badge ${b.status === 'Open' ? 'r' : b.status === 'Resolved' ? 'g' : 'a'}`}>
+                                  {b.status}
+                                </span>
+                              </td>
+                              <td>
+                                <button
+                                  className="btn btn-g btn-sm"
+                                  onClick={() => {
+                                    setSelectedBlotterId(b.id);
+                                    nav('blotter-detail');
+                                  }}
+                                >
+                                  View
+                                </button>
+                                {' '}
+                                <button className="btn btn-g btn-sm" onClick={() => window.print()}>Print</button>
+                              </td>
+                            </tr>
+                          ))
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
 
             {/* ════════════════════════════════════════
                 SCREEN: BLOTTER DETAIL (DYNAMIC LOGIC ROUTE)
                 ════════════════════════════════════════ */}
                 {screen === 'blotter-detail' && (
                   <div className="screen active">
-                    
-                    {/* SCREEN HEADER SPECIFICATIONS */}
-                    <div className="ph">
-                      <div>
-                        <div className="pt">
-                          {role === 'admin' ? '🏛️ Administrative Review' : '📋 Staff Complaint Management'} — {selectedBlotterId}
-                        </div>
-                        <div className="ps">Blotter Module · Dynamic Case Audit Trail View</div>
-                      </div>
-                      <button className="btn btn-g" onClick={() => nav('blotter-manage')}>← Back to List</button>
-                    </div>
 
-                    {/* TWO-COLUMN LAYOUT INTERFACE */}
-                    <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1.5fr 1.5fr', gap: '20px' }}>
+                    {/* TWO-COLUMN LAYOUT */}
+                    <div className="tc" style={{ gridTemplateColumns: '1fr 1fr', alignItems: 'start' }}>
                       
-                      {/* ================= LEFT COLUMN ================= */}
-                      <div>
-                        {/* CASE SPECIFIC CARD */}
+                      {/* LEFT COLUMN */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        
+                        {/* Case Information */}
                         <div className="fp">
-                          <div className="fp-t">📋 Case Information</div>
+                          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            Case Information
+                          </div>
                           <div className="fg2">
-                            <div>
+                            <div className="fg">
                               <label className="fl">Case Number</label>
-                              <input className="fc" value={selectedBlotterId || ''} disabled readOnly style={{ background: '#0f172a', color: 'var(--muted)' }} />
+                              <input className="fc" value={selectedBlotterId || ''} readOnly style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }} />
                             </div>
-                            <div>
-                              <label className="fl">Current Case Status</label>
+                            <div className="fg">
+                              <label className="fl">Current Status</label>
                               <select 
                                 className="fc" 
                                 value={role === 'admin' ? (complaint?.caseStatus || 'Open') : (staffCase?.status || 'Open')} 
@@ -7506,17 +8760,17 @@ const getStatusBadgeClass = (status) => {
                             </div>
                           </div>
                           <div className="fg2">
-                            <div>
+                            <div className="fg">
                               <label className="fl">Date Filed</label>
                               <input className="fc" type="date" value={role === 'admin' ? (complaint?.dateFiled || '') : (staffCase?.dateFiled || '')} onChange={(e) => role === 'admin' ? updateComplaintField('dateFiled', e.target.value) : updateCase('dateFiled', e.target.value)} />
                             </div>
-                            <div>
-                              <label className="fl">Time</label>
+                            <div className="fg">
+                              <label className="fl">Time Filed</label>
                               <input className="fc" type="time" value={role === 'admin' ? (complaint?.timeFiled || '') : (staffCase?.timeFiled || '')} onChange={(e) => role === 'admin' ? updateComplaintField('timeFiled', e.target.value) : updateCase('timeFiled', e.target.value)} />
                             </div>
                           </div>
                           <div className="fg">
-                            <label className="fl">Incident Type Classification</label>
+                            <label className="fl">Incident Type</label>
                             <select className="fc" value={role === 'admin' ? (complaint?.incidentType || 'Noise Complaint') : (staffCase?.incidentType || 'Noise Complaint')} onChange={(e) => role === 'admin' ? updateComplaintField('incidentType', e.target.value) : updateCase('incidentType', e.target.value)}>
                               <option value="Noise Complaint">Noise Complaint</option>
                               <option value="Physical Altercation">Physical Altercation</option>
@@ -7532,29 +8786,31 @@ const getStatusBadgeClass = (status) => {
                           </div>
                         </div>
 
-                        {/* COMPLAINANT METADATA */}
+                        {/* Complainant */}
                         <div className="fp">
-                          <div className="fp-t">👤 Complainant Information (Nagrereklamo)</div>
+                          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            Complainant Information
+                          </div>
                           <div className="fg">
                             <label className="fl">Full Name</label>
                             <input className="fc" value={role === 'admin' ? (complaint?.compName || '') : (staffCase?.compName || '')} onChange={(e) => role === 'admin' ? updateComplaintField('compName', e.target.value) : updateCase('compName', e.target.value)} />
                           </div>
                           <div className="fg2">
-                            <div>
-                              <label className="fl">Resident System ID</label>
-                              <input className="fc" value={role === 'admin' ? (complaint?.compID || 'RES-XXXX') : (staffCase?.compID || 'RES-XXXX')} disabled readOnly style={{ background: '#0f172a', color: 'var(--muted)' }} />
+                            <div className="fg">
+                              <label className="fl">Resident ID</label>
+                              <input className="fc" value={role === 'admin' ? (complaint?.compID || 'RES-XXXX') : (staffCase?.compID || 'RES-XXXX')} readOnly style={{ color: 'var(--muted)' }} />
                             </div>
-                            <div>
-                              <label className="fl">Verification Status</label>
-                              <input className="fc" value="Registered Resident" disabled readOnly style={{ background: '#0f172a', color: 'var(--muted)' }} />
+                            <div className="fg">
+                              <label className="fl">Verification</label>
+                              <input className="fc" value="Registered Resident" readOnly style={{ color: 'var(--muted)' }} />
                             </div>
                           </div>
                           <div className="fg2">
-                            <div>
+                            <div className="fg">
                               <label className="fl">Contact Number</label>
                               <input className="fc" value={role === 'admin' ? (complaint?.compContact || '') : (staffCase?.compContact || '')} onChange={(e) => role === 'admin' ? updateComplaintField('compContact', e.target.value) : updateCase('compContact', e.target.value)} />
                             </div>
-                            <div>
+                            <div className="fg">
                               <label className="fl">Purok Area</label>
                               <select className="fc" value={role === 'admin' ? (complaint?.compPurok || 'Purok 1') : (staffCase?.compPurok || 'Purok 1')} onChange={(e) => role === 'admin' ? updateComplaintField('compPurok', e.target.value) : updateCase('compPurok', e.target.value)}>
                                 <option value="Purok 1">Purok 1</option>
@@ -7567,41 +8823,50 @@ const getStatusBadgeClass = (status) => {
                           </div>
                         </div>
 
-                        {/* INCIDENT NARRATIVE TEXTAREAS */}
+                        {/* Narrative */}
                         <div className="fp">
-                          <div className="fp-t">📝 Incident Narrative Records</div>
-                          <div className="fg">
-                            <label className="fl">Official Narrative Statement</label>
-                            <textarea className="fc" style={{ minHeight: '100px' }} value={role === 'admin' ? (complaint?.narrative || '') : (staffCase?.narrative || '')} onChange={(e) => role === 'admin' ? updateComplaintField('narrative', e.target.value) : updateCase('narrative', e.target.value)} />
+                          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                              <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                            </svg>
+                            Incident Narrative
                           </div>
                           <div className="fg">
-                            <label className="fl">Action & Status Operational Notes</label>
-                            <textarea className="fc" style={{ minHeight: '80px' }} value={role === 'admin' ? (complaint?.statusNotes || '') : (staffCase?.statusNotes || '')} onChange={(e) => role === 'admin' ? updateComplaintField('statusNotes', e.target.value) : updateCase('statusNotes', e.target.value)} />
+                            <label className="fl">Official Narrative Statement</label>
+                            <textarea className="fc" rows={4} value={role === 'admin' ? (complaint?.narrative || '') : (staffCase?.narrative || '')} onChange={(e) => role === 'admin' ? updateComplaintField('narrative', e.target.value) : updateCase('narrative', e.target.value)} />
+                          </div>
+                          <div className="fg">
+                            <label className="fl">Action & Status Notes</label>
+                            <textarea className="fc" rows={3} value={role === 'admin' ? (complaint?.statusNotes || '') : (staffCase?.statusNotes || '')} onChange={(e) => role === 'admin' ? updateComplaintField('statusNotes', e.target.value) : updateCase('statusNotes', e.target.value)} />
                           </div>
                         </div>
                       </div>
 
-                      {/* ================= RIGHT COLUMN ================= */}
-                      <div>
-                        {/* RESPONDENT DATA */}
+                      {/* RIGHT COLUMN */}
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        
+                        {/* Respondent */}
                         <div className="fp">
-                          <div className="fp-t">⚠️ Respondent Information (Inirereklamo)</div>
+                          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            Respondent Information
+                          </div>
                           <div className="fg">
                             <label className="fl">Full Name</label>
                             <input className="fc" value={role === 'admin' ? (complaint?.respName || '') : (staffCase?.respName || '')} onChange={(e) => role === 'admin' ? updateComplaintField('respName', e.target.value) : updateCase('respName', e.target.value)} />
                           </div>
                           <div className="fg2">
-                            <div>
-                              <label className="fl">Resident ID Link</label>
-                              <input className="fc" value={role === 'admin' ? (complaint?.respID || 'RES-YYYY') : (staffCase?.respID || 'RES-YYYY')} disabled readOnly style={{ background: '#0f172a', color: 'var(--muted)' }} />
+                            <div className="fg">
+                              <label className="fl">Resident ID</label>
+                              <input className="fc" value={role === 'admin' ? (complaint?.respID || 'RES-YYYY') : (staffCase?.respID || 'RES-YYYY')} readOnly style={{ color: 'var(--muted)' }} />
                             </div>
-                            <div>
-                              <label className="fl">Status Profile</label>
-                              <input className="fc" value="Registered Resident" disabled readOnly style={{ background: '#0f172a', color: 'var(--muted)' }} />
+                            <div className="fg">
+                              <label className="fl">Status</label>
+                              <input className="fc" value="Registered Resident" readOnly style={{ color: 'var(--muted)' }} />
                             </div>
                           </div>
                           <div className="fg">
-                            <label className="fl">Contact Number (SMS Dispatcher Link)</label>
+                            <label className="fl">Contact Number</label>
                             <input className="fc" value={role === 'admin' ? (complaint?.respContact || '') : (staffCase?.respContact || '')} onChange={(e) => role === 'admin' ? updateComplaintField('respContact', e.target.value) : updateCase('respContact', e.target.value)} />
                           </div>
                           <div className="fg">
@@ -7614,79 +8879,85 @@ const getStatusBadgeClass = (status) => {
                           </div>
                         </div>
 
-                        {/* DISPATCH SUMMONS ENGINE */}
-                        <div className="fp" style={{ borderLeft: '4px solid var(--accent)' }}>
-                          <div className="fp-t">📨 Send Official Summons / Notification</div>
-                          <div className="note note-i" style={{ marginBottom: '12px', fontSize: '12px' }}>
-                            Magpadala ng automated real-time SMS at Email notification sa respondent para sa gagawing paghaharap sa barangay hall.
+                        {/* Summons */}
+                        <div className="fp" style={{ borderLeft: '3px solid var(--accent)' }}>
+                          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--accent)' }}>
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                            </svg>
+                            Send Official Summons
+                          </div>
+                          <div className="note note-i" style={{ marginBottom: '14px', fontSize: '12px' }}>
+                            Dispatch automated SMS and Email notification to the respondent for the scheduled barangay hearing.
                           </div>
                           <div className="fg2">
-                            <div>
-                              <label className="fl">Scheduled Appearance Date</label>
+                            <div className="fg">
+                              <label className="fl">Appearance Date</label>
                               <input className="fc" type="date" value={role === 'admin' ? (complaint?.summonDate || '') : (staffCase?.summonDate || '')} onChange={(e) => role === 'admin' ? updateComplaintField('summonDate', e.target.value) : updateCase('summonDate', e.target.value)} />
                             </div>
-                            <div>
-                              <label className="fl">Scheduled Time</label>
+                            <div className="fg">
+                              <label className="fl">Appearance Time</label>
                               <input className="fc" type="time" value={role === 'admin' ? (complaint?.summonTime || '') : (staffCase?.summonTime || '')} onChange={(e) => role === 'admin' ? updateComplaintField('summonTime', e.target.value) : updateCase('summonTime', e.target.value)} />
                             </div>
                           </div>
                           <div className="fg">
-                            <label className="fl">Custom Message dispatch block</label>
-                            <textarea className="fc" style={{ minHeight: '80px' }} value={role === 'admin' ? (complaint?.summonMsg || '') : (staffCase?.summonMsg || '')} onChange={(e) => role === 'admin' ? updateComplaintField('summonMsg', e.target.value) : updateCase('summonMsg', e.target.value)} />
+                            <label className="fl">Message Content</label>
+                            <textarea className="fc" rows={3} value={role === 'admin' ? (complaint?.summonMsg || '') : (staffCase?.summonMsg || '')} onChange={(e) => role === 'admin' ? updateComplaintField('summonMsg', e.target.value) : updateCase('summonMsg', e.target.value)} />
                           </div>
-                          
-                          <div className="fa" style={{ flexDirection: 'column', gap: '8px', marginTop: '12px' }}>
-                            <button 
-                              type="button"
-                              className="btn btn-p" 
-                              style={{ width: '100%', justifyContent: 'center' }} 
-                              onClick={sendSummons}
-                          >
-                              🔔 Send Summons Now
-                            </button>
-                          </div>
+                          <button type="button" className="btn btn-p" style={{ width: '100%', marginTop: '4px', justifyContent: 'center' }} onClick={sendSummons}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
+                              <path d="M22 2L11 13" />
+                              <path d="M22 2l-7 20-4-9-9-4 20-7z" />
+                            </svg>
+                            Send Summons Now
+                          </button>
                         </div>
                       </div>
-
                     </div>
 
-                    {/* SYSTEM UTILITIES CONTROL FOOTER BUTTONS */}
-                    <div style={{ marginTop: '24px', display: 'flex', gap: '12px', flexWrap: 'wrap', borderTop: '1px solid #334155', paddingTop: '16px' }}>
-                      <button className="btn btn-s" onClick={() => {
-                        alert(" Success: Case configuration updates successfully saved to client core registry.");
-                        nav('blotter-manage');
-                      }}>
-                         Save Changes
+                    {/* FOOTER ACTIONS */}
+                    <div className="fa" style={{ marginTop: '24px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+                      <button className="btn btn-s" onClick={() => { alert('Case configuration saved successfully.'); nav('blotter-manage'); }} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M20 6L9 17l-5-5" />
+                        </svg>
+                        Save Changes
                       </button>
-                      <button className="btn btn-g" onClick={() => nav('blotter-manage')}>Cancel Updates</button>
-                      <button className="btn btn-a" style={{ marginLeft: 'auto' }} onClick={() => alert("📆 Scheduling Mediation: Hearing date posted to operational calendar.")}>
-                         Schedule Mediation
+                      <button className="btn btn-g" onClick={() => nav('blotter-manage')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M18 15l-6-6-6 6" />
+                        </svg>
+                        Cancel Updates
                       </button>
-                      <button className="btn btn-g" onClick={() => nav('blotter-manage')}>Close View</button>
+                      <button className="btn btn-a" style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => alert('Hearing date posted to operational calendar.')}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                          <path d="M16 2v4" />
+                          <path d="M8 2v4" />
+                          <path d="M3 10h18" />
+                        </svg>
+                        Schedule Mediation
+                      </button>
+                      <button className="btn btn-g" onClick={() => nav('blotter-manage')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M19 12H5" />
+                          <path d="M12 19l-7-7 7-7" />
+                        </svg>
+                        Close View
+                      </button>
                     </div>
-
                   </div>
                 )}
             
             {/* ════════════════════════════════════════
                 SCREEN: ANNOUNCEMENTS
-                {/* ════════════════════════════════════════ */}
-                {screen === 'announcements' && (
+                ════════════════════════════════════════ */}
+               {screen === 'announcements' && (
                   <div className="screen active">
                     {announcementSubScreen === 'list' && (
                       <div>
-                        {/* TOP LEVEL CONTROLLER BAR */}
-                        <div className="ph">
-                          <div>
-                            <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                              </svg>
-                              Announcements Engine
-                            </div>
-                            <div className="ps">Post, monitor, and configure active community bulletin broadcasts</div>
-                          </div>
+                        {/* ACTION BAR (replaces the old .ph header) */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
                           <button
                             type="button"
                             className="btn btn-p"
@@ -7704,14 +8975,7 @@ const getStatusBadgeClass = (status) => {
                         </div>
 
                         {/* SEARCH AND FILTER CONTROLS (SVG Icons + Glass-Morphism) */}
-                        <div className="fp" style={{
-                          background: 'rgba(15, 23, 42, 0.6)',
-                          backdropFilter: 'blur(10px)',
-                          border: '1px solid rgba(79, 142, 247, 0.2)',
-                          marginBottom: '16px',
-                          padding: '16px',
-                          borderRadius: '8px'
-                        }}>
+                        <div className="fp" style={{ background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(10px)', border: '1px solid rgba(79, 142, 247, 0.2)', marginBottom: '16px', padding: '16px', borderRadius: '8px' }}>
                           <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
                             {/* Search Input */}
                             <div className="fg" style={{ margin: 0 }}>
@@ -7725,17 +8989,12 @@ const getStatusBadgeClass = (status) => {
                                 onChange={(e) => setSearchAnnQuery(e.target.value)}
                               />
                             </div>
-
                             {/* Category Filter */}
                             <div className="fg" style={{ margin: 0 }}>
                               <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 Category Filter
                               </label>
-                              <select
-                                className="fc"
-                                value={filterAnnCategory}
-                                onChange={(e) => setFilterAnnCategory(e.target.value)}
-                              >
+                              <select className="fc" value={filterAnnCategory} onChange={(e) => setFilterAnnCategory(e.target.value)}>
                                 <option value="All">All Categories</option>
                                 <option value="General">General</option>
                                 <option value="Health">Health</option>
@@ -7744,17 +9003,12 @@ const getStatusBadgeClass = (status) => {
                                 <option value="Governance">Governance</option>
                               </select>
                             </div>
-
                             {/* Status Filter */}
                             <div className="fg" style={{ margin: 0 }}>
                               <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 Workflow Status
                               </label>
-                              <select
-                                className="fc"
-                                value={filterAnnStatus}
-                                onChange={(e) => setFilterAnnStatus(e.target.value)}
-                              >
+                              <select className="fc" value={filterAnnStatus} onChange={(e) => setFilterAnnStatus(e.target.value)}>
                                 <option value="All">All Statuses</option>
                                 <option value="Published">Published</option>
                                 <option value="Draft">Drafts</option>
@@ -7766,12 +9020,9 @@ const getStatusBadgeClass = (status) => {
                         {/* MAIN DATA RENDERING GRID */}
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                           {announcementsList
-                            // Sorting: Pinned first
                             .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
-                            // Filtering
                             .filter(ann => {
-                              const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) ||
-                                                ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
+                              const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) || ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
                               const matchCat = filterAnnCategory === 'All' || ann.category === filterAnnCategory;
                               const matchStatus = filterAnnStatus === 'All' || ann.status === filterAnnStatus;
                               return matchQuery && matchCat && matchStatus;
@@ -7794,24 +9045,8 @@ const getStatusBadgeClass = (status) => {
                                 onMouseLeave={(e) => (e.currentTarget.style.background = '#1e293b')}
                               >
                                 <div style={{ flex: 1, paddingRight: '20px' }}>
-                                  <div style={{
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '8px',
-                                    marginBottom: '4px'
-                                  }}>
-                                    <span
-                                      className="ann-cat"
-                                      style={{
-                                        color: ann.category === 'Health' ? '#f59e0b' :
-                                              ann.category === 'Security' ? '#ef4444' :
-                                              ann.category === 'Events' ? '#8b5cf6' :
-                                              ann.category === 'Governance' ? '#3b82f6' : '#64748b',
-                                        fontWeight: 'bold',
-                                        fontSize: '11px',
-                                        textTransform: 'uppercase'
-                                      }}
-                                    >
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
+                                    <span className="ann-cat" style={{ color: ann.category === 'Health' ? '#f59e0b' : ann.category === 'Security' ? '#ef4444' : ann.category === 'Events' ? '#8b5cf6' : ann.category === 'Governance' ? '#3b82f6' : '#64748b', fontWeight: 'bold', fontSize: '11px', textTransform: 'uppercase' }}>
                                       {ann.pinned && (
                                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}>
                                           <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
@@ -7819,44 +9054,17 @@ const getStatusBadgeClass = (status) => {
                                       )}
                                       {ann.category}
                                     </span>
-
-                                    <span style={{
-                                      fontSize: '10px',
-                                      background: ann.status === 'Published' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(251, 191, 36, 0.15)',
-                                      color: ann.status === 'Published' ? '#34d399' : '#fbbf24',
-                                      padding: '2px 6px',
-                                      borderRadius: '4px',
-                                      fontWeight: '600'
-                                    }}>
+                                    <span style={{ fontSize: '10px', background: ann.status === 'Published' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(251, 191, 36, 0.15)', color: ann.status === 'Published' ? '#34d399' : '#fbbf24', padding: '2px 6px', borderRadius: '4px', fontWeight: '600' }}>
                                       {ann.status}
                                     </span>
                                   </div>
-
-                                  <div className="ann-t" style={{
-                                    fontSize: '16px',
-                                    fontWeight: 'bold',
-                                    color: '#f8fafc',
-                                    marginBottom: '6px'
-                                  }}>
+                                  <div className="ann-t" style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '6px' }}>
                                     {ann.title}
                                   </div>
-
-                                  <div className="ann-b" style={{
-                                    fontSize: '13px',
-                                    color: '#cbd5e1',
-                                    lineHeight: '1.5',
-                                    marginBottom: '8px'
-                                  }}>
+                                  <div className="ann-b" style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: '1.5', marginBottom: '8px' }}>
                                     {ann.content}
                                   </div>
-
-                                  <div className="ann-f" style={{
-                                    fontSize: '11px',
-                                    color: '#94a3b8',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    gap: '6px'
-                                  }}>
+                                  <div className="ann-f" style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                       <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                                       <circle cx="9" cy="7" r="4" />
@@ -7864,54 +9072,21 @@ const getStatusBadgeClass = (status) => {
                                     Posted by {ann.author} · {ann.date}
                                   </div>
                                 </div>
-
                                 <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                                  <button
-                                    type="button"
-                                    className="btn btn-g btn-sm"
-                                    style={{
-                                      padding: '4px 8px',
-                                      fontSize: '11px',
-                                      background: ann.pinned ? '#78350f' : '#334155',
-                                      color: ann.pinned ? '#fbbf24' : '#60a5fa'
-                                    }}
-                                    onClick={() => handleTogglePinAnnouncement(ann.id)}
-                                  >
+                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: ann.pinned ? '#78350f' : '#334155', color: ann.pinned ? '#fbbf24' : '#60a5fa' }} onClick={() => handleTogglePinAnnouncement(ann.id)}>
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                       <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
                                     </svg>
                                     {ann.pinned ? 'Unpin' : 'Pin'}
                                   </button>
-
-                                  <button
-                                    type="button"
-                                    className="btn btn-g btn-sm"
-                                    style={{
-                                      padding: '4px 8px',
-                                      fontSize: '11px',
-                                      background: '#334155',
-                                      color: '#60a5fa'
-                                    }}
-                                    onClick={() => handleOpenEditAnnouncement(ann)}
-                                  >
+                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#334155', color: '#60a5fa' }} onClick={() => handleOpenEditAnnouncement(ann)}>
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
                                       <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                     </svg>
                                     Edit
                                   </button>
-
-                                  <button
-                                    type="button"
-                                    className="btn btn-g btn-sm"
-                                    style={{
-                                      padding: '4px 8px',
-                                      fontSize: '11px',
-                                      background: '#7f1d1d',
-                                      color: '#fca5a5'
-                                    }}
-                                    onClick={() => handleTriggerDeleteAnnouncement(ann.id)}
-                                  >
+                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#7f1d1d', color: '#fca5a5' }} onClick={() => handleTriggerDeleteAnnouncement(ann.id)}>
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                                       <path d="M3 6h18" />
                                       <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
@@ -7921,27 +9096,13 @@ const getStatusBadgeClass = (status) => {
                                 </div>
                               </div>
                             ))}
-
-                          {/* EMPTY STATE */}
                           {announcementsList.filter(ann => {
-                            const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) ||
-                                              ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
+                            const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) || ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
                             const matchCat = filterAnnCategory === 'All' || ann.category === filterAnnCategory;
                             const matchStatus = filterAnnStatus === 'All' || ann.status === filterAnnStatus;
                             return matchQuery && matchCat && matchStatus;
                           }).length === 0 && (
-                            <div style={{
-                              textAlign: 'center',
-                              padding: '40px',
-                              color: '#94a3b8',
-                              background: '#0f172a',
-                              borderRadius: '8px',
-                              border: '1px dashed #334155',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              gap: '12px'
-                            }}>
+                            <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', background: '#0f172a', borderRadius: '8px', border: '1px dashed #334155', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
                               <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                                 <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
                                 <path d="M13.73 21a2 2 0 0 1-3.46 0" />
@@ -7957,30 +9118,10 @@ const getStatusBadgeClass = (status) => {
                         📝 VIEW 2 & 3: ANNOUNCEMENT FORM (CREATE & EDIT)
                         ============================================= */}
                     {(announcementSubScreen === 'new' || announcementSubScreen === 'edit') && (
-                      <div className="fp" style={{
-                        maxWidth: '700px',
-                        margin: '0 auto',
-                        background: 'rgba(26, 29, 36, 0.4)',
-                        backdropFilter: 'blur(8px)',
-                        border: '1px solid rgba(79, 142, 247, 0.2)',
-                        borderRadius: '8px'
-                      }}>
-                        <div style={{
-                          display: 'flex',
-                          justifyContent: 'space-between',
-                          alignItems: 'center',
-                          marginBottom: '16px',
-                          borderBottom: '1px solid #334155',
-                          paddingBottom: '12px'
-                        }}>
+                      <div className="fp" style={{ maxWidth: '700px', margin: '0 auto', background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #334155', paddingBottom: '12px' }}>
                           <div>
-                            <div className="fp-t" style={{
-                              fontSize: '18px',
-                              margin: 0,
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px'
-                            }}>
+                            <div className="fp-t" style={{ fontSize: '18px', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
                               {announcementSubScreen === 'new' ? (
                                 <>
                                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -8003,41 +9144,23 @@ const getStatusBadgeClass = (status) => {
                               Distribute critical legal updates and bulletins to Nabua residents
                             </div>
                           </div>
-                          <button
-                            type="button"
-                            className="btn btn-g"
-                            onClick={() => setAnnouncementSubScreen('list')}
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                          >
+                          <button type="button" className="btn btn-g" onClick={() => setAnnouncementSubScreen('list')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                             Back to Board
                           </button>
                         </div>
-
                         <form onSubmit={(e) => handleSaveAnnouncement(e, announcementForm.status)}>
                           <div className="fg">
                             <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               Announcement Title Header
                             </label>
-                            <input
-                              className="fc"
-                              required
-                              placeholder="e.g. Schedule of General Assembly or Relief Operations"
-                              value={announcementForm.title}
-                              onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })}
-                            />
+                            <input className="fc" required placeholder="e.g. Schedule of General Assembly or Relief Operations" value={announcementForm.title} onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })} />
                           </div>
-
-                          {/* Category & Pin Toggle (2-Column Grid) */}
                           <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
                             <div className="fg">
                               <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 Category Engine Routing
                               </label>
-                              <select
-                                className="fc"
-                                value={announcementForm.category}
-                                onChange={(e) => setAnnouncementForm({ ...announcementForm, category: e.target.value })}
-                              >
+                              <select className="fc" value={announcementForm.category} onChange={(e) => setAnnouncementForm({ ...announcementForm, category: e.target.value })}>
                                 <option value="General">General Notice</option>
                                 <option value="Health">Health Mission / Advisory</option>
                                 <option value="Security">Security Alerts & Regulations</option>
@@ -8046,69 +9169,26 @@ const getStatusBadgeClass = (status) => {
                               </select>
                             </div>
                             <div className="fg" style={{ display: 'flex', alignItems: 'center', marginTop: '24px' }}>
-                              <label style={{
-                                display: 'flex',
-                                gap: '8px',
-                                alignItems: 'center',
-                                fontSize: '13px',
-                                cursor: 'pointer',
-                                color: '#cbd5e1'
-                              }}>
-                                <input
-                                  type="checkbox"
-                                  checked={announcementForm.pinned}
-                                  onChange={(e) => setAnnouncementForm({ ...announcementForm, pinned: e.target.checked })}
-                                />
+                              <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px', cursor: 'pointer', color: '#cbd5e1' }}>
+                                <input type="checkbox" checked={announcementForm.pinned} onChange={(e) => setAnnouncementForm({ ...announcementForm, pinned: e.target.checked })} />
                                 Pin this announcement to top
                               </label>
                             </div>
                           </div>
-
-                          {/* Content */}
                           <div className="fg">
                             <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               Public Content Narrative Report Statement
                             </label>
-                            <textarea
-                              className="fc"
-                              required
-                              style={{ minHeight: '140px', lineHeight: '1.6' }}
-                              placeholder="Write down the comprehensive details here..."
-                              value={announcementForm.content}
-                              onChange={(e) => setAnnouncementForm({ ...announcementForm, content: e.target.value })}
-                            />
+                            <textarea className="fc" required style={{ minHeight: '140px', lineHeight: '1.6' }} placeholder="Write down the comprehensive details here..." value={announcementForm.content} onChange={(e) => setAnnouncementForm({ ...announcementForm, content: e.target.value })} />
                           </div>
-
-                          {/* Action Buttons */}
-                          <div className="fa" style={{
-                            display: 'flex',
-                            gap: '10px',
-                            marginTop: '20px',
-                            borderTop: '1px solid #334155',
-                            paddingTop: '16px',
-                            justifyContent: 'flex-end'
-                          }}>
-                            <button
-                              type="button"
-                              className="btn btn-g"
-                              style={{ background: '#475569' }}
-                              onClick={() => setAnnouncementSubScreen('list')}
-                            >
+                          <div className="fa" style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid #334155', paddingTop: '16px', justifyContent: 'flex-end' }}>
+                            <button type="button" className="btn btn-g" style={{ background: '#475569' }} onClick={() => setAnnouncementSubScreen('list')}>
                               Cancel Changes
                             </button>
-                            <button
-                              type="submit"
-                              className="btn btn-g"
-                              style={{ background: '#b45309', color: 'white' }}
-                              onClick={(e) => handleSaveAnnouncement(e, 'Draft')}
-                            >
+                            <button type="submit" className="btn btn-g" style={{ background: '#b45309', color: 'white' }} onClick={(e) => handleSaveAnnouncement(e, 'Draft')}>
                               Save as Draft
                             </button>
-                            <button
-                              type="submit"
-                              className="btn btn-p"
-                              onClick={(e) => handleSaveAnnouncement(e, 'Published')}
-                            >
+                            <button type="submit" className="btn btn-p" onClick={(e) => handleSaveAnnouncement(e, 'Published')}>
                               Broadcast & Publish
                             </button>
                           </div>
@@ -8117,28 +9197,8 @@ const getStatusBadgeClass = (status) => {
                     )}
 
                     {showAnnDeleteModal && (
-                      <div style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        width: '100%',
-                        height: '100%',
-                        background: 'rgba(0,0,0,0.8)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 99999
-                      }}>
-                        <div style={{
-                          background: '#1e293b',
-                          border: '1px solid #ef4444',
-                          padding: '24px',
-                          borderRadius: '8px',
-                          width: '90%',
-                          maxWidth: '400px',
-                          textAlign: 'center',
-                          boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)'
-                        }}>
+                      <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
+                        <div style={{ background: '#1e293b', border: '1px solid #ef4444', padding: '24px', borderRadius: '8px', width: '90%', maxWidth: '400px', textAlign: 'center', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)' }}>
                           <div style={{ fontSize: '36px', marginBottom: '8px', color: '#ef4444' }}>
                             <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
@@ -8153,31 +9213,10 @@ const getStatusBadgeClass = (status) => {
                             Are you sure you want to remove this notice? Residents will immediately lose read access visibility across the portal logs.
                           </div>
                           <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                            <button
-                              type="button"
-                              className="btn btn-g"
-                              style={{ flex: 1 }}
-                              onClick={() => {
-                                setShowAnnDeleteModal(false);
-                                setAnnIdToDelete(null);
-                              }}
-                            >
+                            <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => { setShowAnnDeleteModal(false); setAnnIdToDelete(null); }}>
                               Cancel
                             </button>
-                            <button
-                              type="button"
-                              className="btn"
-                              style={{
-                                flex: 1,
-                                background: '#ef4444',
-                                color: 'white',
-                                display: 'flex',
-                                alignItems: 'center',
-                                gap: '6px',
-                                justifyContent: 'center'
-                              }}
-                              onClick={handleConfirmDeleteAnnouncement}
-                            >
+                            <button type="button" className="btn" style={{ flex: 1, background: '#ef4444', color: 'white', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }} onClick={handleConfirmDeleteAnnouncement}>
                               Delete Notice
                             </button>
                           </div>
@@ -8191,841 +9230,786 @@ const getStatusBadgeClass = (status) => {
                 SCREEN: FEEDBACK & COMPLAINTS
                 ════════════════════════════════════════ */}
                 {screen === 'feedback' && (
-  <div className="screen active" style={{ position: 'relative' }}>
-    {/* SYSTEM SUCCESS GLOBAL TOAST */}
-    {showFbSuccessToast && (
-      <div style={{
-        position: 'fixed',
-        top: '20px',
-        right: '20px',
-        background: '#059669',
-        color: 'white',
-        padding: '12px 24px',
-        borderRadius: '6px',
-        zIndex: 99999,
-        fontWeight: 'bold',
-        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
-        fontSize: '13px',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '8px'
-      }}>
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-          <path d="M22 4L12 14.01l-3-3" />
-        </svg>
-        {fbToastMessage}
-      </div>
-    )}
-
-    {/* HEADER METRICS DESK */}
-    <div className="ph">
-      <div>
-        <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-          Feedback & Complaints Desk
-        </div>
-        <div className="ps">Monitor, route, and resolve real-time constituent issues within Barangay Bustrac</div>
-      </div>
-    </div>
-
-    {/* QUICK STATISTICS OVERVIEW TILES (SVG Icons + Glass-Morphism) */}
-    <div style={{
-      display: 'grid',
-      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-      gap: '12px',
-      marginBottom: '16px'
-    }}>
-      <div style={{
-        background: 'rgba(30, 41, 59, 0.6)',
-        padding: '16px',
-        borderRadius: '8px',
-        borderLeft: '4px solid #ef4444',
-        backdropFilter: 'blur(8px)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px'
-      }}>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M12 2v4" />
-          <path d="M12 18v4" />
-          <path d="M4.93 4.93l2.83 2.83" />
-          <path d="M16.24 16.24l2.83 2.83" />
-          <path d="M2 12h2" />
-          <path d="M20 12h2" />
-          <path d="M4.93 19.07l2.83-2.83" />
-          <path d="M16.24 7.76l2.83-2.83" />
-        </svg>
-        <div>
-          <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase' }}>Pending Submissions</div>
-          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
-            {feedbackList.filter(f => f.status === 'Pending').length}
-          </div>
-        </div>
-      </div>
-
-      <div style={{
-        background: 'rgba(30, 41, 59, 0.6)',
-        padding: '16px',
-        borderRadius: '8px',
-        borderLeft: '4px solid #3b82f6',
-        backdropFilter: 'blur(8px)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px'
-      }}>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="12" cy="12" r="10" />
-          <path d="M21 21l-4.35-4.35" />
-        </svg>
-        <div>
-          <div style={{ fontSize: '11px', color: '#94a3b8' }}>Under Review</div>
-          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
-            {feedbackList.filter(f => f.status === 'Under Review').length}
-          </div>
-        </div>
-      </div>
-
-      <div style={{
-        background: 'rgba(30, 41, 59, 0.6)',
-        padding: '16px',
-        borderRadius: '8px',
-        borderLeft: '4px solid #10b981',
-        backdropFilter: 'blur(8px)',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '12px'
-      }}>
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-          <path d="M22 4L12 14.01l-3-3" />
-        </svg>
-        <div>
-          <div style={{ fontSize: '11px', color: '#94a3b8' }}>Resolved & Closed</div>
-          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
-            {feedbackList.filter(f => f.status === 'Resolved').length}
-          </div>
-        </div>
-      </div>
-    </div>
-
-    {/* CONTROLS WORKSPACE (SEARCH, FILTER, SORT) */}
-    <div className="tw" style={{
-      background: 'rgba(15, 23, 42, 0.6)',
-      padding: '16px',
-      borderRadius: '8px',
-      marginBottom: '12px',
-      backdropFilter: 'blur(8px)',
-      border: '1px solid rgba(79, 142, 247, 0.2)'
-    }}>
-      <div style={{
-        display: 'grid',
-        gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr',
-        gap: '10px',
-        alignItems: 'center'
-      }}>
-        {/* Search */}
-        <div className="sb-box" style={{ margin: 0, width: '100%' }}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" />
-            <path d="M21 21l-4.35-4.35" />
-          </svg>
-          <input
-            placeholder="Search Resident, ID or Subject..."
-            value={searchFbQuery}
-            onChange={(e) => setSearchFbQuery(e.target.value)}
-          />
-        </div>
-
-        {/* Type Filter */}
-        <select
-          className="fc"
-          style={{ width: '100%' }}
-          value={filterFbType}
-          onChange={(e) => setFilterFbType(e.target.value)}
-        >
-          <option value="All Types">All Types</option>
-          <option value="Complaint">Complaint</option>
-          <option value="Suggestion">Suggestion</option>
-          <option value="Inquiry">Inquiry</option>
-        </select>
-
-        {/* Status Filter */}
-        <select
-          className="fc"
-          style={{ width: '100%' }}
-          value={filterFbStatus}
-          onChange={(e) => setFilterFbStatus(e.target.value)}
-        >
-          <option value="All Status">All Statuses</option>
-          <option value="Pending">Pending</option>
-          <option value="Under Review">Under Review</option>
-          <option value="Responded">Responded</option>
-          <option value="Resolved">Resolved</option>
-        </select>
-
-        {/* Priority Filter */}
-        <select
-          className="fc"
-          style={{ width: '100%' }}
-          value={filterFbPriority}
-          onChange={(e) => setFilterFbPriority(e.target.value)}
-        >
-          <option value="All Priorities">All Priorities</option>
-          <option value="High">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-            </svg>
-            High Priority
-          </option>
-          <option value="Medium">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-            </svg>
-            Medium Priority
-          </option>
-          <option value="Low">
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2">
-              <circle cx="12" cy="12" r="10" />
-            </svg>
-            Low Priority
-          </option>
-        </select>
-
-        {/* Sort */}
-        <select
-          className="fc"
-          style={{ width: '100%' }}
-          value={sortFbBy}
-          onChange={(e) => setSortFbBy(e.target.value)}
-        >
-          <option value="Newest">Newest First</option>
-          <option value="Oldest">Oldest First</option>
-          <option value="PendingFirst">Pending Priority</option>
-        </select>
-      </div>
-    </div>
-
-    {/* CENTRAL REGISTRY SYSTEM TABLE (Glass-Morphism) */}
-    <div className="tw" style={{
-      background: 'rgba(26, 29, 36, 0.4)',
-      backdropFilter: 'blur(8px)',
-      border: '1px solid rgba(79, 142, 247, 0.2)',
-      borderRadius: '8px',
-      overflowX: 'auto'
-    }}>
-      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-        <thead>
-          <tr>
-            <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Ticket ID</th>
-            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Resident From</th>
-            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Classification</th>
-            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Rank</th>
-            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Subject Heading</th>
-            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Date Submitted</th>
-            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Assigned Agent</th>
-            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Status State</th>
-            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Action</th>
-          </tr>
-        </thead>
-        <tbody>
-          {feedbackList
-            // Sorting
-            .sort((a, b) => {
-              const timeA = new Date(a.rawTimestamp || a.date || 0).getTime();
-              const timeB = new Date(b.rawTimestamp || b.date || 0).getTime();
-              if (sortFbBy === 'Oldest') {
-                return timeA - timeB;
-              }
-              if (sortFbBy === 'PendingFirst') {
-                const priorityWeight = { High: 3, Medium: 2, Low: 1 };
-                const weightA = priorityWeight[a.priority] || 0;
-                const weightB = priorityWeight[b.priority] || 0;
-                return weightB - weightA;
-              }
-              return timeB - timeA; // Default to Newest First
-            })
-            // Filtering
-            .filter((fb) => {
-              const query = searchFbQuery.toLowerCase();
-              const matchesSearch = (fb.sender || '').toLowerCase().includes(query) ||
-                                  (fb.id || '').toLowerCase().includes(query) ||
-                                  (fb.subject || '').toLowerCase().includes(query);
-              const matchesType = filterFbType === 'All Types' || fb.type === filterFbType;
-              const matchesStatus = filterFbStatus === 'All Status' || filterFbStatus === 'All Statuses' || fb.status === filterFbStatus;
-              const matchesPriority = filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
-              return matchesSearch && matchesType && matchesStatus && matchesPriority;
-            })
-            .map((fb) => (
-              <tr
-                key={fb._id || fb.id}
-                style={{
-                  borderBottom: '1px solid #334155',
-                  transition: 'background 0.2s ease'
-                }}
-                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.05)')}
-                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
-              >
-                <td style={{
-                  fontFamily: 'var(--mono)',
-                  fontSize: '11px',
-                  color: '#60a5fa',
-                  fontWeight: 'bold',
-                  padding: '12px 16px'
-                }}>
-                  {fb.id}
-                </td>
-                <td style={{ fontWeight: '500', padding: '12px 16px' }}>{fb.sender}</td>
-                <td style={{ padding: '12px 16px' }}>
-                  <span className={`badge ${fb.type === 'Complaint' ? 'r' : fb.type === 'Suggestion' ? 'b' : 'p'}`}>
-                    {fb.type}
-                  </span>
-                </td>
-                <td style={{ fontSize: '12px', padding: '12px 16px' }}>
-                  {fb.priority === 'High' ? (
-                    <span className="badge r" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10" />
-                      </svg>
-                      High
-                    </span>
-                  ) : fb.priority === 'Medium' ? (
-                    <span className="badge a" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10" />
-                      </svg>
-                      Medium
-                    </span>
-                  ) : (
-                    <span className="badge g" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <circle cx="12" cy="12" r="10" />
-                      </svg>
-                      Low
-                    </span>
-                  )}
-                </td>
-                <td style={{
-                  fontSize: '12px',
-                  maxWidth: '220px',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                  padding: '12px 16px'
-                }} title={fb.subject}>
-                  {fb.subject}
-                </td>
-                <td style={{ fontSize: '11px', color: '#94a3b8', padding: '12px 16px' }}>{fb.date}</td>
-                <td style={{
-                  fontSize: '12px',
-                  color: fb.assignedTo === 'Unassigned' ? '#94a3b8' : '#cbd5e1',
-                  padding: '12px 16px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}>
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                  </svg>
-                  {fb.assignedTo}
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <span className="badge" style={{
-                    background: fb.status === 'Pending' ? '#7f1d1d' :
-                               fb.status === 'Under Review' ? '#1e3a8a' :
-                               fb.status === 'Responded' ? '#78350f' : '#065f46',
-                    color: fb.status === 'Pending' ? '#fca5a5' :
-                          fb.status === 'Under Review' ? '#93c5fd' :
-                          fb.status === 'Responded' ? '#fde047' : '#34d399',
-                  }}>
-                    {fb.status}
-                  </span>
-                </td>
-                <td style={{ padding: '12px 16px' }}>
-                  <button
-                    type="button"
-                    className={`btn btn-sm ${fb.status === 'Pending' || fb.status === 'Under Review' ? 'btn-p' : 'btn-g'}`}
-                    onClick={() => handleOpenFeedbackDetails(fb)}
-                    style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    {fb.status === 'Pending' || fb.status === 'Under Review' ? (
-                      <>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <path d="M14 2v6h6" />
-                          <path d="M12 18v-6" />
-                          <path d="M9 15h6" />
+                  <div className="screen active" style={{ position: 'relative' }}>
+                    {/* SYSTEM SUCCESS GLOBAL TOAST */}
+                    {showFbSuccessToast && (
+                      <div style={{
+                        position: 'fixed',
+                        top: '20px',
+                        right: '20px',
+                        background: '#059669',
+                        color: 'white',
+                        padding: '12px 24px',
+                        borderRadius: '6px',
+                        zIndex: 99999,
+                        fontWeight: 'bold',
+                        boxShadow: '0 4px 12px rgba(0,0,0,0.3)',
+                        fontSize: '13px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '8px'
+                      }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                          <path d="M22 4L12 14.01l-3-3" />
                         </svg>
-                        Respond
-                      </>
-                    ) : (
-                      <>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                          <path d="M14 2v6h6" />
-                          <path d="M12 18v-6" />
-                          <path d="M9 15h6" />
-                        </svg>
-                        View Details
-                      </>
+                        {fbToastMessage}
+                      </div>
                     )}
-                  </button>
-                </td>
-              </tr>
-            ))}
-        </tbody>
-      </table>
 
-      {/* NO MATCH ENCOUNTERED BANNER */}
-      {feedbackList.filter(fb => {
-        const matchesSearch = fb.sender.toLowerCase().includes(searchFbQuery.toLowerCase()) ||
-                            fb.id.toLowerCase().includes(searchFbQuery.toLowerCase()) ||
-                            fb.subject.toLowerCase().includes(searchFbQuery.toLowerCase());
-        const matchesType = filterFbType === 'All Types' || fb.type === filterFbType;
-        const matchesStatus = filterFbStatus === 'All Status' || fb.status === filterFbStatus;
-        const matchesPriority = filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
-        return matchesSearch && matchesType && matchesStatus && matchesPriority;
-      }).length === 0 && (
-        <div style={{
-          textAlign: 'center',
-          padding: '32px',
-          color: '#94a3b8',
-          border: '1px dashed #334155',
-          borderRadius: '0 0 8px 8px',
-          background: '#1e293b',
-          display: 'flex',
-          flexDirection: 'column',
-          alignItems: 'center',
-          gap: '12px'
-        }}>
-          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-          </svg>
-          No active feedback logs found matching the filtering conditions.
-        </div>
-      )}
-    </div>
+                    {/* HEADER METRICS DESK */}
+                    
 
-    {/* =============================================
-         📋 CENTRAL DIAGNOSTIC FULL WORKFLOW MODAL DIALOG
-         ============================================= */}
-    {selectedFeedback && (
-      <div style={{
-        position: 'fixed',
-        top: 0,
-        left: 0,
-        width: '100%',
-        height: '100%',
-        background: 'rgba(0,0,0,0.8)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 99999
-      }}>
-        <div style={{
-          background: '#1e293b',
-          border: '1px solid #3b82f6',
-          width: '90%',
-          maxWidth: '600px',
-          borderRadius: '12px',
-          padding: '24px',
-          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
-          backdropFilter: 'blur(10px)'
-        }}>
-          {/* MODAL HEADER CARD */}
-          <div style={{
-            display: 'flex',
-            justifyContent: 'space-between',
-            alignItems: 'center',
-            borderBottom: '1px solid #334155',
-            paddingBottom: '12px',
-            marginBottom: '16px'
-          }}>
-            <div>
-              <span style={{
-                fontSize: '11px',
-                background: '#3b82f6',
-                color: 'white',
-                padding: '2px 6px',
-                borderRadius: '4px',
-                marginRight: '6px',
-                fontFamily: 'var(--mono)'
-              }}>
-                {selectedFeedback.id}
-              </span>
-              <strong style={{ fontSize: '16px', color: '#f8fafc' }}>
-                {selectedFeedback.type} Details Log
-              </strong>
-            </div>
-            <button
-              type="button"
-              style={{
-                background: 'transparent',
-                border: 'none',
-                color: '#94a3b8',
-                fontSize: '20px',
-                cursor: 'pointer'
-              }}
-              onClick={() => setSelectedFeedback(null)}
-            >
-              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 15l-6-6-6 6" />
-              </svg>
-            </button>
-          </div>
+                    {/* QUICK STATISTICS OVERVIEW TILES (SVG Icons + Glass-Morphism) */}
+                    <div style={{
+                      display: 'grid',
+                      gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                      gap: '12px',
+                      marginBottom: '16px'
+                    }}>
+                      <div style={{
+                        background: 'rgba(30, 41, 59, 0.6)',
+                        padding: '16px',
+                        borderRadius: '8px',
+                        backdropFilter: 'blur(8px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px'
+                      }}>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 2v4" />
+                          <path d="M12 18v4" />
+                          <path d="M4.93 4.93l2.83 2.83" />
+                          <path d="M16.24 16.24l2.83 2.83" />
+                          <path d="M2 12h2" />
+                          <path d="M20 12h2" />
+                          <path d="M4.93 19.07l2.83-2.83" />
+                          <path d="M16.24 7.76l2.83-2.83" />
+                        </svg>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase' }}>Pending Submissions</div>
+                          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
+                            {feedbackList.filter(f => f.status === 'Pending').length}
+                          </div>
+                        </div>
+                      </div>
 
-          {/* SYSTEM INFORMATIONAL METADATA */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
-            gap: '12px',
-            marginBottom: '14px',
-            fontSize: '13px',
-            background: '#0f172a',
-            padding: '12px',
-            borderRadius: '6px'
-          }}>
-            <div>
-              <span style={{ color: '#94a3b8' }}>Resident Submitter:</span>
-              <strong style={{ color: 'white' }}>{selectedFeedback.sender}</strong>
-            </div>
-            <div>
-              <span style={{ color: '#94a3b8' }}>Rank Priority:</span>
-              <strong>
-                {selectedFeedback.priority === 'High' ? (
-                  <span className="badge r" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" />
-                    </svg>
-                    High
-                  </span>
-                ) : selectedFeedback.priority === 'Medium' ? (
-                  <span className="badge a" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" />
-                    </svg>
-                    Medium
-                  </span>
-                ) : (
-                  <span className="badge g" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <circle cx="12" cy="12" r="10" />
-                    </svg>
-                    Low
-                  </span>
-                )}
-              </strong>
-            </div>
-            <div>
-              <span style={{ color: '#94a3b8' }}>Timeline Stamp:</span>
-              <span style={{ color: '#cbd5e1' }}>{selectedFeedback.date}</span>
-            </div>
-            <div>
-              <span style={{ color: '#94a3b8' }}>Attachment Field:</span>
-              {' '}
-              {selectedFeedback.attachment ? (
-                <span style={{
-                  color: '#60a5fa',
-                  cursor: 'pointer',
-                  textDecoration: 'underline',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '4px'
-                }}
-                  onClick={() => alert(`Opening system dynamic link placeholder: ${selectedFeedback.attachment}`)}
-                >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-                  </svg>
-                  {selectedFeedback.attachment}
-                </span>
-              ) : (
-                <span style={{ color: '#64748b' }}>None</span>
-              )}
-            </div>
-          </div>
+                      <div style={{
+                        background: 'rgba(30, 41, 59, 0.6)',
+                        padding: '16px',
+                        borderRadius: '8px',
+                        backdropFilter: 'blur(8px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px'
+                      }}>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M21 21l-4.35-4.35" />
+                        </svg>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#94a3b8' }}>Under Review</div>
+                          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
+                            {feedbackList.filter(f => f.status === 'Under Review').length}
+                          </div>
+                        </div>
+                      </div>
 
-          {/* MAIN MESSAGE STATEMENT AREA */}
-          <div style={{ marginBottom: '16px' }}>
-            <label className="fl" style={{
-              color: '#94a3b8',
-              fontSize: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M12 18v-6" />
-                <path d="M9 15h6" />
-              </svg>
-              Subject Heading
-            </label>
-            <div style={{
-              background: '#334155',
-              padding: '8px 12px',
-              borderRadius: '4px',
-              color: 'white',
-              fontWeight: '600',
-              fontSize: '13px',
-              marginBottom: '8px'
-            }}>
-              {selectedFeedback.subject}
-            </div>
+                      <div style={{
+                        background: 'rgba(30, 41, 59, 0.6)',
+                        padding: '16px',
+                        borderRadius: '8px',
+                        backdropFilter: 'blur(8px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px'
+                      }}>
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                          <path d="M22 4L12 14.01l-3-3" />
+                        </svg>
+                        <div>
+                          <div style={{ fontSize: '11px', color: '#94a3b8' }}>Resolved & Closed</div>
+                          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
+                            {feedbackList.filter(f => f.status === 'Resolved').length}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
 
-            <label className="fl" style={{
-              color: '#94a3b8',
-              fontSize: '12px',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '6px'
-            }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-              Original Input Context Message
-            </label>
-            <div style={{
-              background: '#334155',
-              padding: '12px',
-              borderRadius: '6px',
-              color: '#cbd5e1',
-              fontSize: '13px',
-              lineHeight: '1.6',
-              maxHeight: '120px',
-              overflowY: 'auto'
-            }}>
-              "{selectedFeedback.message}"
-            </div>
-          </div>
+                    {/* CONTROLS WORKSPACE (SEARCH, FILTER, SORT) */}
+                    <div className="tw" style={{
+                      background: 'rgba(15, 23, 42, 0.6)',
+                      padding: '16px',
+                      borderRadius: '8px',
+                      marginBottom: '12px',
+                      backdropFilter: 'blur(8px)',
+                      border: '1px solid rgba(79, 142, 247, 0.2)'
+                    }}>
+                      <div style={{
+                        display: 'grid',
+                        gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr',
+                        gap: '10px',
+                        alignItems: 'center'
+                      }}>
+                        {/* Search */}
+                        <div className="sb-box" style={{ margin: 0, width: '100%' }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="11" cy="11" r="8" />
+                            <path d="M21 21l-4.35-4.35" />
+                          </svg>
+                          <input
+                            placeholder="Search Resident, ID or Subject..."
+                            value={searchFbQuery}
+                            onChange={(e) => setSearchFbQuery(e.target.value)}
+                          />
+                        </div>
 
-          {/* SYSTEM MANAGEMENT FORM AUDIT BLOCK */}
-          <form onSubmit={handleSubmitFeedbackAction}>
-            <div style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: '12px',
-              marginBottom: '12px'
-            }}>
-              <div className="fg" style={{ margin: 0 }}>
-                <label className="fl" style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M12 2v4" />
-                    <path d="M12 18v4" />
-                    <path d="M4.93 4.93l2.83 2.83" />
-                    <path d="M16.24 16.24l2.83 2.83" />
-                    <path d="M2 12h2" />
-                    <path d="M20 12h2" />
-                    <path d="M4.93 19.07l2.83-2.83" />
-                    <path d="M16.24 7.76l2.83-2.83" />
-                  </svg>
-                  Update Workflow Status
-                </label>
-                <select
-                  className="fc"
-                  value={fbStatusUpdate}
-                  onChange={(e) => setFbStatusUpdate(e.target.value)}
-                >
-                  <option value="Pending">Pending</option>
-                  <option value="Under Review">Under Review</option>
-                  <option value="Responded">Responded</option>
-                  <option value="Resolved">Resolved & Closed</option>
-                </select>
-              </div>
-              <div className="fg" style={{ margin: 0 }}>
-                <label className="fl" style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px'
-                }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                  </svg>
-                  Assign Staff Operations Agent
-                </label>
-                <select
-                  className="fc"
-                  value={fbStaffAssignment}
-                  onChange={(e) => setFbStaffAssignment(e.target.value)}
-                >
-                  <option value="Unassigned">Unassigned</option>
-                  <option value="Mark Gian Cortero">Mark Gian Cortero</option>
-                  <option value="Juhairo Macabangon">Juhairo Macabangon</option>
-                  <option value="Denver Napagal">Denver Napagal</option>
-                </select>
-              </div>
-            </div>
+                        {/* Type Filter */}
+                        <select
+                          className="fc"
+                          style={{ width: '100%' }}
+                          value={filterFbType}
+                          onChange={(e) => setFilterFbType(e.target.value)}
+                        >
+                          <option value="All Types">All Types</option>
+                          <option value="Complaint">Complaint</option>
+                          <option value="Suggestion">Suggestion</option>
+                          <option value="Inquiry">Inquiry</option>
+                        </select>
 
-            <div className="fg">
-              <label className="fl" style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 2v6h6" />
-                  <path d="M12 18v-6" />
-                  <path d="M9 15h6" />
-                </svg>
-                Official Response Statement (To be broadcast to Resident Portal Logs)
-              </label>
-              <textarea
-                className="fc"
-                required
-                style={{ minHeight: '80px', fontSize: '13px' }}
-                placeholder="Provide a clean clear response guidelines message context here..."
-                value={fbResponseText}
-                onChange={(e) => setFbResponseText(e.target.value)}
-              />
-            </div>
+                        {/* Status Filter */}
+                        <select
+                          className="fc"
+                          style={{ width: '100%' }}
+                          value={filterFbStatus}
+                          onChange={(e) => setFilterFbStatus(e.target.value)}
+                        >
+                          <option value="All Status">All Statuses</option>
+                          <option value="Pending">Pending</option>
+                          <option value="Under Review">Under Review</option>
+                          <option value="Responded">Responded</option>
+                          <option value="Resolved">Resolved</option>
+                        </select>
 
-            {/* AUDIT TRAIL FIELD FOOTNOTE */}
-            {selectedFeedback.status === 'Resolved' && (
-              <div style={{
-                fontSize: '11px',
-                color: '#10b981',
-                background: '#065f46',
-                padding: '8px',
-                borderRadius: '4px',
-                marginBottom: '12px',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '6px'
-              }}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 2v6h6" />
-                  <path d="M12 18v-6" />
-                  <path d="M9 15h6" />
-                </svg>
-                Historical Audit Track: Resolved by <strong>{selectedFeedback.handledBy}</strong> on <em>{selectedFeedback.dateResolved}</em>
-              </div>
-            )}
+                        {/* Priority Filter */}
+                        <select
+                          className="fc"
+                          style={{ width: '100%' }}
+                          value={filterFbPriority}
+                          onChange={(e) => setFilterFbPriority(e.target.value)}
+                        >
+                          <option value="All Priorities">All Priorities</option>
+                          <option value="High">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2">
+                              <circle cx="12" cy="12" r="10" />
+                            </svg>
+                            High Priority
+                          </option>
+                          <option value="Medium">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#fbbf24" strokeWidth="2">
+                              <circle cx="12" cy="12" r="10" />
+                            </svg>
+                            Medium Priority
+                          </option>
+                          <option value="Low">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2">
+                              <circle cx="12" cy="12" r="10" />
+                            </svg>
+                            Low Priority
+                          </option>
+                        </select>
 
-            {/* ACTION TRIGGERS CONTROLLER AREA */}
-            <div style={{
-              display: 'flex',
-              gap: '8px',
-              justifyContent: 'flex-end',
-              borderTop: '1px solid #334155',
-              paddingTop: '12px'
-            }}>
-              <button
-                type="button"
-                className="btn btn-g"
-                style={{ background: '#475569' }}
-                onClick={() => setSelectedFeedback(null)}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 15l-6-6-6 6" />
-                </svg>
-                Discard
-              </button>
-              <button
-                type="submit"
-                className="btn btn-p"
-                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M19 21H5" />
-                  <path d="M19 3H5" />
-                  <path d="M19 12H5" />
-                  <path d="M5 21V3" />
-                </svg>
-                Commit Changes & Notify
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
-    )}
-  </div>
-)} 
+                        {/* Sort */}
+                        <select
+                          className="fc"
+                          style={{ width: '100%' }}
+                          value={sortFbBy}
+                          onChange={(e) => setSortFbBy(e.target.value)}
+                        >
+                          <option value="Newest">Newest First</option>
+                          <option value="Oldest">Oldest First</option>
+                          <option value="PendingFirst">Pending Priority</option>
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* CENTRAL REGISTRY SYSTEM TABLE (Glass-Morphism) */}
+                    <div className="tw" style={{
+                      background: 'rgba(26, 29, 36, 0.4)',
+                      backdropFilter: 'blur(8px)',
+                      border: '1px solid rgba(79, 142, 247, 0.2)',
+                      borderRadius: '8px',
+                      overflowX: 'auto'
+                    }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Ticket ID</th>
+                            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Resident From</th>
+                            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Classification</th>
+                            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Rank</th>
+                            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Subject Heading</th>
+                            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Date Submitted</th>
+                            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Assigned Agent</th>
+                            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Status State</th>
+                            <th style={{ fontSize: '11px', color: 'var(--muted)', padding: '12px 16px', textAlign: 'left' }}>Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {feedbackList
+                            // Sorting
+                            .sort((a, b) => {
+                              const timeA = new Date(a.rawTimestamp || a.date || 0).getTime();
+                              const timeB = new Date(b.rawTimestamp || b.date || 0).getTime();
+                              if (sortFbBy === 'Oldest') {
+                                return timeA - timeB;
+                              }
+                              if (sortFbBy === 'PendingFirst') {
+                                const priorityWeight = { High: 3, Medium: 2, Low: 1 };
+                                const weightA = priorityWeight[a.priority] || 0;
+                                const weightB = priorityWeight[b.priority] || 0;
+                                return weightB - weightA;
+                              }
+                              return timeB - timeA; // Default to Newest First
+                            })
+                            // Filtering
+                            .filter((fb) => {
+                              const query = searchFbQuery.toLowerCase();
+                              const matchesSearch = (fb.sender || '').toLowerCase().includes(query) ||
+                                                  (fb.id || '').toLowerCase().includes(query) ||
+                                                  (fb.subject || '').toLowerCase().includes(query);
+                              const matchesType = filterFbType === 'All Types' || fb.type === filterFbType;
+                              const matchesStatus = filterFbStatus === 'All Status' || filterFbStatus === 'All Statuses' || fb.status === filterFbStatus;
+                              const matchesPriority = filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
+                              return matchesSearch && matchesType && matchesStatus && matchesPriority;
+                            })
+                            .map((fb) => (
+                              <tr
+                                key={fb._id || fb.id}
+                                style={{
+                                  borderBottom: '1px solid #334155',
+                                  transition: 'background 0.2s ease'
+                                }}
+                                onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.05)')}
+                                onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                              >
+                                <td style={{
+                                  fontFamily: 'var(--mono)',
+                                  fontSize: '11px',
+                                  color: '#60a5fa',
+                                  fontWeight: 'bold',
+                                  padding: '12px 16px'
+                                }}>
+                                  {fb.id}
+                                </td>
+                                <td style={{ fontWeight: '500', padding: '12px 16px' }}>{fb.sender}</td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <span className={`badge ${fb.type === 'Complaint' ? 'r' : fb.type === 'Suggestion' ? 'b' : 'p'}`}>
+                                    {fb.type}
+                                  </span>
+                                </td>
+                                <td style={{ fontSize: '12px', padding: '12px 16px' }}>
+                                  {fb.priority === 'High' ? (
+                                    <span className="badge r" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <circle cx="12" cy="12" r="10" />
+                                      </svg>
+                                      High
+                                    </span>
+                                  ) : fb.priority === 'Medium' ? (
+                                    <span className="badge a" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <circle cx="12" cy="12" r="10" />
+                                      </svg>
+                                      Medium
+                                    </span>
+                                  ) : (
+                                    <span className="badge g" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <circle cx="12" cy="12" r="10" />
+                                      </svg>
+                                      Low
+                                    </span>
+                                  )}
+                                </td>
+                                <td style={{
+                                  fontSize: '12px',
+                                  maxWidth: '220px',
+                                  overflow: 'hidden',
+                                  textOverflow: 'ellipsis',
+                                  whiteSpace: 'nowrap',
+                                  padding: '12px 16px'
+                                }} title={fb.subject}>
+                                  {fb.subject}
+                                </td>
+                                <td style={{ fontSize: '11px', color: '#94a3b8', padding: '12px 16px' }}>{fb.date}</td>
+                                <td style={{
+                                  fontSize: '12px',
+                                  color: fb.assignedTo === 'Unassigned' ? '#94a3b8' : '#cbd5e1',
+                                  padding: '12px 16px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                                    <circle cx="9" cy="7" r="4" />
+                                  </svg>
+                                  {fb.assignedTo}
+                                </td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <span className="badge" style={{
+                                    background: fb.status === 'Pending' ? '#7f1d1d' :
+                                              fb.status === 'Under Review' ? '#1e3a8a' :
+                                              fb.status === 'Responded' ? '#78350f' : '#065f46',
+                                    color: fb.status === 'Pending' ? '#fca5a5' :
+                                          fb.status === 'Under Review' ? '#93c5fd' :
+                                          fb.status === 'Responded' ? '#fde047' : '#34d399',
+                                  }}>
+                                    {fb.status}
+                                  </span>
+                                </td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <button
+                                    type="button"
+                                    className={`btn btn-sm ${fb.status === 'Pending' || fb.status === 'Under Review' ? 'btn-p' : 'btn-g'}`}
+                                    onClick={() => handleOpenFeedbackDetails(fb)}
+                                    style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                                  >
+                                    {fb.status === 'Pending' || fb.status === 'Under Review' ? (
+                                      <>
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                          <path d="M14 2v6h6" />
+                                          <path d="M12 18v-6" />
+                                          <path d="M9 15h6" />
+                                        </svg>
+                                        Respond
+                                      </>
+                                    ) : (
+                                      <>
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                          <path d="M14 2v6h6" />
+                                          <path d="M12 18v-6" />
+                                          <path d="M9 15h6" />
+                                        </svg>
+                                        View Details
+                                      </>
+                                    )}
+                                  </button>
+                                </td>
+                              </tr>
+                            ))}
+                        </tbody>
+                      </table>
+
+                      {/* NO MATCH ENCOUNTERED BANNER */}
+                      {feedbackList.filter(fb => {
+                        const matchesSearch = fb.sender.toLowerCase().includes(searchFbQuery.toLowerCase()) ||
+                                            fb.id.toLowerCase().includes(searchFbQuery.toLowerCase()) ||
+                                            fb.subject.toLowerCase().includes(searchFbQuery.toLowerCase());
+                        const matchesType = filterFbType === 'All Types' || fb.type === filterFbType;
+                        const matchesStatus = filterFbStatus === 'All Status' || fb.status === filterFbStatus;
+                        const matchesPriority = filterFbPriority === 'All Priorities' || fb.priority === filterFbPriority;
+                        return matchesSearch && matchesType && matchesStatus && matchesPriority;
+                      }).length === 0 && (
+                        <div style={{
+                          textAlign: 'center',
+                          padding: '32px',
+                          color: '#94a3b8',
+                          border: '1px dashed #334155',
+                          borderRadius: '0 0 8px 8px',
+                          background: '#1e293b',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          alignItems: 'center',
+                          gap: '12px'
+                        }}>
+                          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                          </svg>
+                          No active feedback logs found matching the filtering conditions.
+                        </div>
+                      )}
+                    </div>
+
+                    {/* =============================================
+                        📋 CENTRAL DIAGNOSTIC FULL WORKFLOW MODAL DIALOG
+                        ============================================= */}
+                    {selectedFeedback && (
+                      <div style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        height: '100%',
+                        background: 'rgba(0,0,0,0.8)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 99999
+                      }}>
+                        <div style={{
+                          background: '#1e293b',
+                          border: '1px solid #3b82f6',
+                          width: '90%',
+                          maxWidth: '600px',
+                          borderRadius: '12px',
+                          padding: '24px',
+                          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)',
+                          backdropFilter: 'blur(10px)'
+                        }}>
+                          {/* MODAL HEADER CARD */}
+                          <div style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            borderBottom: '1px solid #334155',
+                            paddingBottom: '12px',
+                            marginBottom: '16px'
+                          }}>
+                            <div>
+                              <span style={{
+                                fontSize: '11px',
+                                background: '#3b82f6',
+                                color: 'white',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                marginRight: '6px',
+                                fontFamily: 'var(--mono)'
+                              }}>
+                                {selectedFeedback.id}
+                              </span>
+                              <strong style={{ fontSize: '16px', color: '#f8fafc' }}>
+                                {selectedFeedback.type} Details Log
+                              </strong>
+                            </div>
+                            <button
+                              type="button"
+                              style={{
+                                background: 'transparent',
+                                border: 'none',
+                                color: '#94a3b8',
+                                fontSize: '20px',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => setSelectedFeedback(null)}
+                            >
+                              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M18 15l-6-6-6 6" />
+                              </svg>
+                            </button>
+                          </div>
+
+                          {/* SYSTEM INFORMATIONAL METADATA */}
+                          <div style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '12px',
+                            marginBottom: '14px',
+                            fontSize: '13px',
+                            background: '#0f172a',
+                            padding: '12px',
+                            borderRadius: '6px'
+                          }}>
+                            <div>
+                              <span style={{ color: '#94a3b8' }}>Resident Submitter:</span>
+                              <strong style={{ color: 'white' }}>{selectedFeedback.sender}</strong>
+                            </div>
+                            <div>
+                              <span style={{ color: '#94a3b8' }}>Rank Priority:</span>
+                              <strong>
+                                {selectedFeedback.priority === 'High' ? (
+                                  <span className="badge r" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <circle cx="12" cy="12" r="10" />
+                                    </svg>
+                                    High
+                                  </span>
+                                ) : selectedFeedback.priority === 'Medium' ? (
+                                  <span className="badge a" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <circle cx="12" cy="12" r="10" />
+                                    </svg>
+                                    Medium
+                                  </span>
+                                ) : (
+                                  <span className="badge g" style={{ fontSize: '10px', padding: '2px 6px' }}>
+                                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <circle cx="12" cy="12" r="10" />
+                                    </svg>
+                                    Low
+                                  </span>
+                                )}
+                              </strong>
+                            </div>
+                            <div>
+                              <span style={{ color: '#94a3b8' }}>Timeline Stamp:</span>
+                              <span style={{ color: '#cbd5e1' }}>{selectedFeedback.date}</span>
+                            </div>
+                            <div>
+                              <span style={{ color: '#94a3b8' }}>Attachment Field:</span>
+                              {' '}
+                              {selectedFeedback.attachment ? (
+                                <span style={{
+                                  color: '#60a5fa',
+                                  cursor: 'pointer',
+                                  textDecoration: 'underline',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '4px'
+                                }}
+                                  onClick={() => alert(`Opening system dynamic link placeholder: ${selectedFeedback.attachment}`)}
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                    <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                                  </svg>
+                                  {selectedFeedback.attachment}
+                                </span>
+                              ) : (
+                                <span style={{ color: '#64748b' }}>None</span>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* MAIN MESSAGE STATEMENT AREA */}
+                          <div style={{ marginBottom: '16px' }}>
+                            <label className="fl" style={{
+                              color: '#94a3b8',
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}>
+                              Subject Heading
+                            </label>
+                            <div style={{
+                              background: '#334155',
+                              padding: '8px 12px',
+                              borderRadius: '4px',
+                              color: 'white',
+                              fontWeight: '600',
+                              fontSize: '13px',
+                              marginBottom: '8px'
+                            }}>
+                              {selectedFeedback.subject}
+                            </div>
+
+                            <label className="fl" style={{
+                              color: '#94a3b8',
+                              fontSize: '12px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}>
+                              Original Input Context Message
+                            </label>
+                            <div style={{
+                              background: '#334155',
+                              padding: '12px',
+                              borderRadius: '6px',
+                              color: '#cbd5e1',
+                              fontSize: '13px',
+                              lineHeight: '1.6',
+                              maxHeight: '120px',
+                              overflowY: 'auto'
+                            }}>
+                              "{selectedFeedback.message}"
+                            </div>
+                          </div>
+
+                          {/* SYSTEM MANAGEMENT FORM AUDIT BLOCK */}
+                          <form onSubmit={handleSubmitFeedbackAction}>
+                            <div style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 1fr',
+                              gap: '12px',
+                              marginBottom: '12px'
+                            }}>
+                              <div className="fg" style={{ margin: 0 }}>
+                                <label className="fl" style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px'
+                                }}>
+                                  Update Workflow Status
+                                </label>
+                                <select
+                                  className="fc"
+                                  value={fbStatusUpdate}
+                                  onChange={(e) => setFbStatusUpdate(e.target.value)}
+                                >
+                                  <option value="Pending">Pending</option>
+                                  <option value="Under Review">Under Review</option>
+                                  <option value="Responded">Responded</option>
+                                  <option value="Resolved">Resolved & Closed</option>
+                                </select>
+                              </div>
+                              <div className="fg" style={{ margin: 0 }}>
+                                <label className="fl" style={{
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: '6px'
+                                }}>
+                                  Assign Staff Operations Agent
+                                </label>
+                                <select
+                                  className="fc"
+                                  value={fbStaffAssignment}
+                                  onChange={(e) => setFbStaffAssignment(e.target.value)}
+                                >
+                                  <option value="Unassigned">Unassigned</option>
+                                  <option value="Mark Gian Cortero">Mark Gian Cortero</option>
+                                  <option value="Juhairo Macabangon">Juhairo Macabangon</option>
+                                  <option value="Denver Napagal">Denver Napagal</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <div className="fg">
+                              <label className="fl" style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}>
+                                Official Response Statement (To be broadcast to Resident Portal Logs)
+                              </label>
+                              <textarea
+                                className="fc"
+                                required
+                                style={{ minHeight: '80px', fontSize: '13px' }}
+                                placeholder="Provide a clean clear response guidelines message context here..."
+                                value={fbResponseText}
+                                onChange={(e) => setFbResponseText(e.target.value)}
+                              />
+                            </div>
+
+                            {/* AUDIT TRAIL FIELD FOOTNOTE */}
+                            {selectedFeedback.status === 'Resolved' && (
+                              <div style={{
+                                fontSize: '11px',
+                                color: '#10b981',
+                                background: '#065f46',
+                                padding: '8px',
+                                borderRadius: '4px',
+                                marginBottom: '12px',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px'
+                              }}>
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                  <path d="M14 2v6h6" />
+                                  <path d="M12 18v-6" />
+                                  <path d="M9 15h6" />
+                                </svg>
+                                Historical Audit Track: Resolved by <strong>{selectedFeedback.handledBy}</strong> on <em>{selectedFeedback.dateResolved}</em>
+                              </div>
+                            )}
+
+                            {/* ACTION TRIGGERS CONTROLLER AREA */}
+                            <div style={{
+                              display: 'flex',
+                              gap: '8px',
+                              justifyContent: 'flex-end',
+                              borderTop: '1px solid #334155',
+                              paddingTop: '12px'
+                            }}>
+                              <button
+                                type="button"
+                                className="btn btn-g"
+                                style={{ background: '#475569' }}
+                                onClick={() => setSelectedFeedback(null)}
+                              >
+                                Discard
+                              </button>
+                              <button
+                                type="submit"
+                                className="btn btn-p"
+                                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                              >
+                                Commit Changes & Notify
+                              </button>
+                            </div>
+                          </form>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )} 
 
             {/* ════════════════════════════════════════
                 SCREEN: CONFLICT RESOLUTION (Admin only)
                 ════════════════════════════════════════ */}
             {role === 'admin' && screen === 'conflicts' && (
               <div className="screen active">
-                <div className="ph">
-                  <div>
-                    <div className="pt">Conflict Resolution</div>
-                    <div className="ps">CouchDB sync conflicts pending administrative review — data held, not overwritten</div>
-                  </div>
-                </div>
                 <div className="note note-w" style={{ marginBottom: '20px' }}>
-                  ⚠ <strong>2 conflicts detected.</strong> Records modified on multiple offline devices simultaneously. No data has been overwritten. Select the correct version or keep both.
+                  ⚠ <strong>2 conflicts detected.</strong> Records modified on multiple
+                  offline devices simultaneously. No data has been overwritten. Select
+                  the correct version or keep both.
                 </div>
 
                 <div className="cf-card">
-                  <div className="cf-hdr">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontWeight: 800, color: 'var(--red)', fontSize: '13px' }}>⚠ Conflict #1</span>
-                      <span className="badge g" style={{ fontSize: '10px' }}>residents</span>
-                      <span className="badge gr" style={{ fontFamily: 'var(--mono)', fontSize: '10px' }}>RES-0412</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button className="btn btn-s btn-sm">Keep Version A</button>
-                      <button className="btn btn-g btn-sm">Keep Version B</button>
-                      <button className="btn btn-a btn-sm">Keep Both</button>
-                    </div>
-                  </div>
-                  <div className="cf-vs">
-                    <div className="cf-v">
-                      <div className="cf-vl">Version A — Cortero, Mark · Device 1 · 08:10 AM</div>
-                      <div className="cf-vf"><span>Name:</span>Maria Dela Cruz Santos</div>
-                      <div className="cf-vf"><span>Purok:</span><strong>Purok 3</strong></div>
-                      <div className="cf-vf"><span>Civil Status:</span>Married</div>
-                      <div className="cf-vf"><span>Contact:</span>09171234567</div>
-                    </div>
-                    <div className="cf-v">
-                      <div className="cf-vl">Version B — Napagal, Jay · Device 2 · 08:15 AM</div>
-                      <div className="cf-vf"><span>Name:</span>Maria Dela Cruz Santos</div>
-                      <div className="cf-vf"><span>Purok:</span><strong>Purok 4</strong></div>
-                      <div className="cf-vf"><span>Civil Status:</span>Married</div>
-                      <div className="cf-vf"><span>Contact:</span>09171234567</div>
-                    </div>
-                  </div>
-                </div>
+                              <div className="cf-hdr">
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <span style={{ fontWeight: 800, color: 'var(--red)', fontSize: '13px' }}>⚠ Conflict #1</span>
+                                  <span className="badge g" style={{ fontSize: '10px' }}>residents</span>
+                                  <span className="badge gr" style={{ fontFamily: 'var(--mono)', fontSize: '10px' }}>RES-0412</span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button className="btn btn-s btn-sm">Keep Version A</button>
+                                  <button className="btn btn-g btn-sm">Keep Version B</button>
+                                  <button className="btn btn-a btn-sm">Keep Both</button>
+                                </div>
+                              </div>
+                              <div className="cf-vs">
+                                <div className="cf-v">
+                                  <div className="cf-vl">Version A — Cortero, Mark · Device 1 · 08:10 AM</div>
+                                  <div className="cf-vf"><span>Name:</span>Maria Dela Cruz Santos</div>
+                                  <div className="cf-vf"><span>Purok:</span><strong>Purok 3</strong></div>
+                                  <div className="cf-vf"><span>Civil Status:</span>Married</div>
+                                  <div className="cf-vf"><span>Contact:</span>09171234567</div>
+                                </div>
+                                <div className="cf-v">
+                                  <div className="cf-vl">Version B — Napagal, Jay · Device 2 · 08:15 AM</div>
+                                  <div className="cf-vf"><span>Name:</span>Maria Dela Cruz Santos</div>
+                                  <div className="cf-vf"><span>Purok:</span><strong>Purok 4</strong></div>
+                                  <div className="cf-vf"><span>Civil Status:</span>Married</div>
+                                  <div className="cf-vf"><span>Contact:</span>09171234567</div>
+                                </div>
+                              </div>
+                            </div>
 
                 <div className="cf-card">
-                  <div className="cf-hdr">
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                      <span style={{ fontWeight: 800, color: 'var(--red)', fontSize: '13px' }}>⚠ Conflict #2</span>
-                      <span className="badge a" style={{ fontSize: '10px' }}>aid_distributions</span>
-                      <span className="badge gr" style={{ fontFamily: 'var(--mono)', fontSize: '10px' }}>LOG-0039</span>
-                    </div>
-                    <div style={{ display: 'flex', gap: '8px' }}>
-                      <button className="btn btn-s btn-sm">Keep Version A</button>
-                      <button className="btn btn-g btn-sm">Keep Version B</button>
-                      <button className="btn btn-a btn-sm">Keep Both</button>
-                    </div>
-                  </div>
-                  <div className="cf-vs">
-                    <div className="cf-v">
-                      <div className="cf-vl">Version A — Regaspi, Mark · Device 1 · 09:00 AM</div>
-                      <div className="cf-vf"><span>Beneficiary:</span>Lopez, Pedro D.</div>
-                      <div className="cf-vf"><span>Aid Type:</span><strong>Rice 5kg</strong></div>
-                      <div className="cf-vf"><span>Quantity:</span>1</div>
-                    </div>
-                    <div className="cf-v">
-                      <div className="cf-vl">Version B — Amparado, Ken · Device 2 · 09:05 AM</div>
-                      <div className="cf-vf"><span>Beneficiary:</span>Lopez, Pedro D.</div>
-                      <div className="cf-vf"><span>Aid Type:</span><strong>Rice 10kg</strong></div>
-                      <div className="cf-vf"><span>Quantity:</span>1</div>
-                    </div>
-                  </div>
-                </div>
+                              <div className="cf-hdr">
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <span style={{ fontWeight: 800, color: 'var(--red)', fontSize: '13px' }}>⚠ Conflict #2</span>
+                                  <span className="badge a" style={{ fontSize: '10px' }}>aid_distributions</span>
+                                  <span className="badge gr" style={{ fontFamily: 'var(--mono)', fontSize: '10px' }}>LOG-0039</span>
+                                </div>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button className="btn btn-s btn-sm">Keep Version A</button>
+                                  <button className="btn btn-g btn-sm">Keep Version B</button>
+                                  <button className="btn btn-a btn-sm">Keep Both</button>
+                                </div>
+                              </div>
+                              <div className="cf-vs">
+                                <div className="cf-v">
+                                  <div className="cf-vl">Version A — Regaspi, Mark · Device 1 · 09:00 AM</div>
+                                  <div className="cf-vf"><span>Beneficiary:</span>Lopez, Pedro D.</div>
+                                  <div className="cf-vf"><span>Aid Type:</span><strong>Rice 5kg</strong></div>
+                                  <div className="cf-vf"><span>Quantity:</span>1</div>
+                                </div>
+                                <div className="cf-v">
+                                  <div className="cf-vl">Version B — Amparado, Ken · Device 2 · 09:05 AM</div>
+                                  <div className="cf-vf"><span>Beneficiary:</span>Lopez, Pedro D.</div>
+                                  <div className="cf-vf"><span>Aid Type:</span><strong>Rice 10kg</strong></div>
+                                  <div className="cf-vf"><span>Quantity:</span>1</div>
+                                </div>
+                              </div>
+                            </div>
               </div>
             )}
 
@@ -9034,15 +10018,13 @@ const getStatusBadgeClass = (status) => {
                 ════════════════════════════════════════ */}
             {role === 'admin' && screen === 'audit' && (
               <div className="screen active">
-                <div className="ph">
-                  <div>
-                    <div className="pt">Audit Log</div>
-                    <div className="ps">Complete immutable transaction history (append-only, no deletions permitted)</div>
-                  </div>
-                </div>
                 <div className="tw">
                   <div className="tb">
-                    <div className="sb-box"><span>🔍</span><input placeholder="Search user, action, module..." /></div>
+                    <div className="sb-box">
+                      <span>🔍</span>
+                      <input placeholder="Search user, action, module..." />
+                    </div>
+
                     <select className="fc" style={{ width: '150px' }}>
                       <option>All Modules</option>
                       <option>Residents</option>
@@ -9050,6 +10032,7 @@ const getStatusBadgeClass = (status) => {
                       <option>Aid Distribution</option>
                       <option>Blotter</option>
                     </select>
+
                     <select className="fc" style={{ width: '130px' }}>
                       <option>All Actions</option>
                       <option>CREATE</option>
@@ -9063,35 +10046,61 @@ const getStatusBadgeClass = (status) => {
                   </div>
 
                   {auditLogs.length === 0 ? (
-                    <div className="al-row" style={{ justifyContent: 'center', color: 'var(--muted)', padding: '24px' }}>
+                    <div
+                      className="al-row"
+                      style={{
+                        justifyContent: 'center',
+                        color: 'var(--muted)',
+                        padding: '24px'
+                      }}
+                    >
                       No audit logs found.
                     </div>
                   ) : (
                     auditLogs.map((log) => {
                       const meta = getActionMeta(log.action);
+
                       return (
                         <div key={log._id} className="al-row">
-                          <div className="al-ico" style={{ background: meta.bg }}>
+                          <div
+                            className="al-ico"
+                            style={{ background: meta.bg }}
+                          >
                             {meta.ico}
                           </div>
+
                           <div style={{ flex: 1, minWidth: 0 }}>
                             <div className="al-a">
                               {log.action}
                               {log.module ? ` — ${log.module}` : ''}
                               {log.recordId ? ` · ${log.recordId}` : ''}
                             </div>
+
                             <div className="al-d">
-                              User: {log.actor?.username || 'System'} ({log.actor?.role || 'N/A'})
+                              User: {log.actor?.username || 'System'}
+                              {' '}
+                              ({log.actor?.role || 'N/A'})
                               {log.details ? ` · ${log.details}` : ''}
                             </div>
                           </div>
-                          <div style={{ textAlign: 'right', flexShrink: 0 }}>
+
+                          <div
+                            style={{
+                              textAlign: 'right',
+                              flexShrink: 0
+                            }}
+                          >
                             <span
                               className={`badge ${meta.bClass}`}
-                              style={{ fontSize: '9px', marginBottom: '3px', display: 'inline-flex' }}
+                              style={{
+                                fontSize: '9px',
+                                marginBottom: '3px',
+                                display: 'inline-flex'
+                              }}
                             >
                               {meta.badge}
                             </span>
+
                             <div className="al-t">
                               {log.timestamp
                                 ? new Date(log.timestamp).toLocaleString('en-PH', {
@@ -9099,7 +10108,7 @@ const getStatusBadgeClass = (status) => {
                                     day: 'numeric',
                                     hour: '2-digit',
                                     minute: '2-digit',
-                                    hour12: true,
+                                    hour12: true
                                   })
                                 : ''}
                             </div>
@@ -9174,7 +10183,15 @@ const getStatusBadgeClass = (status) => {
               <div className="screen active">
                 <div className="ph">
                   <div>
-                    <div className="pt">Generate Reports</div>
+                    <div className="pt" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                      Generate Reports
+                    </div>
                     <div className="ps">
                       {role === 'admin'
                         ? 'Printable reports for all modules — admin full access'
@@ -9182,26 +10199,195 @@ const getStatusBadgeClass = (status) => {
                     </div>
                   </div>
                 </div>
-                <div className="thc">
+
+                {/* =============================================
+                    📄 REPORT CARDS GRID (Glass-Morphism + SVG Icons)
+                    ============================================= */}
+                <div className="thc" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: '16px' }}>
                   {[
-                    { icon: '📝', title: 'Certificate Issuance',  desc: 'Monthly issuance summary by type',   select: ['April 2024', 'March 2024'] },
-                    { icon: '📦', title: 'Aid Distribution',       desc: 'Beneficiary list per program',       select: ['Ayuda Rice Distribution'] },
-                    { icon: '👥', title: 'Resident Registry',      desc: 'Full resident list by purok',        select: ['All Puroks'] },
-                    { icon: '🚨', title: 'Blotter Summary',        desc: 'Cases grouped by type and status',   select: ['April 2024'] },
-                    { icon: '💬', title: 'Feedback Report',        desc: 'Concern submissions and resolutions', select: ['All Status'] },
-                    { icon: '🏠', title: 'Household Registry',     desc: 'Household listing by purok',         select: ['All Puroks'] },
+                    {
+                      icon: (
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <path d="M14 2v6h6" />
+                          <path d="M12 18v-6" />
+                          <path d="M9 15h6" />
+                        </svg>
+                      ),
+                      title: 'Certificate Issuance',
+                      desc: 'Monthly issuance summary by type',
+                      select: ['April 2026', 'March 2026', 'February 2026'],
+                      module: 'certificates'
+                    },
+                    {
+                      icon: (
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                        </svg>
+                      ),
+                      title: 'Aid Distribution',
+                      desc: 'Beneficiary list per program',
+                      select: ['Ayuda Rice Distribution', 'Financial Assistance', 'Medical Aid'],
+                      module: 'aid'
+                    },
+                    {
+                      icon: (
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                          <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                        </svg>
+                      ),
+                      title: 'Resident Registry',
+                      desc: 'Full resident list by purok',
+                      select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'],
+                      module: 'residents'
+                    },
+                    {
+                      icon: (
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                          <path d="M12 9v4" />
+                          <path d="M12 17h.01" />
+                        </svg>
+                      ),
+                      title: 'Blotter Summary',
+                      desc: 'Cases grouped by type and status',
+                      select: ['September 2026', 'August 2026', 'July 2026'],
+                      module: 'blotter'
+                    },
+                    {
+                      icon: (
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                      ),
+                      title: 'Feedback Report',
+                      desc: 'Concern submissions and resolutions',
+                      select: ['All Status', 'Pending', 'Under Review', 'Resolved'],
+                      module: 'feedback'
+                    },
+                    {
+                      icon: (
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                          <path d="M9 22V12h6v10" />
+                        </svg>
+                      ),
+                      title: 'Household Registry',
+                      desc: 'Household listing by purok',
+                      select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'],
+                      module: 'households'
+                    },
                     ...(role === 'admin'
-                      ? [{ icon: '🔍', title: 'Audit Trail Report', desc: 'Admin-only — full system log', select: ['April 2024'] }]
-                      : []),
+                      ? [{
+                          icon: (
+                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                              <path d="M14 2v6h6" />
+                              <path d="M12 18v-6" />
+                              <path d="M9 15h6" />
+                              <path d="M12 6v6l4 4" />
+                            </svg>
+                          ),
+                          title: 'Audit Trail Report',
+                          desc: 'Admin-only — full system log',
+                          select: ['September 2026', 'August 2026', 'July 2026'],
+                          module: 'audit'
+                        }]
+                      : [])
                   ].map((r) => (
-                    <div key={r.title} className="card">
-                      <div style={{ fontSize: '24px', marginBottom: '8px' }}>{r.icon}</div>
-                      <div className="ct">{r.title}</div>
-                      <div className="cm" style={{ marginBottom: '10px' }}>{r.desc}</div>
-                      <select className="fc" style={{ marginBottom: '10px' }}>
-                        {r.select.map((o) => <option key={o}>{o}</option>)}
+                    <div
+                      key={r.title}
+                      className="card"
+                      style={{
+                        background: 'rgba(30, 41, 59, 0.4)',
+                        border: '1px solid rgba(79, 142, 247, 0.2)',
+                        borderRadius: '8px',
+                        padding: '16px',
+                        backdropFilter: 'blur(8px)',
+                        transition: 'all 0.3s ease',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        justifyContent: 'space-between'
+                      }}
+                      onMouseEnter={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.4)';
+                        e.currentTarget.style.background = 'rgba(30, 41, 59, 0.6)';
+                      }}
+                      onMouseLeave={(e) => {
+                        e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.2)';
+                        e.currentTarget.style.background = 'rgba(30, 41, 59, 0.4)';
+                      }}
+                    >
+                      {/* Icon */}
+                      <div style={{
+                        width: '40px',
+                        height: '40px',
+                        background: 'rgba(79, 142, 247, 0.1)',
+                        borderRadius: '8px',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        marginBottom: '12px',
+                        color: '#3b82f6'
+                      }}>
+                        {r.icon}
+                      </div>
+
+                      {/* Title */}
+                      <div className="ct" style={{
+                        fontWeight: 'bold',
+                        fontSize: '14px',
+                        color: '#f8fafc',
+                        marginBottom: '4px'
+                      }}>
+                        {r.title}
+                      </div>
+
+                      {/* Description */}
+                      <div className="cm" style={{
+                        fontSize: '12px',
+                        color: '#94a3b8',
+                        marginBottom: '12px'
+                      }}>
+                        {r.desc}
+                      </div>
+
+                      {/* Select Dropdown */}
+                      <select
+                        className="fc"
+                        style={{
+                          marginBottom: '12px',
+                          background: '#1e293b',
+                          border: '1px solid #334155',
+                          color: '#cbd5e1'
+                        }}
+                      >
+                        {r.select.map((o) => (
+                          <option key={o} value={o}>{o}</option>
+                        ))}
                       </select>
-                      <button className="btn btn-p" style={{ width: '100%', justifyContent: 'center' }}>
+
+                      {/* Generate Button */}
+                      <button
+                        className="btn btn-p"
+                        style={{
+                          width: '100%',
+                          justifyContent: 'center',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '6px',
+                          marginTop: 'auto'
+                        }}
+                        onClick={() => handleGenerateReport(r.module)}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <path d="M7 10l5 5 5-5" />
+                          <path d="M12 15v-6" />
+                        </svg>
                         Generate PDF
                       </button>
                     </div>
@@ -9231,6 +10417,295 @@ const getStatusBadgeClass = (status) => {
             </div>
           </footer>
         </div>{/* /main */}
+
+        {showCtcModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            backdropFilter: 'blur(3px)',
+          }}
+        >
+          <div
+            style={{
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: '10px',
+              width: '100%',
+              maxWidth: '480px',
+              padding: '20px',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+            }}
+          >
+            {/* Modal Header */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text)' }}>
+                ➕ Add New CTC Record
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowCtcModal(false)}
+                style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '18px' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* Modal Form */}
+            <form onSubmit={handleSaveCtc}>
+              {/* RBI ID NO. & CTC NUMBER */}
+              <div className="fg2" style={{ marginBottom: '12px' }}>
+                <div className="fg" style={{ marginBottom: 0 }}>
+                  <label className="fl">RBI ID NO.</label>
+                  <input
+                    type="text"
+                    className="fc"
+                    placeholder="e.g. RBI-2026-001"
+                    value={ctcForm.rbiNo}
+                    onChange={updateCtcField('rbiNo')}
+                  />
+                </div>
+                <div className="fg" style={{ marginBottom: 0 }}>
+                  <label className="fl">CTC NUMBER *</label>
+                  <input
+                    type="text"
+                    className="fc"
+                    required
+                    placeholder="e.g. CTC-12345678"
+                    value={ctcForm.ctcNo}
+                    onChange={updateCtcField('ctcNo')}
+                  />
+                </div>
+              </div>
+
+              {/* FULL NAME */}
+              <div className="fg" style={{ marginBottom: '12px' }}>
+                <label className="fl">FULL NAME / RESIDENT *</label>
+                <input
+                  type="text"
+                  className="fc"
+                  required
+                  placeholder="LAST NAME, FIRST NAME MIDDLE NAME"
+                  value={ctcForm.ctcName}
+                  onChange={updateCtcField('ctcName')}
+                />
+              </div>
+
+              {/* AMOUNT PAID & DATE ISSUED */}
+              <div className="fg2" style={{ marginBottom: '12px' }}>
+                <div className="fg" style={{ marginBottom: 0 }}>
+                  <label className="fl">AMOUNT PAID (₱) *</label>
+                  <input
+                    type="number"
+                    className="fc"
+                    required
+                    placeholder="0.00"
+                    value={ctcForm.amtPaid}
+                    onChange={updateCtcField('amtPaid')}
+                  />
+                </div>
+                <div className="fg" style={{ marginBottom: 0 }}>
+                  <label className="fl">DATE ISSUED</label>
+                  <input
+                    type="date"
+                    className="fc"
+                    value={ctcForm.dateIssued}
+                    onChange={updateCtcField('dateIssued')}
+                  />
+                </div>
+              </div>
+
+              {/* ISSUED BY THIS BARANGAY CHECKBOX */}
+              <div style={{ padding: '10px 12px', background: 'var(--surface2)', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '12px' }}>
+                <label style={{ fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text)' }}>
+                  <input
+                    type="checkbox"
+                    checked={ctcForm.isIssuedByBarangay}
+                    onChange={handleBarangayToggle}
+                  />
+                  ISSUED BY THIS BARANGAY
+                </label>
+              </div>
+
+              {/* PLACE ISSUED */}
+              <div className="fg" style={{ marginBottom: '16px' }}>
+                <label className="fl">PLACE ISSUED</label>
+                <input
+                  type="text"
+                  className="fc"
+                  readOnly={ctcForm.isIssuedByBarangay}
+                  style={{ opacity: ctcForm.isIssuedByBarangay ? 0.8 : 1 }}
+                  value={ctcForm.placeIssued}
+                  onChange={updateCtcField('placeIssued')}
+                  placeholder="e.g. Nabua, Camarines Sur"
+                />
+              </div>
+
+              {/* Modal Actions */}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>
+                <button type="button" className="btn btn-g" onClick={() => setShowCtcModal(false)}>
+                  Cancel
+                </button>
+                <button type="submit" className="btn btn-p">
+                  Save CTC Record
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+        {/* ── PRINT BUSINESS CLEARANCE MODAL OVERLAY ── */}
+        {showBusinessPrintModal && selectedBusinessCert && (
+          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+            <div id="printable-certificate-card" style={{ background: '#ffffff', color: '#000000', borderRadius: '8px', width: '100%', maxWidth: '620px', padding: '28px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', maxHeight: '90vh', overflowY: 'auto' }}>
+              
+              {/* Header */}
+              <div style={{ textAlign: 'center', borderBottom: '2px solid #000', paddingBottom: '12px', marginBottom: '16px' }}>
+                <h5 style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Republic of the Philippines</h5>
+                <h4 style={{ margin: '2px 0', fontSize: '14px', fontWeight: 700 }}>BARANGAY BUSTRAC</h4>
+                <p style={{ margin: 0, fontSize: '11px' }}>Municipality of Nabua, Province of Camarines Sur</p>
+                <h2 style={{ margin: '14px 0 4px 0', fontSize: '17px', fontWeight: 800, textDecoration: 'underline' }}> BARANGAY BUSINESS CLEARANCE </h2>
+              </div>
+
+              {/* Certificate Body */}
+              <div style={{ fontSize: '12px', lineHeight: '1.6', textAlign: 'justify' }}>
+                <p style={{ marginBottom: '12px' }}><strong>TO WHOM IT MAY CONCERN:</strong></p>
+                <p style={{ textIndent: '24px', marginBottom: '12px' }}>
+                  This certification and clearance is hereby granted to <strong>{selectedBusinessCert.businessName}</strong>, owned and operated by <strong>{`${selectedBusinessCert.firstName} ${selectedBusinessCert.lastName}`}</strong>, located at <strong>{selectedBusinessCert.businessAddress || 'Barangay Bustrac, Nabua, Camarines Sur'}</strong>.
+                </p>
+                <p style={{ textIndent: '24px', marginBottom: '16px' }}>
+                  This clearance is issued upon compliance with local barangay health, safety, and regulatory requirements for business operation within this jurisdiction.
+                </p>
+
+                {/* Details Box */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', padding: '10px 12px', border: '1px solid #000', borderRadius: '4px', fontSize: '11px', background: '#f9f9f9', marginBottom: '24px' }}>
+                  <div><strong>BC ID No.:</strong> {selectedBusinessCert.bcIdNo}</div>
+                  <div><strong>O.R. Number:</strong> {selectedBusinessCert.orNo || 'N/A'}</div>
+                  <div><strong>Date Issued:</strong> {selectedBusinessCert.regDate}</div>
+                  <div><strong>Total Fee Paid:</strong> ₱{(parseFloat(selectedBusinessCert.clearanceFee || 0) + parseFloat(selectedBusinessCert.garbageFee || 0)).toFixed(2)}</div>
+                </div>
+
+                {/* Official Signatories */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '36px' }}>
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ margin: 0, fontWeight: 700, textDecoration: 'underline' }}>MRS. MELY M. PRESADO</p>
+                    <small style={{ fontSize: '10px' }}>Barangay Secretary</small>
+                  </div>
+                  <div style={{ textAlign: 'center' }}>
+                    <p style={{ margin: 0, fontWeight: 700, textDecoration: 'underline' }}>HON. ANNABELLE E. RULL</p>
+                    <small style={{ fontSize: '10px' }}>Punong Barangay</small>
+                  </div>
+                </div>
+              </div>
+
+              {/* 📍 DITO IPAPALIT ANG BAGO MO: Action Buttons with "no-print" */}
+              <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px', borderTop: '1px solid #ddd', paddingTop: '12px' }}>
+                <button 
+                  type="button" 
+                  style={{
+                    padding: '6px 16px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    backgroundColor: '#e5e7eb',
+                    color: '#1f2937',
+                    border: '1px solid #d1d5db',
+                    borderRadius: '4px',
+                    cursor: 'pointer'
+                  }}
+                  onClick={() => setShowBusinessPrintModal(false)}
+                >
+                  Close
+                </button>
+                <button type="button" className="btn btn-p" onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                  🖨️ Print Clearance
+                </button>
+              </div>
+
+            </div>
+          </div>
+        )}
+        {/* ── PRINT INDIVIDUAL BARANGAY CLEARANCE MODAL OVERLAY ── */}
+{showClearancePrintModal && selectedClearanceCert && (
+  <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(4px)' }}>
+    <div id="printable-certificate-card" style={{ background: '#ffffff', color: '#000000', borderRadius: '8px', width: '100%', maxWidth: '620px', padding: '30px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.5)', maxHeight: '90vh', overflowY: 'auto' }}>
+      
+      {/* Printable Header */}
+      <div style={{ textAlign: 'center', borderBottom: '2px solid #000', paddingBottom: '12px', marginBottom: '20px' }}>
+        <h5 style={{ margin: 0, fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>Republic of the Philippines</h5>
+        <h4 style={{ margin: '2px 0', fontSize: '14px', fontWeight: 700 }}>BARANGAY BUSTRAC</h4>
+        <p style={{ margin: 0, fontSize: '11px' }}>Municipality of Nabua, Province of Camarines Sur</p>
+        <h2 style={{ margin: '14px 0 4px 0', fontSize: '18px', fontWeight: 800, textDecoration: 'underline' }}>
+          BARANGAY CLEARANCE
+        </h2>
+      </div>
+
+      {/* Certificate Body */}
+      <div style={{ fontSize: '12px', lineHeight: '1.7', textAlign: 'justify' }}>
+        <p style={{ marginBottom: '14px' }}><strong>TO WHOM IT MAY CONCERN:</strong></p>
+        <p style={{ textIndent: '24px', marginBottom: '14px' }}>
+          This is to certify that <strong>{selectedClearanceCert.fullName}</strong>, a bonafide resident of Barangay Bustrac, Nabua, Camarines Sur, has undergone character and record background verification in this office.
+        </p>
+        <p style={{ textIndent: '24px', marginBottom: '14px' }}>
+          Based on existing records, the above-named individual has <strong>{selectedClearanceCert.remarks || 'No Derogatory Record'}</strong> filed against him/her in this barangay as of date.
+        </p>
+        <p style={{ textIndent: '24px', marginBottom: '16px' }}>
+          This certification is being issued upon the request of the interested party for <strong>{selectedClearanceCert.purpose}</strong> and for whatever legal intent it may serve.
+        </p>
+
+        {/* Receipt & CTC Footer Box */}
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px', padding: '10px 12px', border: '1px solid #000', borderRadius: '4px', fontSize: '11px', background: '#f9f9f9', marginBottom: '24px' }}>
+          <div><strong>Clearance No.:</strong> {selectedClearanceCert.clearanceNo}</div>
+          <div><strong>O.R. Number:</strong> {selectedClearanceCert.orNo || 'N/A'}</div>
+          <div><strong>Date Issued:</strong> {selectedClearanceCert.dateIssued}</div>
+          <div><strong>Amount Paid:</strong> ₱{parseFloat(selectedClearanceCert.amtPaid || 0).toFixed(2)}</div>
+          <div><strong>CTC No.:</strong> {selectedClearanceCert.ctcNo || 'N/A'}</div>
+          <div><strong>CTC Date:</strong> {selectedClearanceCert.ctcDateIssued || 'N/A'}</div>
+        </div>
+
+        {/* Signatories */}
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginTop: '40px' }}>
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ margin: 0, fontWeight: 700, textDecoration: 'underline' }}>{selectedClearanceCert.secretary || 'MRS. MELY M. PRESADO'}</p>
+            <small style={{ fontSize: '10px' }}>Barangay Secretary</small>
+          </div>
+          <div style={{ textAlign: 'center' }}>
+            <p style={{ margin: 0, fontWeight: 700, textDecoration: 'underline' }}>{selectedClearanceCert.captain || 'HON. ANNABELLE E. RULL'}</p>
+            <small style={{ fontSize: '10px' }}>Punong Barangay</small>
+          </div>
+        </div>
+      </div>
+
+      {/* Action Buttons */}
+      <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '24px', borderTop: '1px solid #ddd', paddingTop: '12px' }}>
+        <button 
+          type="button" 
+          style={{ padding: '6px 16px', fontSize: '12px', fontWeight: 600, backgroundColor: '#e5e7eb', color: '#1f2937', border: '1px solid #d1d5db', borderRadius: '4px', cursor: 'pointer' }}
+          onClick={() => setShowClearancePrintModal(false)}
+        >
+          Close
+        </button>
+        <button 
+          type="button" 
+          className="btn btn-p" 
+          onClick={() => window.print()} 
+          style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+        >
+          🖨️ Print Clearance
+        </button>
+      </div>
+
+    </div>
+  </div>
+)}
       </div>{/* /app */}
     </div>/* /dashboard-shell-container */
   );

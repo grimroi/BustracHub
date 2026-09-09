@@ -715,163 +715,712 @@ export default function ResidentUI() {
         <div className="content">
           {/* HOME SCREEN */}
           <div className={`screen${activeScreen === 's-home' ? ' active' : ''}`}>
-            {isOffline && (
-              <div className="notice notice-offline">
-                <span style={{ fontSize: '16px' }}>📡</span>
-                <div>
-                  <strong>You're offline.</strong> You can still browse announcements and submit
-                  requests. They'll sync when you reconnect.
+          {/* =============================================
+              📡 OFFLINE NOTICE (SVG + Glass-Morphism)
+              ============================================= */}
+          {isOffline && (
+            <div className="notice notice-offline" style={{
+              background: 'rgba(239, 68, 68, 0.1)',
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              borderLeft: '4px solid #ef4444',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              padding: '12px 16px',
+              borderRadius: '8px',
+              animation: 'dp-fadeIn 0.3s ease'
+            }}>
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: '#ef4444' }}>
+                <path d="M5 12h14" />
+                <path d="M12 5v14" />
+                <path d="M5 12C5 12 8 9 12 9s7 3 7 3" />
+                <path d="M12 15v7" />
+              </svg>
+              <div>
+                <strong>You're offline.</strong> You can still browse announcements and submit
+                requests. They'll sync when you reconnect.
+              </div>
+            </div>
+          )}
+
+          {/* =============================================
+              📌 PAGE HEADER (SVG + Modern)
+              ============================================= */}
+          <div className="page-hdr" style={{
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'flex-start',
+            marginBottom: '20px'
+          }}>
+            <div>
+              <div className="page-title">{greetingText}, {loggedInUser.fullName}!</div>
+              <div className="page-sub" style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: '6px',
+                marginTop: '2px'
+              }}>
+                <span>Barangay Bustrac</span>
+                <span>•</span>
+                <span style={{
+                  color: isOffline ? 'var(--red)' : 'var(--green)',
+                  fontWeight: '800',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '4px'
+                }}>
+                  {isOffline ? (
+                    <>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <circle cx="12" cy="12" r="10" />
+                      </svg>
+                      Offline (Working Locally)
+                    </>
+                  ) : (
+                    <>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                        <path d="M22 4L12 14.01l-3-3" />
+                      </svg>
+                      Connected & Synced
+                    </>
+                  )}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* =============================================
+              📊 STAT ROW (SVG Icons + Glass-Morphism + Hover Effects)
+              ============================================= */}
+          <div className="stat-row" style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+            gap: '12px',
+            marginBottom: '20px'
+          }}>
+            {/* CERTIFICATES */}
+            <div
+              className="stat-card"
+              onClick={() => goToTab('s-certificates')}
+              style={{
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                border: '1px solid rgba(79, 142, 247, 0.2)',
+                background: 'rgba(26, 29, 36, 0.4)',
+                backdropFilter: 'blur(8px)',
+                borderRadius: '10px',
+                padding: '16px',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)';
+                e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.5)';
+                e.currentTarget.style.boxShadow = '0 8px 16px rgba(79, 142, 247, 0.2)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.2)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <div style={{ marginBottom: '4px' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--primary)' }}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 18v-6" />
+                  <path d="M9 15h6" />
+                </svg>
+              </div>
+              <div className="stat-val" style={{ color: 'var(--primary)' }}>{myRequests.length}</div>
+              <div className="stat-lbl">Certificates</div>
+            </div>
+
+            {/* PENDING REQUEST */}
+            <div
+              className="stat-card"
+              onClick={() => goToTab('s-certificates')}
+              style={{
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                border: '1px solid rgba(251, 191, 36, 0.2)',
+                background: 'rgba(26, 29, 36, 0.4)',
+                backdropFilter: 'blur(8px)',
+                borderRadius: '10px',
+                padding: '16px',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)';
+                e.currentTarget.style.borderColor = 'rgba(251, 191, 36, 0.5)';
+                e.currentTarget.style.boxShadow = '0 8px 16px rgba(251, 191, 36, 0.2)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.borderColor = 'rgba(251, 191, 36, 0.2)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <div style={{ marginBottom: '4px' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--amber)' }}>
+                  <path d="M12 2v4" />
+                  <path d="M12 18v4" />
+                  <path d="M4.93 4.93l2.83 2.83" />
+                  <path d="M16.24 16.24l2.83 2.83" />
+                  <path d="M2 12h2" />
+                  <path d="M20 12h2" />
+                  <path d="M4.93 19.07l2.83-2.83" />
+                  <path d="M16.24 7.76l2.83-2.83" />
+                </svg>
+              </div>
+              <div className="stat-val" style={{ color: 'var(--amber)' }}>{pendingRequestCount}</div>
+              <div className="stat-lbl">Pending Request</div>
+            </div>
+
+            {/* ANNOUNCEMENTS */}
+            <div
+              className="stat-card"
+              onClick={() => goToTab('s-announcements')}
+              style={{
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                border: '1px solid rgba(16, 185, 129, 0.2)',
+                background: 'rgba(26, 29, 36, 0.4)',
+                backdropFilter: 'blur(8px)',
+                borderRadius: '10px',
+                padding: '16px',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)';
+                e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.5)';
+                e.currentTarget.style.boxShadow = '0 8px 16px rgba(16, 185, 129, 0.2)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.2)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <div style={{ marginBottom: '4px' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--green)' }}>
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+              </div>
+              <div className="stat-val" style={{ color: 'var(--green)' }}>{announcements.length}</div>
+              <div className="stat-lbl">Announcements</div>
+            </div>
+
+            {/* MY FEEDBACKS */}
+            <div
+              className="stat-card"
+              onClick={() => goToTab('s-feedback')}
+              style={{
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                border: '1px solid rgba(167, 139, 250, 0.2)',
+                background: 'rgba(26, 29, 36, 0.4)',
+                backdropFilter: 'blur(8px)',
+                borderRadius: '10px',
+                padding: '16px',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)';
+                e.currentTarget.style.borderColor = 'rgba(167, 139, 250, 0.5)';
+                e.currentTarget.style.boxShadow = '0 8px 16px rgba(167, 139, 250, 0.2)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.borderColor = 'rgba(167, 139, 250, 0.2)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <div style={{ marginBottom: '4px' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--purple)' }}>
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+              </div>
+              <div className="stat-val" style={{ color: 'var(--purple)' }}>{myFeedbacks.length}</div>
+              <div className="stat-lbl">My Feedbacks</div>
+            </div>
+
+            {/* MY BLOTTER REPORTS */}
+            <div
+              className="stat-card"
+              onClick={() => goToTab('s-blotter')}
+              style={{
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                border: '1px solid rgba(248, 113, 113, 0.2)',
+                background: 'rgba(26, 29, 36, 0.4)',
+                backdropFilter: 'blur(8px)',
+                borderRadius: '10px',
+                padding: '16px',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)';
+                e.currentTarget.style.borderColor = 'rgba(248, 113, 113, 0.5)';
+                e.currentTarget.style.boxShadow = '0 8px 16px rgba(248, 113, 113, 0.2)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.borderColor = 'rgba(248, 113, 113, 0.2)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <div style={{ marginBottom: '4px' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--red)' }}>
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <path d="M12 9v4" />
+                  <path d="M12 17h.01" />
+                </svg>
+              </div>
+              <div className="stat-val" style={{ color: 'var(--red)' }}>{myBlotters.length}</div>
+              <div className="stat-lbl">My Blotter Reports</div>
+            </div>
+
+            {/* MY ASSISTANCE */}
+            <div
+              className="stat-card"
+              onClick={() => goToTab('s-assistance')}
+              style={{
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                border: '1px solid rgba(16, 185, 129, 0.2)',
+                background: 'rgba(26, 29, 36, 0.4)',
+                backdropFilter: 'blur(8px)',
+                borderRadius: '10px',
+                padding: '16px',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseOver={(e) => {
+                e.currentTarget.style.transform = 'translateY(-4px)';
+                e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.5)';
+                e.currentTarget.style.boxShadow = '0 8px 16px rgba(16, 185, 129, 0.2)';
+              }}
+              onMouseOut={(e) => {
+                e.currentTarget.style.transform = 'translateY(0)';
+                e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.2)';
+                e.currentTarget.style.boxShadow = 'none';
+              }}
+            >
+              <div style={{ marginBottom: '4px' }}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--teal)' }}>
+                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                </svg>
+              </div>
+              <div className="stat-val" style={{ color: 'var(--teal)' }}>{myAssistance.length}</div>
+              <div className="stat-lbl">My Assistance</div>
+            </div>
+          </div>
+
+          {/* =============================================
+              📢 LATEST ANNOUNCEMENTS (SVG + Glass-Morphism)
+              ============================================= */}
+          <div className="card" style={{
+            background: 'rgba(26, 29, 36, 0.4)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(79, 142, 247, 0.2)',
+            borderRadius: '10px',
+            marginBottom: '16px',
+            overflow: 'hidden'
+          }}>
+            <div className="card-title" style={{
+              marginBottom: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontWeight: '700',
+              color: 'var(--text)'
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+              </svg>
+              Latest Announcements
+            </div>
+            {announcements.length ? (
+              announcements.slice(0, 3).map((announcement) => (
+                <div
+                  key={announcement._id}
+                  className="list-item"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '12px 0',
+                    borderBottom: '1px solid rgba(79, 142, 247, 0.1)',
+                    transition: 'background 0.2s ease'
+                  }}
+                  onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(79, 142, 247, 0.05)')}
+                  onMouseLeave={(e) => (e.currentTarget.style.background = 'transparent')}
+                >
+                  <div className="list-icon" style={{
+                    background: announcement.category === 'Health' ? 'rgba(251, 191, 36, 0.15)' :
+                              announcement.category === 'Governance' ? 'rgba(59, 130, 246, 0.15)' :
+                              'rgba(107, 114, 128, 0.15)',
+                    borderRadius: '8px',
+                    padding: '8px',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{
+                      color: announcement.category === 'Health' ? '#f59e0b' :
+                            announcement.category === 'Governance' ? '#3b82f6' : '#64748b'
+                    }}>
+                      <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                      <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                    </svg>
+                  </div>
+                  <div className="list-body" style={{ flex: 1 }}>
+                    <div className="list-title">{announcement.title}</div>
+                    <div className="list-sub" style={{ color: 'var(--muted)', fontSize: '12px' }}>
+                      {announcement.category || 'General'} · Posted {announcement.author ? `by ${announcement.author}` : 'recently'}
+                    </div>
+                  </div>
+                  <button
+                    className="btn btn-ghost btn-sm"
+                    onClick={() => goToTab('s-announcements')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      color: 'var(--accent)',
+                      borderColor: 'rgba(79, 142, 247, 0.3)'
+                    }}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M5 12h14" />
+                      <path d="M12 5l7 7-7 7" />
+                    </svg>
+                    View
+                  </button>
                 </div>
+              ))
+            ) : (
+              <div style={{
+                textAlign: 'center',
+                padding: '24px 10px',
+                color: 'var(--muted)',
+                display: 'flex',
+                flexDirection: 'column',
+                alignItems: 'center',
+                gap: '12px'
+              }}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.7 }}>
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                <div style={{ fontWeight: '700', fontSize: '14px', color: 'var(--text)' }}>No announcements yet.</div>
+                <div style={{ fontSize: '12px', marginTop: '2px' }}>Check back later for new updates.</div>
               </div>
             )}
+          </div>
 
-            <div className="page-hdr" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-              <div>
-                <div className="page-title">{greetingText}, {loggedInUser.fullName}!</div>
-                <div className="page-sub" style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '2px' }}>
-                  <span>Barangay Bustrac</span>
-                  <span>•</span>
-                  <span style={{
-                    color: isOffline ? 'var(--red)' : 'var(--green)',
-                    fontWeight: '800',
-                    display: 'inline-flex',
+          {/* =============================================
+              🆘 EMERGENCY HOTLINES (SVG + Glass-Morphism)
+              ============================================= */}
+          <div className="card" style={{
+            background: 'rgba(26, 29, 36, 0.4)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(79, 142, 247, 0.2)',
+            borderRadius: '10px',
+            marginBottom: '16px',
+            overflow: 'hidden'
+          }}>
+            <div className="card-title" style={{
+              marginBottom: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontWeight: '700',
+              color: 'var(--text)'
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                <path d="M12 9v4" />
+                <path d="M12 17h.01" />
+              </svg>
+              Emergency Hotlines (Nabua)
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '4px' }}>
+              {/* MDRRMO Nabua */}
+              <div className="list-item" style={{
+                padding: '8px 0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid rgba(79, 142, 247, 0.1)'
+              }}>
+                <div className="list-body">
+                  <div className="list-title">MDRRMO Nabua (Rescue)</div>
+                  <div className="list-sub" style={{ color: 'var(--muted)', fontSize: '12px' }}>
+                    Disaster & Emergency Response
+                  </div>
+                </div>
+                <a
+                  href="tel:09175060294"
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    color: 'var(--green)',
+                    borderColor: 'rgba(16, 185, 129, 0.3)',
+                    textDecoration: 'none',
+                    display: 'flex',
                     alignItems: 'center',
                     gap: '4px'
-                  }}>
-                    {isOffline ? '🔴 Offline (Working Locally)' : '🟢 Connected & Synced'}
-                  </span>
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 4h4l2 5l-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>
+                  </svg>
+                  Call
+                </a>
+              </div>
+
+              {/* PNP Nabua */}
+              <div className="list-item" style={{
+                padding: '8px 0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid rgba(79, 142, 247, 0.1)'
+              }}>
+                <div className="list-body">
+                  <div className="list-title">PNP Nabua (Police Station)</div>
+                  <div className="list-sub" style={{ color: 'var(--muted)', fontSize: '12px' }}>
+                    Law Enforcement & Safety Concerns
+                  </div>
                 </div>
+                <a
+                  href="tel:09985986014"
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    color: 'var(--green)',
+                    borderColor: 'rgba(16, 185, 129, 0.3)',
+                    textDecoration: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 4h4l2 5l-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>
+                  </svg>
+                  Call
+                </a>
+              </div>
+
+              {/* BFP Nabua */}
+              <div className="list-item" style={{
+                padding: '8px 0',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderBottom: '1px solid rgba(79, 142, 247, 0.1)'
+              }}>
+                <div className="list-body">
+                  <div className="list-title">BFP Nabua (Fire Station)</div>
+                  <div className="list-sub" style={{ color: 'var(--muted)', fontSize: '12px' }}>
+                    Fire Control & Incidents
+                  </div>
+                </div>
+                <a
+                  href="tel:0542884676"
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    color: 'var(--green)',
+                    borderColor: 'rgba(16, 185, 129, 0.3)',
+                    textDecoration: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M5 4h4l2 5l-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>
+                  </svg>
+                  Call
+                </a>
+              </div>
+
+              {/* Barangay Bustrac Hall */}
+              <div className="list-item" style={{
+                padding: '8px 0',
+                border: 'none',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between'
+              }}>
+                <div className="list-body">
+                  <div className="list-title">Barangay Bustrac Hall</div>
+                  <div className="list-sub" style={{ color: 'var(--muted)', fontSize: '12px' }}>
+                    Local Desk Command Center
+                  </div>
+                </div>
+                <a
+                  href="tel:09123456789"
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    color: 'var(--green)',
+                    borderColor: 'rgba(16, 185, 129, 0.3)',
+                    textDecoration: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '4px'
+                  }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M5 4h4l2 5l-2.5 1.5a11 11 0 0 0 5 5L15 13l5 2v4a2 2 0 0 1-2 2A16 16 0 0 1 3 6a2 2 0 0 1 2-2"/>
+                  </svg>
+                  Call
+                </a>
               </div>
             </div>
+          </div>
 
-            <div className="stat-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-              <div className="stat-card" onClick={() => goToTab('s-certificates')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>📄</div>
-                <div className="stat-val" style={{ color: 'var(--primary)' }}>{myRequests.length}</div>
-                <div className="stat-lbl">Certificates</div>
-              </div>
-
-              <div className="stat-card" onClick={() => goToTab('s-certificates')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>⏳</div>
-                <div className="stat-val" style={{ color: 'var(--amber)' }}>{pendingRequestCount}</div>
-                <div className="stat-lbl">Pending Request</div>
-              </div>
-
-              <div className="stat-card" onClick={() => goToTab('s-announcements')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>📢</div>
-                <div className="stat-val" style={{ color: 'var(--green)' }}>{announcements.length}</div>
-                <div className="stat-lbl">Announcements</div>
-              </div>
-
-              <div className="stat-card" onClick={() => goToTab('s-feedback')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>💬</div>
-                <div className="stat-val" style={{ color: 'var(--purple)' }}>{myFeedbacks.length}</div>
-                <div className="stat-lbl">My Feedbacks</div>
-              </div>
-
-              <div className="stat-card" onClick={() => goToTab('s-blotter')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>⚖️</div>
-                <div className="stat-val" style={{ color: 'var(--red)' }}>{myBlotters.length}</div>
-                <div className="stat-lbl">My Blotter Reports</div>
-              </div>
-
-              <div className="stat-card" onClick={() => goToTab('s-assistance')} style={{ cursor: 'pointer', transition: 'transform 0.2s', border: '1px solid var(--border)' }} onMouseOver={(e) => e.currentTarget.style.transform = 'scale(1.02)'} onMouseOut={(e) => e.currentTarget.style.transform = 'scale(1)'}>
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>🤝</div>
-                <div className="stat-val" style={{ color: 'var(--teal)' }}>{myAssistance.length}</div>
-                <div className="stat-lbl">My Assistance</div>
-              </div>
+          {/* =============================================
+              🚀 BARANGAY SERVICES (SVG + Glass-Morphism + Hover Effects)
+              ============================================= */}
+          <div className="card" style={{
+            background: 'rgba(26, 29, 36, 0.4)',
+            backdropFilter: 'blur(8px)',
+            border: '1px solid rgba(79, 142, 247, 0.2)',
+            borderRadius: '10px',
+            overflow: 'hidden'
+          }}>
+            <div className="card-title" style={{
+              marginBottom: '14px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              fontWeight: '700',
+              color: 'var(--text)'
+            }}>
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                <path d="M2 17l10 5 10-5" />
+                <path d="M2 12l10 5 10-5" />
+              </svg>
+              Barangay Services
             </div>
-
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>📌 Latest Announcements</div>
-              {announcements.length ? (
-                announcements.slice(0, 3).map((announcement) => (
-                  <div className="list-item" key={announcement._id}>
-                    <div className="list-icon" style={{ background: announcement.category === 'Health' ? '#FFFBEB' : announcement.category === 'Governance' ? '#EEF2FF' : '#F3F4F6' }}>📢</div>
-                    <div className="list-body">
-                      <div className="list-title">{announcement.title}</div>
-                      <div className="list-sub">{announcement.category || 'General'} · Posted {announcement.author ? `by ${announcement.author}` : 'recently'}</div>
-                    </div>
-                    <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')}>View</button>
-                  </div>
-                ))
-              ) : (
-                <div style={{ textAlign: 'center', padding: '24px 10px', color: 'var(--muted)' }}>
-                  <div style={{ fontSize: '36px', marginBottom: '8px' }}>📭</div>
-                  <div style={{ fontWeight: '700', fontSize: '14px', color: 'var(--text)' }}>No announcements yet.</div>
-                  <div style={{ fontSize: '12px', marginTop: '2px' }}>Check back later for new updates.</div>
-                </div>
-              )}
-            </div>
-
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                Emergency Hotlines (Nabua)
-              </div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '4px' }}>
-                <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div className="list-body">
-                    <div className="list-title">MDRRMO Nabua (Rescue)</div>
-                    <div className="list-sub">Disaster & Emergency Response</div>
-                  </div>
-                  <a href="tel:09175060294" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    📞 Call
-                  </a>
-                </div>
-
-                <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div className="list-body">
-                    <div className="list-title">PNP Nabua (Police Station)</div>
-                    <div className="list-sub">Law Enforcement & Safety Concerns</div>
-                  </div>
-                  <a href="tel:09985986014" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    📞 Call
-                  </a>
-                </div>
-
-                <div className="list-item" style={{ padding: '8px 0', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div className="list-body">
-                    <div className="list-title">BFP Nabua (Fire Station)</div>
-                    <div className="list-sub">Fire Control & Incidents</div>
-                  </div>
-                  <a href="tel:0542884676" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    📞 Call
-                  </a>
-                </div>
-
-                <div className="list-item" style={{ padding: '8px 0', border: 'none', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div className="list-body">
-                    <div className="list-title">Barangay Bustrac Hall</div>
-                    <div className="list-sub">Local Desk Command Center</div>
-                  </div>
-                  <a href="tel:09123456789" className="btn btn-ghost btn-sm" style={{ color: 'var(--green)', borderColor: 'var(--green)', textDecoration: 'none', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    📞 Call
-                  </a>
-                </div>
-              </div>
-            </div>
-
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>🚀 Barangay Services</div>
-               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px' }}>
-              <button className="btn btn-outline" onClick={() => goToTab('s-certificates')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
-                <span style={{ fontSize: '24px' }}>📄</span>
+            <div style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))',
+              gap: '12px'
+            }}>
+              {/* CERTIFICATES */}
+              <button
+                className="btn btn-outline"
+                onClick={() => goToTab('s-certificates')}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  padding: '16px 12px',
+                  height: 'auto',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(79, 142, 247, 0.3)',
+                  background: 'rgba(26, 29, 36, 0.3)',
+                  transition: 'all 0.3s ease'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)';
+                  e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.5)';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = 'rgba(26, 29, 36, 0.3)';
+                  e.currentTarget.style.borderColor = 'rgba(79, 142, 247, 0.3)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--primary)' }}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 18v-6" />
+                  <path d="M9 15h6" />
+                </svg>
                 <span style={{ fontSize: '13px', fontWeight: '800' }}>Certificates</span>
                 <span style={{ fontSize: '11px', color: 'var(--muted)' }}>Request / Track</span>
               </button>
 
-                <button className="btn btn-outline" onClick={() => goToTab('s-feedback')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
-                  <span style={{ fontSize: '24px' }}>💬</span>
-                  <span style={{ fontSize: '13px', fontWeight: '800' }}>Submit Feedback</span>
-                </button>
+              {/* SUBMIT FEEDBACK */}
+              <button
+                className="btn btn-outline"
+                onClick={() => goToTab('s-feedback')}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  padding: '16px 12px',
+                  height: 'auto',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(167, 139, 250, 0.3)',
+                  background: 'rgba(26, 29, 36, 0.3)',
+                  transition: 'all 0.3s ease'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = 'rgba(167, 139, 250, 0.1)';
+                  e.currentTarget.style.borderColor = 'rgba(167, 139, 250, 0.5)';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = 'rgba(26, 29, 36, 0.3)';
+                  e.currentTarget.style.borderColor = 'rgba(167, 139, 250, 0.3)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--purple)' }}>
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                </svg>
+                <span style={{ fontSize: '13px', fontWeight: '800' }}>Submit Feedback</span>
+              </button>
 
-                <button className="btn btn-outline" onClick={() => goToTab('s-announcements')} style={{ display: 'flex', flexDirection: 'column', gap: '8px', padding: '16px 12px', height: 'auto', borderRadius: '12px' }}>
-                  <span style={{ fontSize: '24px' }}>📢</span>
-                  <span style={{ fontSize: '13px', fontWeight: '800' }}>View News</span>
-                </button>
-              </div>
+              {/* VIEW NEWS */}
+              <button
+                className="btn btn-outline"
+                onClick={() => goToTab('s-announcements')}
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '8px',
+                  padding: '16px 12px',
+                  height: 'auto',
+                  borderRadius: '10px',
+                  border: '1px solid rgba(16, 185, 129, 0.3)',
+                  background: 'rgba(26, 29, 36, 0.3)',
+                  transition: 'all 0.3s ease'
+                }}
+                onMouseOver={(e) => {
+                  e.currentTarget.style.background = 'rgba(16, 185, 129, 0.1)';
+                  e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.5)';
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                }}
+                onMouseOut={(e) => {
+                  e.currentTarget.style.background = 'rgba(26, 29, 36, 0.3)';
+                  e.currentTarget.style.borderColor = 'rgba(16, 185, 129, 0.3)';
+                  e.currentTarget.style.transform = 'translateY(0)';
+                }}
+              >
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ color: 'var(--green)' }}>
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+                <span style={{ fontSize: '13px', fontWeight: '800' }}>View News</span>
+              </button>
             </div>
           </div>
+        </div>
 
           {/* CERTIFICATES */}
           <div className={`screen${activeScreen === 's-certificates' ? ' active' : ''}`}>
@@ -891,97 +1440,109 @@ export default function ResidentUI() {
             )}
 
             {showCertForm && (
-              <div>
-                <div className="card" style={{ borderColor: 'var(--primary-light)' }}>
-                  <div className="card-title" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    New Certificate Request
-                  </div>
-
-                  <form onSubmit={(e) => {
-                    submitCert(e);
-                    setShowCertForm(false);
-                  }}>
-                    <div style={{ marginBottom: '20px', padding: '14px', background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                      <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--primary)', marginBottom: '10px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                        Applicant Profile (Auto-Verified)
-                      </div>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 14px', fontSize: '13px' }}>
-                        <div><span style={{ color: 'var(--muted)' }}>Name:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.fullName || 'Not Available'}</strong></div>
-                        <div><span style={{ color: 'var(--muted)' }}>Purok:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.purok || 'Not on record'}</strong></div>
-                        <div><span style={{ color: 'var(--muted)' }}>Age:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.age ? `${loggedInUser.age} years old` : 'Not Available'}</strong></div>
-                        <div><span style={{ color: 'var(--muted)' }}>Birthdate:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.birthdate || 'Not Available'}</strong></div>
-                        <div style={{ gridColumn: 'span 2' }}><span style={{ color: 'var(--muted)' }}>Contact:</span> <strong style={{ color: 'var(--text)' }}>{loggedInUser?.contact || 'Not on record'}</strong></div>
-                      </div>
-                      <div style={{ fontSize: '11px', color: 'var(--green)', marginTop: '10px', fontWeight: '700', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                        <span>✓</span> Information synced from your resident profile account.
-                      </div>
-                    </div>
-
-                    <div style={{ marginBottom: '16px' }}>
-                      <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '12px', color: 'var(--text)' }}>
-                        Request Specifications
-                      </div>
-
-                      <div className="fg">
-                        <label className="fl">Certificate Type</label>
-                        <select
-                          className="fc"
-                          value={certForm.certType}
-                          onChange={updateCertField('certType')}
-                          required
-                        >
-                          <option value="">-- Select Certificate Type --</option>
-                          <option value="Barangay Clearance">📄 Barangay Clearance</option>
-                          <option value="Certificate of Indigency">🤝 Certificate of Indigency</option>
-                          <option value="Certificate of Residency">🏠 Certificate of Residency</option>
-                        </select>
-                      </div>
-
-                      <div className="fg">
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                          <label className="fl" style={{ margin: 0 }}>Purpose of Certificate</label>
-                          <span style={{ fontSize: '11px', color: (certForm.certPurpose?.length || 0) > 200 ? 'var(--red)' : 'var(--muted)' }}>
-                            {certForm.certPurpose?.length || 0} / 200 chars
-                          </span>
-                        </div>
-                        <textarea
-                          className="fc"
-                          rows="3"
-                          maxLength="200"
-                          placeholder="e.g. For employment requirements at DOLE-Camarines Sur..."
-                          value={certForm.certPurpose}
-                          onChange={updateCertField('certPurpose')}
-                          required
-                        />
-                      </div>
-                    </div>
-
-                    <div style={{
-                      marginBottom: '18px',
-                      padding: '12px 14px',
-                      background: 'var(--surface2)',
-                      borderRadius: 'var(--radius-sm)',
-                      border: '1px solid rgba(79, 142, 247, 0.2)',
-                      display: 'flex',
-                      gap: '10px',
-                      alignItems: 'flex-start'
-                    }}>
-                      <span style={{ color: 'var(--primary)', fontSize: '14px' }}>ℹ️</span>
-                      <div style={{ fontSize: '12.5px', color: 'var(--muted)', lineHeight: '1.5' }}>
-                        Your request will be routed directly to the Barangay Captain's desk for evaluation.
-                      </div>
-                    </div>
-
-                    <div style={{ display: 'flex', gap: '10px' }}>
-                      <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Submit Certificate Request</button>
-                      <button type="button" className="btn btn-ghost" onClick={() => setShowCertForm(false)}>
-                        ← Cancel
-                      </button>
-                    </div>
-                  </form>
+            <div className="card" style={{ padding: '18px', marginBottom: '16px' }}>
+              {/* Form Header */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '16px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--primary)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                  New Certificate Application
                 </div>
+                <button 
+                  type="button" 
+                  onClick={() => setShowCertForm(false)}
+                  style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '18px', cursor: 'pointer', padding: '0 4px', lineHeight: 1 }}
+                >
+                  ✕
+                </button>
               </div>
-            )}
+
+              <form onSubmit={(e) => { submitCert(e); setShowCertForm(false); }}>
+                
+                {/* Compact Applicant Verification Box */}
+                <div style={{ padding: '12px 14px', background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+                    <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)' }}>APPLICANT DETAILS</span>
+                    <span className="badge b-green" style={{ fontSize: '9.5px', padding: '2px 6px' }}>✓ Profile Verified</span>
+                  </div>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px 12px', fontSize: '12.5px' }}>
+                    <div>
+                      <span style={{ color: 'var(--muted)', fontSize: '11px', display: 'block' }}>Name</span>
+                      <strong style={{ color: 'var(--text)' }}>{loggedInUser?.fullName || 'N/A'}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--muted)', fontSize: '11px', display: 'block' }}>Purok / Zone</span>
+                      <strong style={{ color: 'var(--text)' }}>{loggedInUser?.purok || 'N/A'}</strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--muted)', fontSize: '11px', display: 'block' }}>Birthdate & Age</span>
+                      <strong style={{ color: 'var(--text)' }}>
+                        {loggedInUser?.birthdate || 'N/A'} {loggedInUser?.age ? `(${loggedInUser.age} y/o)` : ''}
+                      </strong>
+                    </div>
+                    <div>
+                      <span style={{ color: 'var(--muted)', fontSize: '11px', display: 'block' }}>Contact</span>
+                      <strong style={{ color: 'var(--text)' }}>{loggedInUser?.contact || 'N/A'}</strong>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Form Inputs */}
+                <div className="fg" style={{ marginBottom: '12px' }}>
+                  <label className="fl">Certificate Type *</label>
+                  <select 
+                    className="fc" 
+                    value={certForm.certType} 
+                    onChange={updateCertField('certType')} 
+                    required
+                  >
+                    <option value="">-- Select Certificate Type --</option>
+                    <option value="Barangay Clearance">Barangay Clearance</option>
+                    <option value="Certificate of Indigency">Certificate of Indigency</option>
+                    <option value="Certificate of Residency">Certificate of Residency</option>
+                    <option value="First Time Job Seeker Certificate">First Time Job Seeker (RA 11261)</option>
+                    <option value="Certificate of Good Moral Character">Certificate of Good Moral</option>
+                    <option value="Certificate of Low Income">Certificate of Low Income</option>
+                    <option value="Barangay Business Clearance">Barangay Business Clearance</option>
+                    <option value="Barangay ID Application">Barangay ID Card Request</option>
+                  </select>
+                </div>
+
+                <div className="fg" style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <label className="fl" style={{ margin: 0 }}>Purpose of Request *</label>
+                    <span style={{ fontSize: '10.5px', color: (certForm.certPurpose?.length || 0) > 200 ? 'var(--red)' : 'var(--muted)' }}>
+                      {certForm.certPurpose?.length || 0} / 200
+                    </span>
+                  </div>
+                  <textarea 
+                    className="fc" 
+                    rows="3" 
+                    maxLength="200" 
+                    placeholder="e.g. For employment requirements at DOLE-Camarines Sur..." 
+                    value={certForm.certPurpose} 
+                    onChange={updateCertField('certPurpose')} 
+                    required 
+                    style={{ resize: 'none' }}
+                  />
+                </div>
+
+                {/* Routing Notice */}
+                <div style={{ fontSize: '11.5px', color: 'var(--muted)', background: 'var(--surface2)', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: '16px' }}>
+                  Requests are routed directly to the Barangay Captain's desk for validation.
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
+                    Submit Request
+                  </button>
+                  <button type="button" className="btn btn-ghost" onClick={() => setShowCertForm(false)}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          )}
 
             {certSuccess && (
               <div className="notice notice-success" style={{ padding: '16px', borderRadius: 'var(--radius-sm)', marginBottom: '20px' }}>
@@ -1013,9 +1574,9 @@ export default function ResidentUI() {
                 const badgeClass = isIssued ? 'badge b-green' : 'badge b-amber';
                 const refNumber = request.refNumber || `CERT-${(request._id || '').slice(-6).toUpperCase()}`;
 
-                let certIcon = '📄';
-                if (request.certType?.includes('Indigency')) certIcon = '🤝';
-                if (request.certType?.includes('Residency')) certIcon = '🏠';
+                let certIcon = '';
+                if (request.certType?.includes('Indigency')) certIcon = '';
+                if (request.certType?.includes('Residency')) certIcon = '';
 
                 const submittedDate = request.timestamp
                   ? new Date(request.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
@@ -1033,8 +1594,26 @@ export default function ResidentUI() {
                         </div>
                       </div>
                       <span className={badgeClass} style={{ textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.3px' }}>
-                        {isIssued ? '✓ Issued' : '⏳ Pending'}
+                        {isIssued ? '✓ Issued' : 'Pending'}
                       </span>
+                      {!isIssued && stepCount === 1 && (
+                        <button 
+                          className="btn btn-ghost btn-sm" 
+                          style={{ 
+                            color: 'var(--red)', 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '4px',
+                            padding: '4px 8px',
+                            fontSize: '11px',
+                            fontWeight: 600
+                          }} 
+                          onClick={() => handleCancelRequest(request._id)}
+                          title="Cancel Request"
+                        >
+                          Cancel
+                        </button>
+                      )}
                     </div>
 
                     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', background: 'var(--surface2)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', marginBottom: '16px', border: '1px solid var(--border)', fontSize: '12px' }}>
@@ -1068,7 +1647,7 @@ export default function ResidentUI() {
                         Status Log
                       </span>
                       <span style={{ fontWeight: '600', color: isIssued ? 'var(--green)' : 'var(--muted)' }}>
-                        {isIssued ? ' Document ready for collection' : '⏳ Awaiting Administrative E-Signature'}
+                        {isIssued ? 'Document ready for collection' : 'Awaiting Administrative E-Signature'}
                       </span>
                     </div>
                   </div>
@@ -1130,25 +1709,45 @@ export default function ResidentUI() {
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
-                    <div
-                      className="ann-cat"
-                      style={{
-                        color:
-                          selectedAnnouncement.category === 'Health'
-                            ? 'var(--amber)'
-                            : selectedAnnouncement.category === 'Governance'
-                            ? 'var(--primary)'
-                            : selectedAnnouncement.category === 'Security'
-                            ? 'var(--red)'
-                            : 'var(--purple)',
-                      }}
-                    >
-                      {selectedAnnouncement.pinned ? '📌 Pinned · ' : ''}
-                      {selectedAnnouncement.category || 'General'}
+                    <div>
+                      <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '15px', fontWeight: '800' }}>
+                        <span>{certIcon}</span> {request.certType}
+                      </div>
+                      <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '2px', fontStyle: request.certPurpose ? 'normal' : 'italic' }}>
+                        {request.certPurpose || 'No purpose specification declaration'}
+                      </div>
                     </div>
-                    <button className="btn btn-ghost btn-sm" onClick={closeAnnouncement}>
-                      ✕ Close
-                    </button>
+
+                    {/* Status Badge & Cancel Action Wrapper */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      <span className={badgeClass} style={{ textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.3px' }}>
+                        {isIssued ? '✓ Issued' : '⏳ Pending'}
+                      </span>
+
+                      {!isIssued && stepCount === 1 && (
+                        <button 
+                          className="btn btn-ghost btn-sm" 
+                          style={{ 
+                            color: 'var(--red)', 
+                            display: 'inline-flex', 
+                            alignItems: 'center', 
+                            gap: '4px', 
+                            padding: '4px 8px', 
+                            fontSize: '11px', 
+                            fontWeight: 600 
+                          }} 
+                          onClick={() => handleCancelRequest(request._id)} 
+                          title="Cancel Request"
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="10" />
+                            <line x1="15" y1="9" x2="9" y2="15" />
+                            <line x1="9" y1="9" x2="15" y2="15" />
+                          </svg>
+                          Cancel
+                        </button>
+                      )}
+                    </div>
                   </div>
 
                   <div className="ann-title" style={{ fontSize: '20px', marginBottom: '14px', lineHeight: 1.3 }}>
@@ -1263,9 +1862,35 @@ export default function ResidentUI() {
                 </div>
                 <div className="type-select">
                   {[
-                    { type: 'Complaint', label: '💬 Complaint' },
-                    { type: 'Suggestion', label: '💡 Suggestion' },
-                    { type: 'Inquiry', label: '❓ Inquiry' },
+                    {
+                      type: 'Complaint',
+                      label: 'Complaint',
+                      icon: (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                      )
+                    },
+                    {
+                      type: 'Suggestion',
+                      label: 'Suggestion',
+                      icon: (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                          <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z" />
+                        </svg>
+                      )
+                    },
+                    {
+                      type: 'Inquiry',
+                      label: 'Inquiry',
+                      icon: (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                          <line x1="12" y1="17" x2="12.01" y2="17" />
+                        </svg>
+                      )
+                    },
                   ].map((option) => (
                     <button
                       key={option.type}
@@ -1273,10 +1898,12 @@ export default function ResidentUI() {
                       className={`type-btn${feedbackType === option.type ? ' active' : ''}`}
                       onClick={() => setFeedbackType(option.type)}
                     >
+                      {option.icon}
                       {option.label}
                     </button>
                   ))}
                 </div>
+
                 <div className="fg">
                   <label className="fl">Subject</label>
                   <input
@@ -1287,6 +1914,7 @@ export default function ResidentUI() {
                     required
                   />
                 </div>
+
                 <div className="fg">
                   <label className="fl">Message</label>
                   <textarea
@@ -1298,21 +1926,25 @@ export default function ResidentUI() {
                     required
                   />
                 </div>
+
                 <div className="notice notice-info" style={{ marginBottom: '14px' }}>
                   <span></span>
                   <div style={{ fontSize: '12px' }}>
-                    Your concern is linked to your account and will be responded to by barangay staff within
-                    3 working days.
+                    Your concern is linked to your account and will be responded to by barangay staff within 3 working days.
                   </div>
                 </div>
+
                 <button type="submit" className="btn btn-primary btn-full">Submit Concern</button>
               </form>
             </div>
 
             {/* MY SUBMISSIONS SECTION */}
             <div className="card" style={{ marginTop: '16px' }}>
-              <div className="card-title" style={{ marginBottom: '14px' }}>
-                📂 My Submissions ({myFeedbacks.length})
+              <div className="card-title" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+                My Submissions ({myFeedbacks.length})
               </div>
 
               {myFeedbacks.length === 0 ? (
@@ -1325,6 +1957,23 @@ export default function ResidentUI() {
                     const isExpanded = expandedFeedbackId === (item._id || item.refNumber);
                     const fbStep = getFeedbackStep(item.status);
                     const feedbackSteps = ['Submitted', 'Under Review', 'Responded', 'Resolved / Closed'];
+
+                    const typeIcon =
+                      item.feedbackType === 'Complaint' ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                          <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                        </svg>
+                      ) : item.feedbackType === 'Suggestion' ? (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                          <path d="M9 18h6M10 22h4M12 2a7 7 0 0 0-7 7c0 2.38 1.19 4.47 3 5.74V17a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1v-2.26c1.81-1.27 3-3.36 3-5.74a7 7 0 0 0-7-7z" />
+                        </svg>
+                      ) : (
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '6px' }}>
+                          <circle cx="12" cy="12" r="10" />
+                          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+                          <line x1="12" y1="17" x2="12.01" y2="17" />
+                        </svg>
+                      );
 
                     return (
                       <div
@@ -1367,8 +2016,9 @@ export default function ResidentUI() {
                           </span>
                         </div>
 
-                        <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#f8fafc', marginBottom: '4px' }}>
-                          {item.feedbackType === 'Complaint' ? '💬' : item.feedbackType === 'Suggestion' ? '💡' : '❓'} {item.subject}
+                        <div style={{ fontWeight: 'bold', fontSize: '14px', color: '#f8fafc', marginBottom: '4px', display: 'flex', alignItems: 'center' }}>
+                          {typeIcon}
+                          {item.subject}
                         </div>
 
                         <div style={{ fontSize: '11px', color: '#94a3b8', marginBottom: '8px' }}>
@@ -1389,7 +2039,11 @@ export default function ResidentUI() {
                           type="button"
                           onClick={() => toggleFeedback(item._id || item.refNumber)}
                           className="btn btn-ghost btn-sm"
-                          style={{ marginBottom: isExpanded ? '12px' : '0', fontSize: '12px', padding: '4px 10px' }}
+                          style={{
+                            marginBottom: isExpanded ? '12px' : '0',
+                            fontSize: '12px',
+                            padding: '4px 10px',
+                          }}
                         >
                           {isExpanded ? '▲ Hide Details' : '▼ View Details'}
                         </button>
@@ -1404,7 +2058,10 @@ export default function ResidentUI() {
                                 const isDone = fbStep > value;
                                 const isActive = fbStep === value;
                                 return (
-                                  <div key={label} className={`step${isDone ? ' done' : isActive ? ' active' : ' pending'}`}>
+                                  <div
+                                    key={label}
+                                    className={`step${isDone ? ' done' : isActive ? ' active' : ' pending'}`}
+                                  >
                                     <div className="step-circle">{isDone ? '✓' : value}</div>
                                     <div className="step-label">{label}</div>
                                     {index < 3 && <div className="step-line" />}
@@ -1415,17 +2072,39 @@ export default function ResidentUI() {
 
                             {/* Full Message */}
                             <div style={{ fontSize: '12px', color: '#cbd5e1', marginBottom: '12px', lineHeight: '1.4' }}>
-                              "{item.details}"
+                              &quot;{item.details}&quot;
                             </div>
 
                             {/* Official Response */}
                             {item.response && (
-                              <div style={{ marginTop: '10px', padding: '10px 12px', background: '#0f172a', borderLeft: '3px solid #10b981', borderRadius: '4px' }}>
-                                <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 'bold', marginBottom: '2px' }}>
-                                  🏛️ Official Barangay Response ({item.handledBy || 'Barangay Staff'}):
+                              <div
+                                style={{
+                                  marginTop: '10px',
+                                  padding: '10px 12px',
+                                  background: '#0f172a',
+                                  borderLeft: '3px solid #10b981',
+                                  borderRadius: '4px',
+                                }}
+                              >
+                                <div
+                                  style={{
+                                    fontSize: '11px',
+                                    color: '#10b981',
+                                    fontWeight: 'bold',
+                                    marginBottom: '2px',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    gap: '6px',
+                                  }}
+                                >
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                                    <polyline points="9 22 9 12 15 12 15 22" />
+                                  </svg>
+                                  Official Barangay Response ({item.handledBy || 'Barangay Staff'}):
                                 </div>
                                 <div style={{ fontSize: '12px', color: '#f1f5f9', fontStyle: 'italic' }}>
-                                  "{item.response}"
+                                  &quot;{item.response}&quot;
                                 </div>
                                 {item.dateResolved && (
                                   <div style={{ fontSize: '10px', color: '#64748b', marginTop: '4px' }}>
@@ -1444,147 +2123,174 @@ export default function ResidentUI() {
             </div>
           </div>
 
-          {/* BLOTTER SCREEN */}
-          <div className={`screen${activeScreen === 's-blotter' ? ' active' : ''}`}>
-            <div className="page-hdr">
-              <div className="page-title">File / View Blotter Reports</div>
-              <div className="page-sub">Submit incident reports or track status of filed complaints</div>
-            </div>
+          {/* ─── BLOTTER SCREEN ─── */}
+<div className={`screen${activeScreen === 's-blotter' ? ' active' : ''}`}>
+  <div className="page-hdr">
+    <div className="page-title">Blotter Reports</div>
+    <div className="page-sub">File incidents and track complaint status</div>
+  </div>
 
-            {/* Form Card for Submitting New Incident Report */}
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>📝 New Incident Complaint</div>
-              <form onSubmit={submitBlotter}>
-                <div className="fg">
-                  <label className="fl">Incident Subject / Title *</label>
-                  <input
-                    type="text"
-                    className="fc"
-                    placeholder="e.g., Property Dispute, Noise Disturbance, Physical Altercation"
-                    required
-                    value={blotterSubject}
-                    onChange={(e) => setBlotterSubject(e.target.value)}
-                  />
+  {/* ─── New Complaint Form ─── */}
+  <div className="card" style={{ padding: '18px', marginBottom: '16px' }}>
+    <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--red)', marginBottom: '14px', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+      File New Complaint
+    </div>
+    
+    <form onSubmit={submitBlotter}>
+      <div className="fg" style={{ marginBottom: '12px' }}>
+        <label className="fl">Incident Subject / Title *</label>
+        <input 
+          type="text" 
+          className="fc" 
+          placeholder="e.g. Property Dispute, Noise Complaint" 
+          required 
+          value={blotterSubject} 
+          onChange={(e) => setBlotterSubject(e.target.value)} 
+        />
+      </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px', marginBottom: '12px' }}>
+        <div className="fg" style={{ margin: 0 }}>
+          <label className="fl">Incident Date</label>
+          <input 
+            type="date" 
+            className="fc" 
+            value={blotterIncidentDate} 
+            onChange={(e) => setBlotterIncidentDate(e.target.value)} 
+          />
+        </div>
+        <div className="fg" style={{ margin: 0 }}>
+          <label className="fl">Location / Zone</label>
+          <input 
+            type="text" 
+            className="fc" 
+            placeholder="e.g. Purok 3" 
+            value={blotterLocation} 
+            onChange={(e) => setBlotterLocation(e.target.value)} 
+          />
+        </div>
+      </div>
+
+      <div className="fg" style={{ marginBottom: '16px' }}>
+        <label className="fl">Incident Details *</label>
+        <textarea 
+          className="fc" 
+          rows="3" 
+          placeholder="State details, persons involved, or immediate context..." 
+          required 
+          value={blotterDetails} 
+          onChange={(e) => setBlotterDetails(e.target.value)} 
+          style={{ resize: 'none' }} 
+        />
+      </div>
+
+      <button type="submit" className="btn btn-primary btn-full">
+        Submit Incident Report
+      </button>
+    </form>
+  </div>
+
+  {/* ─── My Filed Reports ─── */}
+  <div style={{ fontSize: '11px', fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '12px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+    <span>My Submitted Reports</span>
+    <span className="badge b-blue" style={{ fontSize: '10px' }}>
+      {myBlotters.length} Total
+    </span>
+  </div>
+
+  {myBlotters.length === 0 ? (
+    <div className="card" style={{ textAlign: 'center', padding: '32px 16px', border: '2px dashed var(--border)', background: 'transparent' }}>
+      <div style={{ fontSize: '32px', marginBottom: '8px' }}>📂</div>
+      <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>No blotter records on file</div>
+      <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
+        Your filed complaint histories will display here.
+      </div>
+    </div>
+  ) : (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+      {myBlotters.map((item) => {
+        const blotterStep = getBlotterStep(item.status);
+        const blotterSteps = ['Filed', 'Investigation', 'Mediation', 'Resolved'];
+
+        const isResolved = item.status === 'Resolved' || item.status === 'Closed';
+        const isMediation = item.status === 'Under Mediation' || item.status === 'For Mediation';
+        const isInvestigation = item.status === 'Under Investigation';
+
+        const badgeClass = isResolved 
+          ? 'badge b-green' 
+          : isMediation 
+          ? 'badge b-purple' 
+          : isInvestigation 
+          ? 'badge b-blue' 
+          : 'badge b-amber';
+
+        return (
+          <div className="card" key={item._id || item.refNumber} style={{ padding: '16px' }}>
+            {/* Title & Badge */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '10px' }}>
+              <div>
+                <div style={{ fontWeight: 800, fontSize: '14px', color: 'var(--text)' }}>
+                  {item.incidentType || item.subject || 'Incident Complaint'}
                 </div>
-
-                <div className="fg" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                  <div>
-                    <label className="fl">Incident Date</label>
-                    <input
-                      type="date"
-                      className="fc"
-                      value={blotterIncidentDate}
-                      onChange={(e) => setBlotterIncidentDate(e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <label className="fl">Location / Purok</label>
-                    <input
-                      type="text"
-                      className="fc"
-                      placeholder="e.g., Near Purok 3 Basketball Court"
-                      value={blotterLocation}
-                      onChange={(e) => setBlotterLocation(e.target.value)}
-                    />
-                  </div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px' }}>
+                  Ref: <code style={{ color: 'var(--text)', fontWeight: 700 }}>{item.refNumber}</code>
+                  {item.caseNo && item.caseNo !== item.refNumber ? ` · Case #${item.caseNo}` : ''}
                 </div>
-
-                <div className="fg">
-                  <label className="fl">Incident Details / Description *</label>
-                  <textarea
-                    className="fc"
-                    rows="4"
-                    placeholder="Provide clear details about what happened, persons involved, etc."
-                    required
-                    value={blotterDetails}
-                    onChange={(e) => setBlotterDetails(e.target.value)}
-                    style={{ resize: 'vertical' }}
-                  />
-                </div>
-
-                <button type="submit" className="btn btn-primary btn-full">
-                  Submit Blotter Report
-                </button>
-              </form>
-            </div>
-
-            {/* List Card for Resident's Submitted Blotters */}
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '12px' }}>
-                📂 My Filed Blotter Reports ({myBlotters.length})
               </div>
+              <span className={badgeClass} style={{ textTransform: 'uppercase', fontSize: '10px', letterSpacing: '0.3px' }}>
+                {item.status || 'Pending'}
+              </span>
+            </div>
 
-              {myBlotters.length === 0 ? (
-                <div className="notice notice-info">
-                  <span>No blotter reports filed yet. Submitted complaints will appear here for administrative tracking.</span>
-                </div>
-              ) : (
-                <div>
-                  {myBlotters.map((item) => {
-                    const blotterStep = getBlotterStep(item.status);
-                    const blotterSteps = ['Filed', 'Under Investigation', 'For Mediation', 'Resolved / Closed'];
+            {/* Location & Summary Meta */}
+            {item.location && (
+              <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                <span>📍 Location:</span>
+                <strong style={{ color: 'var(--text)' }}>{item.location}</strong>
+              </div>
+            )}
 
-                    return (
-                      <div className="list-item" key={item._id || item.refNumber} style={{ flexDirection: 'column', alignItems: 'stretch', gap: '12px', padding: '16px 0' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                          <div className="list-icon" style={{ background: 'var(--red-bg)', color: 'var(--red)' }}>⚖️</div>
-                          <div className="list-body" style={{ flex: 1 }}>
-                            <div className="list-title">{item.incidentType || item.subject || 'Incident Report'}</div>
-                            <div className="list-sub">
-                              Ref: <strong style={{ color: 'var(--primary)' }}>{item.refNumber}</strong> • Case No: {item.caseNo || item.refNumber}
-                            </div>
-                            {item.location && <div className="list-sub" style={{ color: 'var(--muted)' }}>📍 {item.location}</div>}
-                            <div className="list-sub" style={{ marginTop: '4px', color: 'var(--text)' }}>{item.details}</div>
-                          </div>
-                          <div className="list-right" style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
-                            <span className={`badge ${
-                              item.status === 'Resolved' || item.status === 'Closed' ? 'b-green' :
-                              item.status === 'Under Mediation' || item.status === 'For Mediation' ? 'b-purple' :
-                              item.status === 'Under Investigation' ? 'b-blue' : 'b-amber'
-                            }`}>
-                              {item.status || 'Pending'}
-                            </span>
-                            <span style={{ fontSize: '10px', color: 'var(--muted)' }}>
-                              {item._rev?.startsWith('1-') ? 'Local' : 'Synced'}
-                            </span>
-                          </div>
-                        </div>
+            <div style={{ fontSize: '12.5px', color: 'var(--text)', lineHeight: '1.4', marginBottom: '14px', background: 'var(--surface2)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+              {item.details}
+            </div>
 
-                        {/* Blotter Stepper */}
-                        <div className="steps" style={{ margin: '0', padding: '0 0 0 54px' }}>
-                          {blotterSteps.map((label, index) => {
-                            const value = index + 1;
-                            const isDone = blotterStep > value;
-                            const isActive = blotterStep === value;
-                            return (
-                              <div key={label} className={`step${isDone ? ' done' : isActive ? ' active' : ' pending'}`}>
-                                <div className="step-circle">{isDone ? '✓' : value}</div>
-                                <div className="step-label">{label}</div>
-                                {index < 3 && <div className="step-line" />}
-                              </div>
-                            );
-                          })}
-                        </div>
+            {/* Compact Progress Stepper */}
+            <div className="steps" style={{ marginBottom: '12px' }}>
+              {blotterSteps.map((label, index) => {
+                const value = index + 1;
+                const isDone = blotterStep > value;
+                const isActive = blotterStep === value;
+                return (
+                  <div key={label} className={`step${isDone ? ' done' : isActive ? ' active' : ' pending'}`}>
+                    <div className="step-circle">{isDone ? '✓' : value}</div>
+                    <div className="step-label">{label}</div>
+                    {index < 3 && <div className="step-line" />}
+                  </div>
+                );
+              })}
+            </div>
 
-                        {/* Extra metadata */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '6px', fontSize: '11px', color: 'var(--muted)', paddingLeft: '54px' }}>
-                          <div>Incident Date: <strong style={{ color: 'var(--text)' }}>{item.incidentDate || 'N/A'}</strong></div>
-                          <div>Filed: <strong style={{ color: 'var(--text)' }}>{item.timestamp ? new Date(item.timestamp).toLocaleDateString() : 'N/A'}</strong></div>
-                          <div>Latest: <strong style={{ color: 'var(--text)' }}>{item.latestUpdate || item.status || 'Pending'}</strong></div>
-                        </div>
+            {/* Scheduled Mediation Notice */}
+            {item.mediationDate && (
+              <div style={{ marginBottom: '10px', padding: '8px 10px', background: 'rgba(124, 58, 237, 0.1)', border: '1px solid rgba(124, 58, 237, 0.2)', borderRadius: '6px', fontSize: '11.5px', color: 'var(--purple)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span>🗓️</span>
+                <span><strong>Mediation Schedule:</strong> {item.mediationDate}</span>
+              </div>
+            )}
 
-                        {item.mediationDate && (
-                          <div style={{ fontSize: '11px', color: 'var(--purple)', paddingLeft: '54px' }}>
-                            📅 Mediation Scheduled: {item.mediationDate}
-                          </div>
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+            {/* Footer Date & Offline Sync Badge */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '11px', color: 'var(--muted)', borderTop: '1px solid var(--border)', paddingTop: '10px' }}>
+              <span>Incident Date: <strong style={{ color: 'var(--text)' }}>{item.incidentDate || 'N/A'}</strong></span>
+              <span className={`badge ${item._rev?.startsWith('1-') ? 'b-amber' : 'b-green'}`} style={{ fontSize: '9px' }}>
+                {item._rev?.startsWith('1-') ? 'Local Log' : 'Synced'}
+              </span>
             </div>
           </div>
+        );
+      })}
+    </div>
+  )}
+</div>
 
           {/* ASSISTANCE SCREEN */}
           <div className={`screen${activeScreen === 's-assistance' ? ' active' : ''}`}>
@@ -1593,30 +2299,58 @@ export default function ResidentUI() {
               <div className="page-sub">Track your aid, relief, and beneficiary records</div>
             </div>
 
-            <div className="stat-row" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+            <div
+              className="stat-row"
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))',
+                gap: '12px',
+                marginBottom: '20px',
+              }}
+            >
               <div className="stat-card">
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>🤝</div>
+                <div style={{ fontSize: '20px', marginBottom: '4px' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/>
+                  </svg>
+                </div>
                 <div className="stat-val" style={{ color: 'var(--teal)' }}>{myAssistance.length}</div>
                 <div className="stat-lbl">Total Received</div>
               </div>
               <div className="stat-card">
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>⏳</div>
+                <div style={{ fontSize: '20px', marginBottom: '4px' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="12" r="10"/>
+                    <polyline points="12 6 12 12 16 14"/>
+                  </svg>
+                </div>
                 <div className="stat-val" style={{ color: 'var(--amber)' }}>
-                  {myAssistance.filter(a => ['pending', 'scheduled'].includes((a.status || '').toLowerCase())).length}
+                  {myAssistance.filter((a) => ['pending', 'scheduled'].includes((a.status || '').toLowerCase())).length}
                 </div>
                 <div className="stat-lbl">Pending / Scheduled</div>
               </div>
               <div className="stat-card">
-                <div style={{ fontSize: '20px', marginBottom: '4px' }}>✅</div>
+                <div style={{ fontSize: '20px', marginBottom: '4px' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                    <polyline points="22 4 12 14.01 9 11.01"/>
+                  </svg>
+                </div>
                 <div className="stat-val" style={{ color: 'var(--green)' }}>
-                  {myAssistance.filter(a => ['released', 'completed'].includes((a.status || '').toLowerCase())).length}
+                  {myAssistance.filter((a) => ['released', 'completed'].includes((a.status || '').toLowerCase())).length}
                 </div>
                 <div className="stat-lbl">Completed</div>
               </div>
             </div>
 
             <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>📂 Assistance History</div>
+              <div className="card-title" style={{ marginBottom: '14px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+                </svg>
+                Assistance History
+              </div>
+
               {myAssistance.length === 0 ? (
                 <div className="notice notice-info">
                   <span>No assistance records found. Records will appear here once the barangay admin encodes your aid distribution.</span>
@@ -1624,7 +2358,15 @@ export default function ResidentUI() {
               ) : (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {myAssistance.map((item) => (
-                    <div key={item._id || item.refNumber} style={{ background: 'var(--surface2)', padding: '14px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                    <div
+                      key={item._id || item.refNumber}
+                      style={{
+                        background: 'var(--surface2)',
+                        padding: '14px',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--border)',
+                      }}
+                    >
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
                         <span style={{ fontSize: '11px', fontFamily: 'var(--mono)', color: 'var(--teal)', fontWeight: 'bold' }}>
                           {item.refNumber || item._id}
@@ -1634,7 +2376,7 @@ export default function ResidentUI() {
                           style={{
                             background: ['released', 'completed'].includes((item.status || '').toLowerCase()) ? 'var(--green-bg)' : 'var(--amber-bg)',
                             color: ['released', 'completed'].includes((item.status || '').toLowerCase()) ? 'var(--green)' : 'var(--amber)',
-                            fontSize: '11px'
+                            fontSize: '11px',
                           }}
                         >
                           {item.status || 'Pending'}
@@ -1647,8 +2389,22 @@ export default function ResidentUI() {
                         {item.description || item.details || item.notes || 'No additional details.'}
                       </div>
                       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '6px', fontSize: '11px', color: 'var(--muted)' }}>
-                        <div>Date: <strong style={{ color: 'var(--text)' }}>{item.dateDistributed || item.date || item.timestamp ? new Date(item.dateDistributed || item.date || item.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'N/A'}</strong></div>
-                        <div>Amount/Item: <strong style={{ color: 'var(--text)' }}>{item.amount || item.item || item.quantity || 'N/A'}</strong></div>
+                        <div>
+                          Date:{" "}
+                          <strong style={{ color: 'var(--text)' }}>
+                            {item.dateDistributed || item.date || item.timestamp
+                              ? new Date(item.dateDistributed || item.date || item.timestamp).toLocaleDateString('en-US', {
+                                  month: 'short',
+                                  day: 'numeric',
+                                  year: 'numeric',
+                                })
+                              : 'N/A'}
+                          </strong>
+                        </div>
+                        <div>
+                          Amount/Item:{" "}
+                          <strong style={{ color: 'var(--text)' }}>{item.amount || item.item || item.quantity || 'N/A'}</strong>
+                        </div>
                       </div>
                     </div>
                   ))}
@@ -1665,113 +2421,139 @@ export default function ResidentUI() {
             </div>
 
             {/* Header Profile Card */}
-            <div className="card" style={{ textAlign: 'center', padding: '28px' }}>
-              <div
-                style={{
-                  width: '70px',
-                  height: '70px',
-                  background: 'linear-gradient(135deg,#2563EB,#7C3AED)',
-                  borderRadius: '50%',
-                  margin: '0 auto 12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '28px',
-                  fontWeight: 900,
-                  color: 'white',
+            <div className="card" style={{ padding: '20px', textAlign: 'center', marginBottom: '16px' }}>
+              <div 
+                style={{ 
+                  width: '60px', 
+                  height: '60px', 
+                  background: 'var(--surface2)', 
+                  border: '2px solid var(--primary)', 
+                  borderRadius: '50%', 
+                  margin: '0 auto 10px', 
+                  display: 'flex', 
+                  alignItems: 'center', 
+                  justifyContent: 'center', 
+                  fontSize: '20px', 
+                  fontWeight: 800, 
+                  color: 'var(--primary)' 
                 }}
               >
-                {loggedInUser.initials || 'RES'}
+                {loggedInUser?.initials || 'RES'}
               </div>
-              <div style={{ fontSize: '18px', fontWeight: 900 }}>{loggedInUser.fullName}</div>
-              <div style={{ fontSize: '13px', color: 'var(--muted)', marginTop: '4px' }}>
-                Resident ID: {loggedInUser.residentId || 'Not Available'}
+              <div style={{ fontSize: '17px', fontWeight: 800, color: 'var(--text)' }}>
+                {loggedInUser?.fullName || 'Resident Member'}
               </div>
-              <span className="badge b-green" style={{ marginTop: '8px' }}>
-                ✓ {loggedInUser.voterStatus || 'Registered Voter'}
-              </span>
+              <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
+                Resident ID: <code style={{ color: 'var(--text)', fontWeight: 600 }}>{loggedInUser?.residentId || 'Not Available'}</code>
+              </div>
+              <div style={{ marginTop: '10px' }}>
+                <span className="badge b-green" style={{ fontSize: '10px', letterSpacing: '0.3px', padding: '3px 8px' }}>
+                  ✓ {loggedInUser?.voterStatus || 'Registered Voter'}
+                </span>
+              </div>
             </div>
 
-            {/* Personal Information Details */}
-            <div className="card">
-              <div className="card-title" style={{ marginBottom: '14px' }}>Personal Information</div>
-
-              <div className="list-item">
-                <div className="list-body">
-                  <div className="list-sub">Birthdate</div>
-                  <div className="list-title">
-                    {loggedInUser.birthdate
-                      ? new Date(loggedInUser.birthdate).toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' })
-                      : 'Not Available'}
-                  </div>
-                </div>
+            {/* Personal Details (Clean Grid Layout) */}
+            <div className="card" style={{ padding: '18px', marginBottom: '16px' }}>
+              <div 
+                style={{ 
+                  fontSize: '11px', 
+                  fontWeight: 800, 
+                  color: 'var(--primary)', 
+                  marginBottom: '14px', 
+                  textTransform: 'uppercase', 
+                  letterSpacing: '0.5px' 
+                }}
+              >
+                Personal Information
               </div>
 
-              <div className="list-item">
-                <div className="list-body">
-                  <div className="list-sub">Age</div>
-                  <div className="list-title">
-                    {loggedInUser.age ? `${loggedInUser.age} years old` : 'Not Available'}
-                  </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px 14px', fontSize: '13px' }}>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginBottom: '2px' }}>Birthdate:</span>
+                  <strong style={{ color: 'var(--text)' }}>
+                    {loggedInUser?.birthdate ? new Date(loggedInUser.birthdate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'Not Available'}
+                  </strong>
                 </div>
-              </div>
 
-              <div className="list-item">
-                <div className="list-body">
-                  <div className="list-sub">Gender</div>
-                  <div className="list-title">{loggedInUser.gender || 'Not Available'}</div>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginBottom: '2px' }}>Age:</span>
+                  <strong style={{ color: 'var(--text)' }}>
+                    {loggedInUser?.age ? `${loggedInUser.age} years old` : 'Not Available'}
+                  </strong>
                 </div>
-              </div>
 
-              <div className="list-item">
-                <div className="list-body">
-                  <div className="list-sub">Civil Status</div>
-                  <div className="list-title">{loggedInUser.civilStatus || 'Not Available'}</div>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginBottom: '2px' }}>Gender:</span>
+                  <strong style={{ color: 'var(--text)' }}>{loggedInUser?.gender || 'Not Available'}</strong>
                 </div>
-              </div>
 
-              <div className="list-item">
-                <div className="list-body">
-                  <div className="list-sub">Contact Number</div>
-                  <div className="list-title">{loggedInUser.contact || 'Not Available'}</div>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginBottom: '2px' }}>Civil Status:</span>
+                  <strong style={{ color: 'var(--text)' }}>{loggedInUser?.civilStatus || 'Not Available'}</strong>
                 </div>
-              </div>
 
-              <div className="list-item">
-                <div className="list-body">
-                  <div className="list-sub">Purok</div>
-                  <div className="list-title">
-                    {loggedInUser.purok
-                      ? `${loggedInUser.purok.toString().toLowerCase().startsWith('purok') ? loggedInUser.purok : `Purok ${loggedInUser.purok}`}, Barangay Bustrac`
-                      : 'Not Available'}
-                  </div>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginBottom: '2px' }}>Contact:</span>
+                  <strong style={{ color: 'var(--text)' }}>{loggedInUser?.contact || 'Not Available'}</strong>
                 </div>
-              </div>
 
-              <div className="list-item" style={{ border: 'none' }}>
-                <div className="list-body">
-                  <div className="list-sub">Household</div>
-                  <div className="list-title">{loggedInUser.household || 'Not Available'}</div>
+                <div>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginBottom: '2px' }}>Purok:</span>
+                  <strong style={{ color: 'var(--text)' }}>
+                    {loggedInUser?.purok ? (loggedInUser.purok.toString().toLowerCase().startsWith('purok') ? loggedInUser.purok : `Purok ${loggedInUser.purok}`) : 'Not Available'}
+                  </strong>
+                </div>
+
+                <div style={{ gridColumn: 'span 2' }}>
+                  <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginBottom: '2px' }}>Household:</span>
+                  <strong style={{ color: 'var(--text)' }}>{loggedInUser?.household || 'Not Available'}</strong>
                 </div>
               </div>
             </div>
 
             {/* Sync Status Banner */}
-            <div className="sync-status">
+            <div 
+              style={{ 
+                padding: '10px 12px', 
+                background: 'var(--surface2)', 
+                borderRadius: 'var(--radius-sm)', 
+                border: '1px solid var(--border)', 
+                fontSize: '11px', 
+                color: 'var(--muted)', 
+                display: 'flex', 
+                alignItems: 'center', 
+                gap: '8px', 
+                marginBottom: '16px' 
+              }}
+            >
               <div className={`sync-dot ${isOffline ? 'offline' : ''}`} />
-              CouchDB sync — {isOffline ? 'Offline' : 'Up to date'} · Last sync:{' '}
-              {lastSync
-                ? lastSync.toLocaleDateString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
-                : 'Never'}
+              <span>
+                CouchDB Sync — <strong style={{ color: isOffline ? 'var(--red)' : 'var(--green)' }}>{isOffline ? 'Offline' : 'Up to date'}</strong>
+                {lastSync ? ` · ${lastSync.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}
+              </span>
             </div>
 
-            {/* Clean Sign Out Button */}
-            <button
-              className="btn btn-ghost btn-full"
-              onClick={handleLogout}
-              style={{ color: 'var(--red)', borderColor: '#FECACA', marginTop: '12px' }}
+            {/* Sign Out Button */}
+            <button 
+              className="btn btn-ghost btn-full" 
+              onClick={handleLogout} 
+              style={{ 
+                color: 'var(--red)', 
+                borderColor: 'rgba(239, 68, 68, 0.2)', 
+                display: 'inline-flex', 
+                alignItems: 'center', 
+                justifyContent: 'center', 
+                gap: '6px', 
+                fontWeight: 700 
+              }}
             >
-              🚪 Sign Out
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+                <polyline points="16 17 21 12 16 7" />
+                <line x1="21" y1="12" x2="9" y2="12" />
+              </svg>
+              Sign Out
             </button>
           </div>
         </div>

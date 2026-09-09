@@ -26,14 +26,16 @@
   --shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 4px 16px rgba(0, 0, 0, 0.2);
   --shadow-md: 0 4px 20px rgba(0, 0, 0, 0.4);
   --font: 'Nunito', sans-serif;
+  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
   --nav-h: 64px;
+
   font-family: var(--font);
   background: var(--bg);
   color: var(--text);
   font-size: 15px;
   line-height: 1.6;
   min-height: 100vh;
-  --mono: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, Courier, monospace;
+  min-height: 100dvh;
 }
 
 .resident-root-container *,
@@ -44,6 +46,7 @@
   padding: 0;
 }
 
+/* Auth & Login Section */
 .resident-root-container .login-wrap {
   min-height: 100vh;
   display: flex;
@@ -145,6 +148,7 @@
   color: white;
 }
 
+/* Form Elements */
 .resident-root-container .fg {
   margin-bottom: 16px;
 }
@@ -177,6 +181,22 @@
   background: var(--surface);
 }
 
+.resident-root-container select.fc {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg fill='%237b83a0' height='24' viewBox='0 0 24 24' width='24' xmlns='http://www.w3.org/2000/svg'><path d='M7 10l5 5 5-5z'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 32px;
+}
+
+.resident-root-container select.fc option {
+  background-color: var(--surface2);
+  color: var(--text);
+  padding: 8px;
+}
+
+/* Buttons */
 .resident-root-container .btn {
   display: inline-flex;
   align-items: center;
@@ -239,6 +259,13 @@
   border: 2px solid #FECACA;
 }
 
+.resident-root-container .btn:active,
+.resident-root-container .role-chip:active,
+.resident-root-container .type-btn:active {
+  transform: scale(0.98);
+}
+
+/* Layout Infrastructure */
 .resident-root-container #app {
   display: flex;
   min-height: 100vh;
@@ -286,6 +313,7 @@
   color: var(--text);
 }
 
+/* Navigation Items */
 .resident-root-container .bottom-nav {
   background: transparent;
   border: none;
@@ -317,6 +345,7 @@
   border-bottom: 3px solid transparent;
   margin: 0;
   height: auto;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .resident-root-container .bnav-item.active {
@@ -368,6 +397,7 @@
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
+/* Real-time Indicator */
 .resident-root-container .live-indicator {
   position: fixed;
   bottom: 20px;
@@ -391,22 +421,13 @@
   animation: resident-pulse 2s infinite;
 }
 
-@keyframes resident-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.5;
-  }
-}
-
 .resident-root-container .live-text {
   font-size: 12px;
   font-weight: 700;
   color: var(--green);
 }
 
+/* Main Content & Screens */
 .resident-root-container .content {
   flex: 1;
   padding: 20px;
@@ -425,17 +446,6 @@
   display: block;
 }
 
-@keyframes resident-fadeUp {
-  from {
-    opacity: 0;
-    transform: translateY(6px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 .resident-root-container .page-hdr {
   margin-bottom: 20px;
 }
@@ -452,6 +462,7 @@
   color: var(--muted);
 }
 
+/* Cards & Text Wrap Controls */
 .resident-root-container .card {
   background: var(--surface);
   border-radius: var(--radius);
@@ -459,6 +470,23 @@
   box-shadow: var(--shadow);
   margin-bottom: 14px;
   border: 1px solid var(--border);
+}
+
+.resident-root-container .card,
+.resident-root-container .list-body,
+.resident-root-container .ann-body {
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.resident-root-container .card-interactive {
+  cursor: pointer;
+  transition: transform 0.15s ease, border-color 0.15s ease;
+}
+
+.resident-root-container .card-interactive:active {
+  transform: scale(0.99);
+  border-color: var(--primary);
 }
 
 .resident-root-container .card-title {
@@ -472,6 +500,7 @@
   color: var(--muted);
 }
 
+/* Badges & Indicators */
 .resident-root-container .badge {
   display: inline-flex;
   align-items: center;
@@ -482,41 +511,15 @@
   font-weight: 800;
 }
 
-.resident-root-container .b-green {
-  background: var(--green-bg);
-  color: var(--green);
-}
+.resident-root-container .b-green { background: var(--green-bg); color: var(--green); }
+.resident-root-container .b-amber { background: var(--amber-bg); color: var(--amber); }
+.resident-root-container .b-red { background: var(--red-bg); color: var(--red); }
+.resident-root-container .b-blue { background: var(--primary-light); color: var(--primary); }
+.resident-root-container .b-purple { background: var(--purple-bg); color: var(--purple); }
+.resident-root-container .b-teal { background: var(--teal-bg); color: var(--teal); }
+.resident-root-container .b-gray { background: #F1F5F9; color: var(--muted); }
 
-.resident-root-container .b-amber {
-  background: var(--amber-bg);
-  color: var(--amber);
-}
-
-.resident-root-container .b-red {
-  background: var(--red-bg);
-  color: var(--red);
-}
-
-.resident-root-container .b-blue {
-  background: var(--primary-light);
-  color: var(--primary);
-}
-
-.resident-root-container .b-purple {
-  background: var(--purple-bg);
-  color: var(--purple);
-}
-
-.resident-root-container .b-teal {
-  background: var(--teal-bg);
-  color: var(--teal);
-}
-
-.resident-root-container .b-gray {
-  background: #F1F5F9;
-  color: var(--muted);
-}
-
+/* Dashboard Widgets */
 .resident-root-container .stat-row {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -548,6 +551,7 @@
   letter-spacing: 0.4px;
 }
 
+/* List Items */
 .resident-root-container .list-item {
   display: flex;
   align-items: center;
@@ -592,6 +596,7 @@
   flex-shrink: 0;
 }
 
+/* Banners & Announcements */
 .resident-root-container .notice {
   border-radius: var(--radius-sm);
   padding: 12px 14px;
@@ -602,23 +607,9 @@
   font-size: 13px;
 }
 
-.resident-root-container .notice-offline {
-  background: var(--amber-bg);
-  border: 1.5px solid #FDE68A;
-  color: var(--amber);
-}
-
-.resident-root-container .notice-info {
-  background: var(--primary-light);
-  border: 1.5px solid #BFDBFE;
-  color: var(--primary);
-}
-
-.resident-root-container .notice-success {
-  background: var(--green-bg);
-  border: 1.5px solid #A7F3D0;
-  color: var(--green);
-}
+.resident-root-container .notice-offline { background: var(--amber-bg); border: 1.5px solid #FDE68A; color: var(--amber); }
+.resident-root-container .notice-info { background: var(--primary-light); border: 1.5px solid #BFDBFE; color: var(--primary); }
+.resident-root-container .notice-success { background: var(--green-bg); border: 1.5px solid #A7F3D0; color: var(--green); }
 
 .resident-root-container .ann-card {
   background: var(--surface);
@@ -662,6 +653,7 @@
   color: var(--hint);
 }
 
+/* Stepper Component */
 .resident-root-container .steps {
   display: flex;
   align-items: center;
@@ -687,21 +679,9 @@
   margin: 0 auto 4px;
 }
 
-.resident-root-container .step.done .step-circle {
-  background: var(--green);
-  color: white;
-}
-
-.resident-root-container .step.active .step-circle {
-  background: var(--primary);
-  color: white;
-  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2);
-}
-
-.resident-root-container .step.pending .step-circle {
-  background: var(--border);
-  color: var(--hint);
-}
+.resident-root-container .step.done .step-circle { background: var(--green); color: white; }
+.resident-root-container .step.active .step-circle { background: var(--primary); color: white; box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.2); }
+.resident-root-container .step.pending .step-circle { background: var(--border); color: var(--hint); }
 
 .resident-root-container .step-label {
   font-size: 10px;
@@ -723,6 +703,7 @@
   background: var(--green);
 }
 
+/* Select Pills & Sync Bar */
 .resident-root-container .type-select {
   display: flex;
   gap: 8px;
@@ -771,82 +752,42 @@
   animation: resident-pulse-g 2s infinite;
 }
 
-@keyframes resident-pulse-g {
-  0%,
-  100% {
-    transform: scale(1);
-  }
-  50% {
-    transform: scale(1.3);
-  }
-}
-
 .resident-root-container hr.div {
   border: none;
   border-top: 2px solid var(--border);
   margin: 16px 0;
 }
 
-@media (max-width: 768px) {
-  /* Gawing full rows ang Topnav sa mobile */
-  .resident-root-container .topnav {
-    height: auto;
-    padding: 10px 15px;
-    flex-direction: column;
-    align-items: stretch;
-    gap: 10px;
-  }
-
-  /* Ilipat ang Navigation sa pinaka-ibaba para maging totoong Bottom Nav sa Mobile */
-  .resident-root-container .bottom-nav {
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    background: var(--surface);
-    border-top: 2px solid var(--border);
-    justify-content: space-around;
-    padding: 6px 0;
-    z-index: 200;
-    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
-  }
-
-  /* Ipakita ang Icons at ayusin ang layout ng text para nakapatong sa isa't isa */
-  .resident-root-container .bnav-item {
-    flex-direction: column;
-    align-items: center;
-    gap: 4px;
-    padding: 6px 0;
-    font-size: 11px;
-    border-bottom: none !important; /* Alisin ang topnav line indicators */
-    border-radius: 8px;
-    flex: 1;
-  }
-
-  /* Ipakita na ang emoji o icon na nilagay mo sa JSX */
-  .resident-root-container .bnav-item .icon {
-    display: inline-block;
-    font-size: 18px;
-  }
-
-  /* Ayusin ang positioning ng red badges para sumakto sa ibabaw ng icon */
-  .resident-root-container .bnav-badge {
-    top: 2px;
-    right: 25%;
-  }
-
-  /* Bigyan ng padding ang content sa ilalim para hindi matakpan ng bottom nav */
-  .resident-root-container .content {
-    padding-bottom: 80px; 
-  }
-
-  /* Gawing single column ang dashboard cards para hindi masikip */
-  .resident-root-container .stat-row {
-    grid-template-columns: 1fr;
-    gap: 10px;
-  }
+/* Modals */
+.resident-root-container .modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 300;
+  padding: 16px;
 }
 
+.resident-root-container .modal-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 480px;
+  max-height: 90vh;
+  overflow-y: auto;
+  padding: 24px;
+  box-shadow: var(--shadow-md);
+  animation: resident-fadeUp 0.2s ease;
+}
+
+/* Footer Section */
 .resident-root-container .resident-footer {
   padding: 20px;
   text-align: center;
@@ -871,4 +812,111 @@
 .resident-root-container .footer-version {
   font-size: 10px;
   color: var(--hint);
+}
+
+/* Custom Scrollbars */
+.resident-root-container ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.resident-root-container ::-webkit-scrollbar-track {
+  background: var(--surface);
+}
+
+.resident-root-container ::-webkit-scrollbar-thumb {
+  background: var(--border2);
+  border-radius: 4px;
+}
+
+.resident-root-container ::-webkit-scrollbar-thumb:hover {
+  background: var(--muted);
+}
+
+/* Animation Keyframes */
+@keyframes resident-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes resident-pulse-g {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.3); }
+}
+
+@keyframes resident-fadeUp {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+/* Responsive Media Queries */
+@media (max-width: 768px) {
+  /* Convert topbar layout on mobile */
+  .resident-root-container .topnav {
+    height: auto;
+    padding: 10px 15px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  /* Fixed bottom navigation for mobile viewports */
+  .resident-root-container .bottom-nav {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--surface);
+    border-top: 2px solid var(--border);
+    justify-content: space-around;
+    padding: 6px 0;
+    z-index: 200;
+    box-shadow: 0 -2px 10px rgba(0, 0, 0, 0.3);
+  }
+
+  /* Vertical icon and text positioning */
+  .resident-root-container .bnav-item {
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 6px 0;
+    font-size: 11px;
+    border-bottom: none !important;
+    border-radius: 8px;
+    flex: 1;
+  }
+
+  /* Display icon elements in bottom bar */
+  .resident-root-container .bnav-item .icon {
+    display: inline-block;
+    font-size: 18px;
+  }
+
+  /* Position badge counter above icon */
+  .resident-root-container .bnav-badge {
+    top: 2px;
+    right: 25%;
+  }
+
+  /* Elevate live status indicator clear of bottom bar */
+  .resident-root-container .live-indicator {
+    bottom: 75px;
+    right: 15px;
+    padding: 6px 10px;
+  }
+
+  .resident-root-container .live-text {
+    font-size: 10px;
+  }
+
+  /* Add bottom spacing to prevent navigation overlap */
+  .resident-root-container .content {
+    padding-bottom: 80px;
+  }
+
+  /* Single-column grid for mobile viewports */
+  .resident-root-container .stat-row {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
 }

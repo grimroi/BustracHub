@@ -61,20 +61,88 @@
 
 /* ── 3. SIDEBAR ── */
 .dashboard-shell-container .sidebar {
-  width: var(--sidebar);
+  width: var(--sidebar);              /* 220px expanded */
+  min-width: var(--sidebar);
   background: var(--surface);
   border-right: 1px solid var(--border);
-  position: fixed;
+  position: sticky;                   /* part of flex flow, stays in view */
+  align-self: flex-start;
   top: 0;
   left: 0;
-  bottom: 0;
   display: flex;
   flex-direction: column;
   height: 100vh;
-  position: fixed;
   z-index: 100;
+  overflow: hidden;
+  white-space: nowrap;
+  flex-shrink: 0;                     /* prevent flexbox from crushing it */
+  transition: width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              min-width 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+              border-color 0.35s;
 }
 
+/* Expanded state */
+.dashboard-shell-container .sidebar.sidebar-open {
+  width: var(--sidebar);
+  min-width: var(--sidebar);
+  border-right: 1px solid var(--border);
+}
+
+/* Collapsed state — clean icon rail */
+.dashboard-shell-container .sidebar.sidebar-closed {
+  width: 64px;
+  min-width: 64px;
+  border-right: 1px solid var(--border);
+}
+
+/* Collapse / expand toggle */
+.dashboard-shell-container .sidebar-close-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 101;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.2s ease, color 0.2s, background 0.2s, transform 0.3s ease;
+}
+
+.dashboard-shell-container .sb-logo:hover .sidebar-close-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.dashboard-shell-container .sidebar-close-btn:hover { 
+  color: var(--text); 
+  background: var(--surface2); 
+}
+
+/* Center toggle inside the 64px rail */
+.dashboard-shell-container .sidebar-closed .sidebar-close-btn {
+  right: auto;
+  left: 50%;
+  transform: translateX(-50%);
+}
+
+.dashboard-shell-container .sb-logo:hover .sidebar-close-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.dashboard-shell-container .sidebar-close-btn:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+
+/* Logo block */
 .dashboard-shell-container .sb-logo {
   padding: 14px 16px;
   border-bottom: 1px solid var(--border);
@@ -82,12 +150,17 @@
   flex-direction: column;
   align-items: center;
   gap: 8px;
+  flex-shrink: 0;
+  overflow: hidden;
+  position: relative;
 }
 
 .dashboard-shell-container .sb-logo-img {
   width: 56px;
   height: 56px;
   object-fit: contain;
+  flex-shrink: 0;
+  transition: width 0.25s ease, height 0.25s ease;
 }
 
 .dashboard-shell-container .sb-title {
@@ -101,6 +174,57 @@
   font-size: 9px;
   color: var(--muted);
   text-align: center;
+}
+
+/* Collapsed sidebar inner cleanup */
+.dashboard-shell-container .sidebar-closed .sb-logo {
+  padding: 14px 0;
+  border-bottom-color: transparent;
+}
+
+.dashboard-shell-container .sidebar-closed .sb-logo-img {
+  width: 36px;
+  height: 36px;
+}
+
+.dashboard-shell-container .sidebar-closed .sb-title,
+.dashboard-shell-container .sidebar-closed .sb-sub {
+  display: none;
+}
+
+.dashboard-shell-container .sidebar-closed .sb-sec {
+  display: none;
+}
+
+.dashboard-shell-container .sidebar-closed .nav-btn {
+  justify-content: center;
+  padding: 10px 0;
+  font-size: 0;
+  gap: 0;
+}
+
+.dashboard-shell-container .sidebar-closed .nav-btn .nav-ico {
+  margin: 0;
+}
+
+.dashboard-shell-container .sidebar-closed .nav-btn .nb,
+.dashboard-shell-container .sidebar-closed .submenu-arrow {
+  display: none;
+}
+
+.dashboard-shell-container .sidebar-closed .sb-submenu-zone {
+  display: none !important;
+}
+
+.dashboard-shell-container .sidebar-closed .sb-foot {
+  justify-content: center;
+  padding: 12px 0;
+}
+
+.dashboard-shell-container .sidebar-closed .sb-foot .sb-uname,
+.dashboard-shell-container .sidebar-closed .sb-foot .sb-urole,
+.dashboard-shell-container .sidebar-closed .sb-foot .online-dot {
+  display: none;
 }
 
 /* ── 4. SIDEBAR NAV ── */
@@ -294,11 +418,14 @@
 
 /* ── 6. MAIN AREA ── */
 .dashboard-shell-container .main {
-  margin-left: var(--sidebar);
   flex: 1;
   display: flex;
   flex-direction: column;
+  min-width: 0;
+  transition: margin-left 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
+
+
 
 /* ── 7. TOPBAR ── */
 .dashboard-shell-container .topbar {
@@ -1174,138 +1301,51 @@
   background: var(--border);
   border-radius: 3px;
 }
-/* =============================================
-   📄 PRINT LAYOUT CONFIGURATION (1-PAGE PERFECT PRINT)
-   ============================================= */
+/* ==========================================
+   🖨️ PRINT MEDIA QUERY (Certificate Isolation)
+   ========================================== */
 @media print {
-  /* 1. Lock the viewport to prevent overflow */
-  html, body {
-    height: 100% !important;
-    max-height: 100% !important;
-    overflow: hidden !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    background: white !important;
+  /* 1. Hide EVERYTHING on the page by default */
+  body, body * {
+    visibility: hidden !important;
   }
 
-  /* 2. Hide all non-print elements */
-  .sidebar,
-  .navbar,
-  .topbar,
-  .header,
-  .dashboard-header,
-  .main-header,
-  .ph,
-  .tw,
-  table,
-  button,
-  .tc > div:first-child,
-  .screen > div:last-child {
-    display: none !important;
+  /* 2. Show ONLY the certificate card and its contents */
+  #printable-certificate-card,
+  #printable-certificate-card * {
+    visibility: visible !important;
   }
 
-  /* 3. Reset structural wrappers */
-  html,
-  body,
-  #root,
-  .app,
-  .dashboard-layout,
-  .main-content,
-  .screen,
-  .tc,
-  .tc > div:last-child {
-    display: block !important;
-    position: static !important;
-    width: 100% !important;
-    height: 100% !important;
-    max-height: 100% !important;
-    margin: 0 !important;
-    padding: 0 !important;
-    overflow: hidden !important;
-    background: white !important;
-    box-shadow: none !important;
-  }
-
-  /* 4. Perfect 1-page containment for certificate */
+  /* 3. Reset the positioning so it is placed at the top-left of the printed page */
   #printable-certificate-card {
-    display: block !important;
     position: absolute !important;
     left: 0 !important;
     top: 0 !important;
     width: 100% !important;
-    max-width: 100% !important;
-    height: 100% !important;
-    overflow: hidden !important;
-    background: white !important;
-    color: black !important;
-    border: none !important;
+    margin: 0 !important;
+    padding: 40px !important;
+    background: #ffffff !important;
     box-shadow: none !important;
-    border-radius: 0px !important;
-    box-sizing: border-box !important;
-    /* Legal layout margins (1.2in top, 1in sides, 1in bottom) */
-    padding: 1.2in 1in 1in 1in !important;
-    page-break-after: avoid !important;
-    page-break-before: avoid !important;
-  }
-
-  /* 5. Ensure all text inside is visible and black */
-  #printable-certificate-card *,
-  #printable-certificate-card div,
-  #printable-certificate-card strong,
-  #printable-certificate-card p {
-    visibility: visible !important;
-    color: black !important;
-  }
-
-  /* 6. Hide non-printable watermark */
-  .non-printable-watermark {
-    display: none !important;
-  }
-
-  /* 7. Resize headers for print */
-  #printable-certificate-card h2:nth-of-type(1) {
-    font-size: 13pt !important;
-    color: #333 !important;
-  }
-  #printable-certificate-card h2:nth-of-type(2) {
-    font-size: 18pt !important;
-    font-weight: bold !important;
-    margin: 4px 0 !important;
-  }
-  #printable-certificate-card h3 {
-    font-size: 11pt !important;
-    font-style: italic !important;
-  }
-
-  /* 8. Certificate title (e.g., BARANGAY CLEARANCE) */
-  #printable-certificate-card h2:nth-of-type(3) {
-    font-size: 24pt !important;
-    font-weight: bold !important;
-    letter-spacing: 2px !important;
-    margin: 30px 0 !important;
-  }
-
-  /* 9. Body paragraphs */
-  #printable-certificate-card p {
-    font-size: 13pt !important;
-    line-height: 2.1 !important;
-    margin-top: 35px !important;
-    text-align: justify !important;
-  }
-
-  /* 10. Horizontal separators */
-  #printable-certificate-card hr {
     border: none !important;
-    border-top: 2px solid black !important;
-    margin: 12px 0 !important;
+    color: #000000 !important;
+    z-index: 9999 !important;
   }
 
-  /* 11. Signatory block */
-  #printable-certificate-card div[style*="margin-top"] {
-    margin-top: 100px !important;
+  /* 4. Ensure background colors are printed (for watermarks and borders) */
+  * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
-  #printable-certificate-card strong {
-    font-size: 14pt !important;
+
+  /* 5. Set the standard A4 paper size and margins */
+  @page {
+    size: A4 portrait;
+    margin: 15mm 15mm 15mm 15mm; /* Top, Right, Bottom, Left */
+  }
+
+  /* 6. Explicitly hide common UI containers just in case */
+  .sidebar, .header, .ph, .fp, .btn, .card, .tw, footer, .no-print {
+    display: none !important;
   }
 }
 .dashboard-shell-container .nav-ico svg {
@@ -1321,4 +1361,117 @@ input::-webkit-inner-spin-button {
 /* Firefox */
 input[type=number] {
   -moz-appearance: textfield;
+}
+/* Form container */
+.fp {
+  margin-bottom: 20px;
+}
+
+/* Form group (1 column) */
+.fg {
+  margin-bottom: 12px;
+}
+
+/* Form group (2 columns) */
+.fg2 {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 16px;
+}
+
+/* Form group (3 columns) */
+.fg3 {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 16px;
+}
+
+/* Form label */
+.fl {
+  display: block;
+  font-size: 13px;
+  font-weight: 500;
+  margin-bottom: 4px;
+  color: #f9fafb;
+}
+
+/* Form control (input, select) */
+.fc {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid rgba(79, 142, 247, 0.3);
+  border-radius: 8px;
+  background: rgba(26, 29, 36, 0.6);
+  color: #f9fafb;
+  font-size: 14px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.fc:focus {
+  outline: none;
+  border-color: rgba(79, 142, 247, 0.8);
+  box-shadow: 0 0 0 3px rgba(79, 142, 247, 0.1);
+}
+
+/* Buttons */
+.btn {
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s;
+}
+
+.btn-p {
+  background: #3b82f6;
+  color: white;
+  border: none;
+}
+
+.btn-p:hover {
+  background: #2563eb;
+}
+
+.btn-g {
+  background: rgba(26, 29, 36, 0.6);
+  color: #f9fafb;
+  border: 1px solid rgba(79, 142, 247, 0.3);
+}
+
+.btn-g:hover {
+  background: rgba(79, 142, 247, 0.2);
+}
+
+/* Responsive adjustments */
+@media (max-width: 768px) {
+  .fg2, .fg3 {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* Kapag naka-collapse, i-center ang icon at itago ang text/arrow */
+.dashboard-shell-container .sidebar-closed .toggle-parent {
+  justify-content: center !important;
+  padding-left: 0 !important;
+  padding-right: 0 !important;
+}
+
+/* Itago ang text label (flex:1 span) at submenu arrow */
+.dashboard-shell-container .sidebar-closed .toggle-parent > span:not(.nav-ico) {
+  display: none !important;
+}
+
+.dashboard-shell-container .sidebar-closed .toggle-parent .nav-ico {
+  margin: 0 !important;
+}
+/* =============================================
+   FIX: Force hide any open submenu inside collapsed sidebar
+   ============================================= */
+.dashboard-shell-container .sidebar-closed .sb-submenu-zone,
+.dashboard-shell-container .sidebar-closed .sb-nav-group .sb-submenu-zone {
+  display: none !important;
+  max-height: 0 !important;
+  opacity: 0 !important;
+  padding: 0 !important;
+  overflow: hidden !important;
+  border: none !important;
 }
