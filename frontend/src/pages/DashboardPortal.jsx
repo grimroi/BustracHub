@@ -6,7 +6,16 @@ import CertificateLifecycle from './CertificateLifecycle';
 import './DashboardLayout.css';
 import { createAuditLog, getAuditLogs } from '../utils/auditLog';
 
-const db = new PouchDB('bustrac_db');
+const db = new PouchDB('bustrachub_db');
+
+db.sync('http://admin:capstone2026@localhost:5984/bustrachub_db', {
+  live: true,
+  retry: true,
+  ajax: {
+    withCredentials: true // 💡 This tells the browser it is allowed to pass credentials cross-origin
+  }
+});
+
 
 // ─────────────────────────────────────────────
 // CONSTANTS
@@ -9941,77 +9950,146 @@ const updateCtcField = (field) => (e) => {
                 )} 
 
             {/* ════════════════════════════════════════
-                SCREEN: CONFLICT RESOLUTION (Admin only)
-                ════════════════════════════════════════ */}
-            {role === 'admin' && screen === 'conflicts' && (
-              <div className="screen active">
-                <div className="note note-w" style={{ marginBottom: '20px' }}>
-                  ⚠ <strong>2 conflicts detected.</strong> Records modified on multiple
-                  offline devices simultaneously. No data has been overwritten. Select
-                  the correct version or keep both.
+             {/* ── SCREEN: CONFLICT RESOLUTION (Admin only) ── */}
+{role === 'admin' && screen === 'conflicts' && (
+  <div className="screen active">
+    {loadingConflicts ? (
+      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+        Loading active database conflicts...
+      </div>
+    ) : conflictsList.length === 0 ? (
+      <div className="note note-g" style={{ marginBottom: '20px' }}>
+        ✅ <strong>No conflicts detected.</strong> All offline changes have synced seamlessly to the cloud.
+      </div>
+    ) : (
+      <>
+        <div className="note note-w" style={{ marginBottom: '20px' }}>
+          ⚠ <strong>{conflictsList.length} conflict{conflictsList.length > 1 ? 's' : ''} detected.</strong>{' '}
+          Records modified on multiple offline devices simultaneously. No data has been overwritten. 
+          Select the correct version to keep.
+        </div>
+
+        {conflictsList.map((conflict, index) => {
+          const isResident = conflict.type === 'residents';
+          const vA = conflict.versionA;
+          const vB = conflict.versionB;
+
+          return (
+            <div className="cf-card" key={`${conflict.docId}-${index}`}>
+              <div className="cf-hdr">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                  <span style={{ fontWeight: 800, color: 'var(--red)', fontSize: '13px' }}>
+                    ⚠ Conflict #{index + 1}
+                  </span>
+                  <span className={`badge ${isResident ? 'g' : 'a'}`} style={{ fontSize: '10px' }}>
+                    {conflict.type || 'residents'}
+                  </span>
+                  <span className="badge gr" style={{ fontFamily: 'var(--mono)', fontSize: '10px' }}>
+                    {conflict.docId}
+                  </span>
+                </div>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button className="btn btn-s btn-sm" onClick={() => handleKeepVersionA(conflict)}>
+                    Keep Version A
+                  </button>
+                  <button className="btn btn-g btn-sm" onClick={() => handleKeepVersionB(conflict)}>
+                    Keep Version B
+                  </button>
+                </div>
+              </div>
+
+              <div className="cf-vs">
+                {/* COLUMN: VERSION A */}
+                <div className="cf-v">
+                  <div className="cf-vl">
+                    Version A — {vA.modifiedBy || 'Device User'} · {vA.device || 'Device 1'}
+                  </div>
+                  {isResident ? (
+                    <>
+                      <div className="cf-vf">
+                        <span>Name:</span>
+                        {vA.name !== vB.name ? <strong>{vA.name}</strong> : vA.name}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Purok:</span>
+                        {vA.purok !== vB.purok ? <strong>{vA.purok}</strong> : vA.purok}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Civil Status:</span>
+                        {vA.civilStatus !== vB.civilStatus ? <strong>{vA.civilStatus}</strong> : vA.civilStatus}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Contact:</span>
+                        {vA.contact !== vB.contact ? <strong>{vA.contact}</strong> : vA.contact}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="cf-vf">
+                        <span>Beneficiary:</span>
+                        {vA.beneficiary !== vB.beneficiary ? <strong>{vA.beneficiary}</strong> : vA.beneficiary}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Aid Type:</span>
+                        {vA.aidType !== vB.aidType ? <strong>{vA.aidType}</strong> : vA.aidType}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Quantity:</span>
+                        {vA.quantity !== vB.quantity ? <strong>{vA.quantity}</strong> : vA.quantity}
+                      </div>
+                    </>
+                  )}
                 </div>
 
-                <div className="cf-card">
-                              <div className="cf-hdr">
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                  <span style={{ fontWeight: 800, color: 'var(--red)', fontSize: '13px' }}>⚠ Conflict #1</span>
-                                  <span className="badge g" style={{ fontSize: '10px' }}>residents</span>
-                                  <span className="badge gr" style={{ fontFamily: 'var(--mono)', fontSize: '10px' }}>RES-0412</span>
-                                </div>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                  <button className="btn btn-s btn-sm">Keep Version A</button>
-                                  <button className="btn btn-g btn-sm">Keep Version B</button>
-                                  <button className="btn btn-a btn-sm">Keep Both</button>
-                                </div>
-                              </div>
-                              <div className="cf-vs">
-                                <div className="cf-v">
-                                  <div className="cf-vl">Version A — Cortero, Mark · Device 1 · 08:10 AM</div>
-                                  <div className="cf-vf"><span>Name:</span>Maria Dela Cruz Santos</div>
-                                  <div className="cf-vf"><span>Purok:</span><strong>Purok 3</strong></div>
-                                  <div className="cf-vf"><span>Civil Status:</span>Married</div>
-                                  <div className="cf-vf"><span>Contact:</span>09171234567</div>
-                                </div>
-                                <div className="cf-v">
-                                  <div className="cf-vl">Version B — Napagal, Jay · Device 2 · 08:15 AM</div>
-                                  <div className="cf-vf"><span>Name:</span>Maria Dela Cruz Santos</div>
-                                  <div className="cf-vf"><span>Purok:</span><strong>Purok 4</strong></div>
-                                  <div className="cf-vf"><span>Civil Status:</span>Married</div>
-                                  <div className="cf-vf"><span>Contact:</span>09171234567</div>
-                                </div>
-                              </div>
-                            </div>
-
-                <div className="cf-card">
-                              <div className="cf-hdr">
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                  <span style={{ fontWeight: 800, color: 'var(--red)', fontSize: '13px' }}>⚠ Conflict #2</span>
-                                  <span className="badge a" style={{ fontSize: '10px' }}>aid_distributions</span>
-                                  <span className="badge gr" style={{ fontFamily: 'var(--mono)', fontSize: '10px' }}>LOG-0039</span>
-                                </div>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                  <button className="btn btn-s btn-sm">Keep Version A</button>
-                                  <button className="btn btn-g btn-sm">Keep Version B</button>
-                                  <button className="btn btn-a btn-sm">Keep Both</button>
-                                </div>
-                              </div>
-                              <div className="cf-vs">
-                                <div className="cf-v">
-                                  <div className="cf-vl">Version A — Regaspi, Mark · Device 1 · 09:00 AM</div>
-                                  <div className="cf-vf"><span>Beneficiary:</span>Lopez, Pedro D.</div>
-                                  <div className="cf-vf"><span>Aid Type:</span><strong>Rice 5kg</strong></div>
-                                  <div className="cf-vf"><span>Quantity:</span>1</div>
-                                </div>
-                                <div className="cf-v">
-                                  <div className="cf-vl">Version B — Amparado, Ken · Device 2 · 09:05 AM</div>
-                                  <div className="cf-vf"><span>Beneficiary:</span>Lopez, Pedro D.</div>
-                                  <div className="cf-vf"><span>Aid Type:</span><strong>Rice 10kg</strong></div>
-                                  <div className="cf-vf"><span>Quantity:</span>1</div>
-                                </div>
-                              </div>
-                            </div>
+                {/* COLUMN: VERSION B */}
+                <div className="cf-v">
+                  <div className="cf-vl">
+                    Version B — {vB.modifiedBy || 'Device User'} · {vB.device || 'Device 2'}
+                  </div>
+                  {isResident ? (
+                    <>
+                      <div className="cf-vf">
+                        <span>Name:</span>
+                        {vA.name !== vB.name ? <strong>{vB.name}</strong> : vB.name}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Purok:</span>
+                        {vA.purok !== vB.purok ? <strong>{vB.purok}</strong> : vB.purok}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Civil Status:</span>
+                        {vA.civilStatus !== vB.civilStatus ? <strong>{vB.civilStatus}</strong> : vB.civilStatus}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Contact:</span>
+                        {vA.contact !== vB.contact ? <strong>{vB.contact}</strong> : vB.contact}
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className="cf-vf">
+                        <span>Beneficiary:</span>
+                        {vA.beneficiary !== vB.beneficiary ? <strong>{vB.beneficiary}</strong> : vB.beneficiary}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Aid Type:</span>
+                        {vA.aidType !== vB.aidType ? <strong>{vB.aidType}</strong> : vB.aidType}
+                      </div>
+                      <div className="cf-vf">
+                        <span>Quantity:</span>
+                        {vA.quantity !== vB.quantity ? <strong>{vB.quantity}</strong> : vB.quantity}
+                      </div>
+                    </>
+                  )}
+                </div>
               </div>
-            )}
+            </div>
+          );
+        })}
+      </>
+    )}
+  </div>
+)}
 
             {/* ════════════════════════════════════════
                 SCREEN: AUDIT LOG (Admin only)

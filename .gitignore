@@ -7,3 +7,4 @@ dist/
 
 frontend/dev-dist/
 .vite/
+.aider*
