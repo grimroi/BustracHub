@@ -8,13 +8,11 @@ import { createAuditLog, getAuditLogs } from '../utils/auditLog';
 
 const db = new PouchDB('bustrachub_db');
 
-db.sync('http://admin:capstone2026@localhost:5984/bustrachub_db', {
-  live: true,
-  retry: true,
-  ajax: {
-    withCredentials: true // 💡 This tells the browser it is allowed to pass credentials cross-origin
-  }
-});
+const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@localhost:5984/bustrachub_db';
+
+if (typeof window !== 'undefined') {
+  window.db = db;
+}
 
 
 // ─────────────────────────────────────────────
@@ -554,7 +552,8 @@ useEffect(() => {
   // HOUSEHOLD CORE FILTER STATES
   // ──────────────────────────────────────────────────────────────────────
   const [householdSearch, setHouseholdSearch] = useState('');
-  const [purokFilter, setPurokFilter] = useState('All Puroks');
+  const [purokFilter, setPurokFilter] = useState('All Puroks'); 
+  const [householdPurokFilter, setHouseholdPurokFilter] = useState('All Puroks'); 
   
   
   // 1. This already includes setHouseholdsList and a localStorage loading pattern
@@ -603,7 +602,7 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
     (h.address && h.address.toLowerCase().includes(query));
     
   // B. Purok Dropdown Filter Match Condition
-  const matchesPurok = purokFilter === 'All Puroks' || h.purok === purokFilter;
+  const matchesPurok = householdPurokFilter === 'All Puroks' || h.purok === householdPurokFilter;
   
   // Both conditions must pass (TRUE) to remain in the active view list
   return matchesSearch && matchesPurok;
@@ -1505,7 +1504,8 @@ const [editForm, setEditForm] = useState({
   lastName: '',
   civilStatus: 'Single',
   purok: 'Purok 1',
-  household: ''
+  household: '',
+  rbiId: ''
 });
 
 // Awtomatikong hihilahin ang lumang data ni resident tuwing bubuksan ang Edit screen
@@ -1513,16 +1513,14 @@ useEffect(() => {
   if (screen === 'edit-resident' && selectedResidentId) {
     const targetRes = residentsList.find(r => r.id === selectedResidentId);
     if (targetRes) {
-      // Kung hiwalay ang firstName/lastName sa schema mo, gamitin iyon. 
-      // Kung buong pangalan (.name) lang ang mayroon, i-split natin pansamantala:
       const nameParts = targetRes.name ? targetRes.name.split(' ') : ['', ''];
-      
       setEditForm({
         firstName: targetRes.firstName || nameParts[0] || '',
         lastName: targetRes.lastName || nameParts[nameParts.length - 1] || '',
         civilStatus: targetRes.civilStatus || 'Single',
         purok: targetRes.purok || 'Purok 1',
-        household: targetRes.household || ''
+        household: targetRes.household || '',
+        rbiId: targetRes.rbiId || ''  
       });
     }
   }
@@ -1548,7 +1546,7 @@ const handleUpdateResidentChanges = (e) => {
           civilStatus: editForm.civilStatus,
           purok: editForm.purok,
           household: editForm.household,
-          // The class for the Purok badge color will be automatically retrieved
+          rbiId: editForm.rbiId, 
           purokClass: editForm.purok === 'Purok 1' ? 'p' : editForm.purok === 'Purok 3' ? 'b' : editForm.purok === 'Purok 5' ? 'a' : 'g'
         };
       }
@@ -2322,42 +2320,117 @@ const [issuanceMeta, setIssuanceMeta] = useState({
 // ── CONFLICT RESOLUTION STATE & LOGIC ──
 const [conflictsList, setConflictsList] = useState([]);
 const [loadingConflicts, setLoadingConflicts] = useState(false);
+const [syncInstance, setSyncInstance] = useState(null);
+
+useEffect(() => {
+  if (typeof db === 'undefined' || !remoteCouchDB) return;
+
+  const sync = db.sync(remoteCouchDB, {
+    live: true,
+    retry: true,
+    ajax: { withCredentials: true }
+  });
+
+  setSyncInstance(sync);
+
+  return () => {
+    sync.cancel();
+  };
+}, []);
 
 // Fetch all conflicted documents from PouchDB
 const fetchDatabaseConflicts = async () => {
   if (typeof db === 'undefined') return;
-  setLoadingConflicts(true);
   try {
-    const result = await db.allDocs({ include_docs: true, conflicts: true });
-    const detectedConflicts = [];
-
+    const result = await db.allDocs({ conflicts: true, include_docs: true });
+    const conflictList = [];
+    
     for (const row of result.rows) {
       if (row.doc && row.doc._conflicts && row.doc._conflicts.length > 0) {
         for (const conflictRev of row.doc._conflicts) {
-          // Fetch the exact content of the conflicting revision
-          const conflictDoc = await db.get(row.id, { rev: conflictRev });
-          detectedConflicts.push({
-            docId: row.id,
-            type: row.doc.type || 'residents',
-            versionA: row.doc,         // Current winning revision
-            versionB: conflictDoc,     // Conflicting revision
-            conflictRev: conflictRev
-          });
+          try {
+            const conflictingDoc = await db.get(row.id, { rev: conflictRev });
+            conflictList.push({
+              id: `${row.id}-${conflictRev}`,
+              docId: row.id,
+              residentName: row.doc.name || `${row.doc.firstName || ''} ${row.doc.lastName || ''}`.trim() || 'Maria Santos',
+              winningRev: row.doc._rev,
+              conflictRev: conflictRev,
+              docA: row.doc,          // Version A (Winning Revision)
+              docB: conflictingDoc,   // Version B (Conflicting Revision)
+              updatedAt: new Date().toLocaleTimeString()
+            });
+          } catch (fetchErr) {
+            console.error('Error fetching conflicting revision doc:', fetchErr);
+          }
         }
       }
     }
-    setConflictsList(detectedConflicts);
+    
+    console.log("🔥 Active Conflicts Found for UI:", conflictList);
+    // SIGURUHING SETCONFLICTCET ANG GINAMIT DAHIL ITO ANG STATE VARIABLE NG UI
+    setConflictsList(conflictList);
   } catch (err) {
-    console.error('Failed to load database conflicts:', err);
-  } finally {
-    setLoadingConflicts(false);
+    console.error('Error fetching database conflicts:', err);
   }
 };
+
+const fetchResidents = async () => {
+  if (typeof db === 'undefined') return;
+  try {
+    const result = await db.allDocs({ include_docs: true, conflicts: true });
+    const formattedResidents = result.rows
+      .filter(row => row.doc && (row.doc.type === 'residents' || row.id.startsWith('RES-')))
+      .map(row => {
+        const doc = row.doc;
+        return {
+          id: doc._id,
+          rbiId: doc.rbiId || '—',
+          name: doc.name || `${doc.firstName || ''} ${doc.lastName || ''}`.trim(),
+          purok: doc.purok || 'Unassigned',
+          age: doc.age || '—',
+          civilStatus: doc.civilStatus || 'Single',
+          voter: doc.voter || false,
+          household: doc.household || '—',
+          purokClass: doc.purokClass || 'g',
+          // Once the conflicting revision is removed via db.remove(), the _conflicts array will become empty or undefined, so this will evaluate to false.
+          conflict: Boolean(doc._conflicts && doc._conflicts.length > 0)
+        };
+      });
+    setResidentsList(formattedResidents);
+  } catch (err) {
+    console.error('Error fetching residents:', err);
+  }
+};
+
+useEffect(() => {
+  if (!syncInstance) return;
+
+  const handleChange = (info) => {
+    console.log('⚡ Replication change detected:', info);
+    if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
+    if (typeof fetchResidents === 'function') fetchResidents();
+  };
+
+  const handleError = (err) => {
+    console.error('⚠️ CouchDB Sync Error:', err);
+  };
+
+  syncInstance.on('change', handleChange);
+  syncInstance.on('error', handleError);
+
+  return () => {
+    syncInstance.removeListener('change', handleChange);
+    syncInstance.removeListener('error', handleError);
+  };
+}, [syncInstance]); 
 
 // Automatically scan for conflicts when mounting or navigating to conflict screen
 useEffect(() => {
   if (screen === 'conflicts') {
-    fetchDatabaseConflicts();
+    if (typeof fetchDatabaseConflicts === 'function') {
+      fetchDatabaseConflicts();
+    }
   }
 }, [screen]);
 
@@ -2366,7 +2439,9 @@ const handleKeepVersionA = async (conflict) => {
   try {
     await db.remove(conflict.docId, conflict.conflictRev);
     alert('✓ Conflict resolved. Retained Version A.');
-    fetchDatabaseConflicts();
+
+    if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
+    if (typeof fetchResidents === 'function') fetchResidents();
   } catch (err) {
     console.error('Failed to purge conflict revision:', err);
     alert('Error resolving conflict.');
@@ -3126,7 +3201,9 @@ const updateCtcField = (field) => (e) => {
                   </svg>
                 </span>
                 Conflict Resolution
-                <span className="nb nb-red">2</span>
+                <span className="badge g" style={{ fontSize: '10px' }}>
+                  {conflictsList.length}
+                </span>
               </button>
               <button
                 className={`nav-btn${screen === 'audit' ? ' active' : ''}`}
@@ -3416,12 +3493,6 @@ const updateCtcField = (field) => (e) => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <div className="ct">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                              <path d="M14 2v6h6" />
-                              <path d="M12 18v-6" />
-                              <path d="M9 15h6" />
-                            </svg>
                             Certificate Requests {role === 'admin' ? '(3)' : ''}
                           </div>
                           <div className="cm">
@@ -3437,9 +3508,6 @@ const updateCtcField = (field) => (e) => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <div className="ct">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
-                              <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                            </svg>
                             {role === 'admin' ? 'Unread Feedback (5)' : 'Resident Feedback'}
                           </div>
                           <div className="cm">
@@ -3457,11 +3525,6 @@ const updateCtcField = (field) => (e) => {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                         <div>
                           <div className="ct">
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '6px' }}>
-                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                              <path d="M12 9v4" />
-                              <path d="M12 17h.01" />
-                            </svg>
                             Open Blotter Cases {role === 'admin' ? '(4)' : ''}
                           </div>
                           <div className="cm">Active incident cases requiring mediation tracking</div>
@@ -3508,11 +3571,6 @@ const updateCtcField = (field) => (e) => {
                           {/* AID ENTRY */}
                           <div className="al-row">
                             <div className="al-ico" style={{ background: 'var(--green-bg)' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                                <path d="M3.27 6.96L12 12.01l8.73-5.05" />
-                                <path d="M12 22.08V12" />
-                              </svg>
                             </div>
                             <div className="al-body">
                               <div className="al-act">Aid Entry — Rice Distribution</div>
@@ -3541,14 +3599,6 @@ const updateCtcField = (field) => (e) => {
                         <>
                           {/* ADMIN ACTIONS */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--accent-bg)' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <path d="M14 2v6h6" />
-                                <path d="M12 18v-6" />
-                                <path d="M9 15h6" />
-                              </svg>
-                            </div>
                             <div style={{ flex: 1 }}>
                               <div className="al-a">APPROVE_CERT — CERT-2024-088</div>
                               <div className="al-d">Juhairo Macabangon · Approved for Lim, Ana G.</div>
@@ -3558,13 +3608,6 @@ const updateCtcField = (field) => (e) => {
 
                           {/* SYNC OFFLINE */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--teal-bg)' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-9-9 9 9 0 0 1 9-9 9 9 0 0 1 9 9z" />
-                                <path d="M12 12L12 12.01" />
-                                <path d="M12 6v6l4 4" />
-                              </svg>
-                            </div>
                             <div style={{ flex: 1 }}>
                               <div className="al-a">SYNC_OFFLINE — 14 records</div>
                               <div className="al-d">Jay Napagal · CouchDB sync completed</div>
@@ -3574,13 +3617,6 @@ const updateCtcField = (field) => (e) => {
 
                           {/* CONFLICT FLAGGED */}
                           <div className="al-row">
-                            <div className="al-ico" style={{ background: 'var(--amber-bg)' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                                <path d="M12 9v4" />
-                                <path d="M12 17h.01" />
-                              </svg>
-                            </div>
                             <div style={{ flex: 1 }}>
                               <div className="al-a">CONFLICT_FLAGGED — RES-0412</div>
                               <div className="al-d">2 device revisions conflict on purok field</div>
@@ -3632,12 +3668,6 @@ const updateCtcField = (field) => (e) => {
                       alignItems: 'center',
                       gap: '8px'
                     }}>
-                      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                        <circle cx="9" cy="7" r="4" />
-                        <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                        <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                      </svg>
                       Population Distribution per Purok
                     </h3>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
@@ -3771,11 +3801,6 @@ const updateCtcField = (field) => (e) => {
                         alignItems: 'center',
                         gap: '8px'
                       }}>
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                          <path d="M3.27 6.96L12 12.01l8.73-5.05" />
-                          <path d="M12 22.08V12" />
-                        </svg>
                         Local System Activity Logs
                       </h3>
                       <p style={{
@@ -4151,7 +4176,7 @@ const updateCtcField = (field) => (e) => {
                                       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
                                       <path d="M12 9v4" />
                                       <path d="M12 17h.01" />
-                                    </svg>
+                                    </svg> 
                                     Conflict
                                   </span>
                                 )}
@@ -4628,7 +4653,7 @@ const updateCtcField = (field) => (e) => {
                                 Cancel
                               </button>
                               <button type="submit" className="btn btn-p">
-                                💾 Save Resident Record
+                                 Save Resident Record
                               </button>
                             </div>
 
@@ -4844,7 +4869,7 @@ const updateCtcField = (field) => (e) => {
                           Cancel
                         </button>
                         <button type="submit" className="btn btn-p">
-                          💾 Save Modifications
+                           Save Modifications
                         </button>
                       </div>
                     </form>
@@ -4922,8 +4947,8 @@ const updateCtcField = (field) => (e) => {
                   <select 
                     className="fc" 
                     style={{ width: '130px' }} 
-                    value={purokFilter}
-                    onChange={(e) => setPurokFilter(e.target.value)}
+                    value={householdPurokFilter}
+                    onChange={(e) => setHouseholdPurokFilter(e.target.value)}
                   >
                     <option value="All Puroks">All Puroks</option>
                     {uniquePuroks.map((purok) => (
@@ -6076,11 +6101,7 @@ const updateCtcField = (field) => (e) => {
 
                         {/* ACTION BUTTONS (PAGE 1) */}
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
-                          <button type="button" className="btn btn-g" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                              <polyline points="14 2 14 8 20 8"></polyline>
-                            </svg> SAVE AS DRAFT
+                          <button type="button" className="btn btn-g" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}> SAVE AS DRAFT
                           </button>
                           <button type="button" className="btn btn-p" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={() => setBusinessTab('page2')}>
                             Next: O.R. & Assessment Details ➔
@@ -8359,16 +8380,6 @@ const updateCtcField = (field) => (e) => {
                       {(blotterForm.status === 'Open' || blotterForm.status === 'Under Mediation') && (
                         <div className="fg" style={{ marginTop: '16px' }}>
                           <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M12 2v4" />
-                              <path d="M12 18v4" />
-                              <path d="M4.93 4.93l2.83 2.83" />
-                              <path d="M16.24 16.24l2.83 2.83" />
-                              <path d="M2 12h2" />
-                              <path d="M20 12h2" />
-                              <path d="M4.93 19.07l2.83-2.83" />
-                              <path d="M16.24 7.76l2.83-2.83" />
-                            </svg>
                             Scheduled Next Mediation Hearing Date
                           </label>
                           <input
@@ -8385,11 +8396,6 @@ const updateCtcField = (field) => (e) => {
                       {/* Evidence Attachments */}
                       <div className="fg" style={{ marginTop: '12px' }}>
                         <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <path d="M7 10l5 5 5-5" />
-                            <path d="M12 15v-6" />
-                          </svg>
                           Evidence Attachments (Future Enhancement)
                         </label>
                         <div style={{ display: 'flex', gap: '8px', opacity: 0.6 }}>
@@ -8481,10 +8487,6 @@ const updateCtcField = (field) => (e) => {
                           e.currentTarget.style.borderColor = 'rgba(148, 163, 184, 0.2)';
                         }}
                       >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M3 6h18" />
-                          <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                        </svg>
                         Clear Form
                       </button>
                       <button
@@ -8666,12 +8668,12 @@ const updateCtcField = (field) => (e) => {
                           checked={filterVawc}
                           onChange={(e) => setFilterVawc(e.target.checked)}
                         />
-                        <span>🌸 VAWC Only</span>
+                        <span> VAWC Only</span>
                       </label>
 
                       {/* Export / Print Action */}
                       <button className="btn btn-g" onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                        📥 Export / Print Log
+                         Export / Print Log
                       </button>
                     </div>
 
@@ -8962,277 +8964,748 @@ const updateCtcField = (field) => (e) => {
                 SCREEN: ANNOUNCEMENTS
                 ════════════════════════════════════════ */}
                {screen === 'announcements' && (
-                  <div className="screen active">
-                    {announcementSubScreen === 'list' && (
-                      <div>
-                        {/* ACTION BAR (replaces the old .ph header) */}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
-                          <button
-                            type="button"
-                            className="btn btn-p"
-                            onClick={() => {
-                              setAnnouncementForm({ title: '', category: 'General', content: '', pinned: false, status: 'Published' });
-                              setAnnouncementSubScreen('new');
-                            }}
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                          >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M12 5v14M5 12h14" />
-                            </svg>
-                            New Announcement
-                          </button>
-                        </div>
+                <div className="screen active">
 
-                        {/* SEARCH AND FILTER CONTROLS (SVG Icons + Glass-Morphism) */}
-                        <div className="fp" style={{ background: 'rgba(15, 23, 42, 0.6)', backdropFilter: 'blur(10px)', border: '1px solid rgba(79, 142, 247, 0.2)', marginBottom: '16px', padding: '16px', borderRadius: '8px' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
-                            {/* Search Input */}
-                            <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                Search Bulletins
-                              </label>
+                  {/* ANNOUNCEMENT LIST */}
+                  {announcementSubScreen === 'list' && (
+                    <div>
+
+                      {/* ACTION BAR */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'flex-end',
+                          marginBottom: '16px'
+                        }}
+                      >
+                        <button
+                          type="button"
+                          className="btn btn-p"
+                          onClick={() => {
+                            setAnnouncementForm({
+                              title: '',
+                              category: 'General',
+                              content: '',
+                              pinned: false,
+                              status: 'Published'
+                            });
+                            setAnnouncementSubScreen('new');
+                          }}
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '7px'
+                          }}
+                        >
+                          <svg
+                            width="16"
+                            height="16"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M12 5v14" />
+                            <path d="M5 12h14" />
+                          </svg>
+                          New Announcement
+                        </button>
+                      </div>
+
+                      {/* FILTER BAR */}
+                      <div
+                        className="fp"
+                        style={{
+                          marginBottom: '16px',
+                          padding: '16px'
+                        }}
+                      >
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '2fr 1fr 1fr',
+                            gap: '12px'
+                          }}
+                        >
+
+                          {/* SEARCH */}
+                          <div className="fg" style={{ margin: 0 }}>
+                            <label className="fl">
+                              Search Announcements
+                            </label>
+
+                            <div style={{ position: 'relative' }}>
+                              <svg
+                                width="15"
+                                height="15"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="2"
+                                strokeLinecap="round"
+                                strokeLinejoin="round"
+                                style={{
+                                  position: 'absolute',
+                                  left: '10px',
+                                  top: '50%',
+                                  transform: 'translateY(-50%)',
+                                  opacity: 0.6,
+                                  pointerEvents: 'none'
+                                }}
+                                aria-hidden="true"
+                              >
+                                <circle cx="11" cy="11" r="7" />
+                                <path d="m20 20-4-4" />
+                              </svg>
+
                               <input
                                 className="fc"
-                                placeholder="Search announcement title or content details..."
+                                style={{ paddingLeft: '34px' }}
+                                placeholder="Search by title or content..."
                                 value={searchAnnQuery}
                                 onChange={(e) => setSearchAnnQuery(e.target.value)}
                               />
                             </div>
-                            {/* Category Filter */}
-                            <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                Category Filter
-                              </label>
-                              <select className="fc" value={filterAnnCategory} onChange={(e) => setFilterAnnCategory(e.target.value)}>
-                                <option value="All">All Categories</option>
-                                <option value="General">General</option>
-                                <option value="Health">Health</option>
-                                <option value="Security">Security</option>
-                                <option value="Events">Events</option>
-                                <option value="Governance">Governance</option>
-                              </select>
-                            </div>
-                            {/* Status Filter */}
-                            <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl" style={{ color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                Workflow Status
-                              </label>
-                              <select className="fc" value={filterAnnStatus} onChange={(e) => setFilterAnnStatus(e.target.value)}>
-                                <option value="All">All Statuses</option>
-                                <option value="Published">Published</option>
-                                <option value="Draft">Drafts</option>
-                              </select>
-                            </div>
                           </div>
-                        </div>
 
-                        {/* MAIN DATA RENDERING GRID */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                          {announcementsList
-                            .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
-                            .filter(ann => {
-                              const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) || ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
-                              const matchCat = filterAnnCategory === 'All' || ann.category === filterAnnCategory;
-                              const matchStatus = filterAnnStatus === 'All' || ann.status === filterAnnStatus;
-                              return matchQuery && matchCat && matchStatus;
-                            })
-                            .map(ann => (
-                              <div
-                                key={ann.id}
-                                className={`ann ${ann.pinned ? 'pinned' : ''}`}
-                                style={{
-                                  display: 'flex',
-                                  justifyContent: 'space-between',
-                                  alignItems: 'flex-start',
-                                  background: '#1e293b',
-                                  padding: '16px',
-                                  borderRadius: '8px',
-                                  borderLeft: ann.pinned ? '4px solid #f59e0b' : '4px solid #475569',
-                                  transition: 'all 0.3s ease'
-                                }}
-                                onMouseEnter={(e) => (e.currentTarget.style.background = '#252f3f')}
-                                onMouseLeave={(e) => (e.currentTarget.style.background = '#1e293b')}
-                              >
-                                <div style={{ flex: 1, paddingRight: '20px' }}>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '4px' }}>
-                                    <span className="ann-cat" style={{ color: ann.category === 'Health' ? '#f59e0b' : ann.category === 'Security' ? '#ef4444' : ann.category === 'Events' ? '#8b5cf6' : ann.category === 'Governance' ? '#3b82f6' : '#64748b', fontWeight: 'bold', fontSize: '11px', textTransform: 'uppercase' }}>
-                                      {ann.pinned && (
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}>
-                                          <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                                        </svg>
-                                      )}
-                                      {ann.category}
-                                    </span>
-                                    <span style={{ fontSize: '10px', background: ann.status === 'Published' ? 'rgba(52, 211, 153, 0.15)' : 'rgba(251, 191, 36, 0.15)', color: ann.status === 'Published' ? '#34d399' : '#fbbf24', padding: '2px 6px', borderRadius: '4px', fontWeight: '600' }}>
-                                      {ann.status}
-                                    </span>
-                                  </div>
-                                  <div className="ann-t" style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '6px' }}>
-                                    {ann.title}
-                                  </div>
-                                  <div className="ann-b" style={{ fontSize: '13px', color: '#cbd5e1', lineHeight: '1.5', marginBottom: '8px' }}>
-                                    {ann.content}
-                                  </div>
-                                  <div className="ann-f" style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                                      <circle cx="9" cy="7" r="4" />
-                                    </svg>
-                                    Posted by {ann.author} · {ann.date}
-                                  </div>
-                                </div>
-                                <div style={{ display: 'flex', gap: '6px', flexShrink: 0 }}>
-                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: ann.pinned ? '#78350f' : '#334155', color: ann.pinned ? '#fbbf24' : '#60a5fa' }} onClick={() => handleTogglePinAnnouncement(ann.id)}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z" />
-                                    </svg>
-                                    {ann.pinned ? 'Unpin' : 'Pin'}
-                                  </button>
-                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#334155', color: '#60a5fa' }} onClick={() => handleOpenEditAnnouncement(ann)}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                    </svg>
-                                    Edit
-                                  </button>
-                                  <button type="button" className="btn btn-g btn-sm" style={{ padding: '4px 8px', fontSize: '11px', background: '#7f1d1d', color: '#fca5a5' }} onClick={() => handleTriggerDeleteAnnouncement(ann.id)}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <path d="M3 6h18" />
-                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                    </svg>
-                                    Delete
-                                  </button>
-                                </div>
-                              </div>
-                            ))}
-                          {announcementsList.filter(ann => {
-                            const matchQuery = ann.title.toLowerCase().includes(searchAnnQuery.toLowerCase()) || ann.content.toLowerCase().includes(searchAnnQuery.toLowerCase());
-                            const matchCat = filterAnnCategory === 'All' || ann.category === filterAnnCategory;
-                            const matchStatus = filterAnnStatus === 'All' || ann.status === filterAnnStatus;
-                            return matchQuery && matchCat && matchStatus;
-                          }).length === 0 && (
-                            <div style={{ textAlign: 'center', padding: '40px', color: '#94a3b8', background: '#0f172a', borderRadius: '8px', border: '1px dashed #334155', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                              </svg>
-                              No records found matching the active filtering options.
-                            </div>
-                          )}
+                          {/* CATEGORY */}
+                          <div className="fg" style={{ margin: 0 }}>
+                            <label className="fl">
+                              Category
+                            </label>
+
+                            <select
+                              className="fc"
+                              value={filterAnnCategory}
+                              onChange={(e) => setFilterAnnCategory(e.target.value)}
+                            >
+                              <option value="All">All Categories</option>
+                              <option value="General">General</option>
+                              <option value="Health">Health</option>
+                              <option value="Security">Security</option>
+                              <option value="Events">Events</option>
+                              <option value="Governance">Governance</option>
+                            </select>
+                          </div>
+
+                          {/* STATUS */}
+                          <div className="fg" style={{ margin: 0 }}>
+                            <label className="fl">
+                              Status
+                            </label>
+
+                            <select
+                              className="fc"
+                              value={filterAnnStatus}
+                              onChange={(e) => setFilterAnnStatus(e.target.value)}
+                            >
+                              <option value="All">All Statuses</option>
+                              <option value="Published">Published</option>
+                              <option value="Draft">Drafts</option>
+                            </select>
+                          </div>
+
                         </div>
                       </div>
-                    )}
 
-                    {/* =============================================
-                        📝 VIEW 2 & 3: ANNOUNCEMENT FORM (CREATE & EDIT)
-                        ============================================= */}
-                    {(announcementSubScreen === 'new' || announcementSubScreen === 'edit') && (
-                      <div className="fp" style={{ maxWidth: '700px', margin: '0 auto', background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid #334155', paddingBottom: '12px' }}>
-                          <div>
-                            <div className="fp-t" style={{ fontSize: '18px', margin: 0, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      {/* ANNOUNCEMENT LIST */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px'
+                        }}
+                      >
+                        {announcementsList
+                          .slice()
+                          .sort(
+                            (a, b) =>
+                              (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0)
+                          )
+                          .filter((ann) => {
+                            const title = String(ann.title || '').toLowerCase();
+                            const content = String(ann.content || '').toLowerCase();
+                            const query = searchAnnQuery.toLowerCase();
+
+                            const matchQuery =
+                              title.includes(query) ||
+                              content.includes(query);
+
+                            const matchCat =
+                              filterAnnCategory === 'All' ||
+                              ann.category === filterAnnCategory;
+
+                            const matchStatus =
+                              filterAnnStatus === 'All' ||
+                              ann.status === filterAnnStatus;
+
+                            return matchQuery && matchCat && matchStatus;
+                          })
+                          .map((ann) => (
+                            <div
+                              key={ann.id}
+                              className={`ann ${ann.pinned ? 'pinned' : ''}`}
+                            >
+
+                              {/* CONTENT */}
+                              <div style={{ flex: 1, minWidth: 0 }}>
+
+                                <div
+                                  style={{
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    flexWrap: 'wrap',
+                                    gap: '7px',
+                                    marginBottom: '6px'
+                                  }}
+                                >
+                                  {ann.pinned && (
+                                    <span
+                                      className="badge"
+                                      style={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: '4px'
+                                      }}
+                                    >
+                                      Pinned
+                                    </span>
+                                  )}
+
+                                  <span className="ann-cat">
+                                    {ann.category || 'General'}
+                                  </span>
+
+                                  <span
+                                    className="badge"
+                                    style={{
+                                      fontSize: '9px'
+                                    }}
+                                  >
+                                    {ann.status || 'Draft'}
+                                  </span>
+                                </div>
+
+                                <div className="ann-t">
+                                  {ann.title}
+                                </div>
+
+                                <div className="ann-b">
+                                  {ann.content}
+                                </div>
+
+                                <div className="ann-f">
+
+                                  Posted by {ann.author || 'Administrator'}
+                                  {ann.date ? ` · ${ann.date}` : ''}
+                                </div>
+
+                              </div>
+
+                              {/* ACTIONS */}
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  gap: '6px',
+                                  flexShrink: 0,
+                                  flexWrap: 'wrap',
+                                  justifyContent: 'flex-end'
+                                }}
+                              >
+
+                                <button
+                                  type="button"
+                                  className="btn btn-g btn-sm"
+                                  onClick={() =>
+                                    handleTogglePinAnnouncement(ann.id)
+                                  }
+                                >
+                                  {ann.pinned ? 'Unpin' : 'Pin'}
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="btn btn-g btn-sm"
+                                  onClick={() =>
+                                    handleOpenEditAnnouncement(ann)
+                                  }
+                                >
+                                  Edit
+                                </button>
+
+                                <button
+                                  type="button"
+                                  className="btn btn-g btn-sm"
+                                  onClick={() =>
+                                    handleTriggerDeleteAnnouncement(ann.id)
+                                  }
+                                >
+                                  Delete
+                                </button>
+
+                              </div>
+
+                            </div>
+                          ))}
+
+                        {/* EMPTY STATE */}
+                        {announcementsList
+                          .filter((ann) => {
+                            const title = String(ann.title || '').toLowerCase();
+                            const content = String(ann.content || '').toLowerCase();
+                            const query = searchAnnQuery.toLowerCase();
+
+                            const matchQuery =
+                              title.includes(query) ||
+                              content.includes(query);
+
+                            const matchCat =
+                              filterAnnCategory === 'All' ||
+                              ann.category === filterAnnCategory;
+
+                            const matchStatus =
+                              filterAnnStatus === 'All' ||
+                              ann.status === filterAnnStatus;
+
+                            return matchQuery && matchCat && matchStatus;
+                          })
+                          .length === 0 && (
+                            <div
+                              className="fp"
+                              style={{
+                                textAlign: 'center',
+                                padding: '40px 20px'
+                              }}
+                            >
+                              <svg
+                                width="32"
+                                height="32"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                strokeWidth="1.5"
+                                style={{ opacity: 0.6, marginBottom: '10px' }}
+                                aria-hidden="true"
+                              >
+                                <path d="M18 8a6 6 0 0 0-12 0c0 7-3 9-3 9h18s-3-2-3-9" />
+                                <path d="M13.7 21a2 2 0 0 1-3.4 0" />
+                              </svg>
+
+                              <div style={{ fontWeight: 700 }}>
+                                No announcements found
+                              </div>
+
+                              <div
+                                style={{
+                                  marginTop: '4px',
+                                  fontSize: '12px',
+                                  color: 'var(--muted)'
+                                }}
+                              >
+                                Try adjusting the search or filter options.
+                              </div>
+                            </div>
+                          )}
+
+                      </div>
+                    </div>
+                  )}
+
+                  {/* CREATE / EDIT ANNOUNCEMENT */}
+                  {(announcementSubScreen === 'new' ||
+                    announcementSubScreen === 'edit') && (
+                    <div
+                      className="fp"
+                      style={{
+                        maxWidth: '700px',
+                        margin: '0 auto'
+                      }}
+                    >
+
+                      {/* FORM HEADER */}
+                      <div
+                        style={{
+                          display: 'flex',
+                          justifyContent: 'space-between',
+                          alignItems: 'flex-start',
+                          gap: '16px',
+                          marginBottom: '20px',
+                          paddingBottom: '14px',
+                          borderBottom: '1px solid var(--border)'
+                        }}
+                      >
+                        <div>
+                          <div
+                            className="fp-t"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px',
+                              margin: 0
+                            }}
+                          >
+                            <svg
+                              width="19"
+                              height="19"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
                               {announcementSubScreen === 'new' ? (
                                 <>
-                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                                    <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                                  </svg>
-                                  Create New Barangay Announcement
+                                  <path d="M12 5v14" />
+                                  <path d="M5 12h14" />
                                 </>
                               ) : (
                                 <>
-                                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                  </svg>
-                                  Modify Existing Announcement
+                                  <path d="M12 20h9" />
+                                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4Z" />
                                 </>
                               )}
-                            </div>
-                            <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-                              Distribute critical legal updates and bulletins to Nabua residents
-                            </div>
-                          </div>
-                          <button type="button" className="btn btn-g" onClick={() => setAnnouncementSubScreen('list')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            Back to Board
-                          </button>
-                        </div>
-                        <form onSubmit={(e) => handleSaveAnnouncement(e, announcementForm.status)}>
-                          <div className="fg">
-                            <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              Announcement Title Header
-                            </label>
-                            <input className="fc" required placeholder="e.g. Schedule of General Assembly or Relief Operations" value={announcementForm.title} onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })} />
-                          </div>
-                          <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                            <div className="fg">
-                              <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                Category Engine Routing
-                              </label>
-                              <select className="fc" value={announcementForm.category} onChange={(e) => setAnnouncementForm({ ...announcementForm, category: e.target.value })}>
-                                <option value="General">General Notice</option>
-                                <option value="Health">Health Mission / Advisory</option>
-                                <option value="Security">Security Alerts & Regulations</option>
-                                <option value="Events">Community Events & Sports</option>
-                                <option value="Governance">Local Barangay Governance</option>
-                              </select>
-                            </div>
-                            <div className="fg" style={{ display: 'flex', alignItems: 'center', marginTop: '24px' }}>
-                              <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '13px', cursor: 'pointer', color: '#cbd5e1' }}>
-                                <input type="checkbox" checked={announcementForm.pinned} onChange={(e) => setAnnouncementForm({ ...announcementForm, pinned: e.target.checked })} />
-                                Pin this announcement to top
-                              </label>
-                            </div>
-                          </div>
-                          <div className="fg">
-                            <label className="fl" style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              Public Content Narrative Report Statement
-                            </label>
-                            <textarea className="fc" required style={{ minHeight: '140px', lineHeight: '1.6' }} placeholder="Write down the comprehensive details here..." value={announcementForm.content} onChange={(e) => setAnnouncementForm({ ...announcementForm, content: e.target.value })} />
-                          </div>
-                          <div className="fa" style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid #334155', paddingTop: '16px', justifyContent: 'flex-end' }}>
-                            <button type="button" className="btn btn-g" style={{ background: '#475569' }} onClick={() => setAnnouncementSubScreen('list')}>
-                              Cancel Changes
-                            </button>
-                            <button type="submit" className="btn btn-g" style={{ background: '#b45309', color: 'white' }} onClick={(e) => handleSaveAnnouncement(e, 'Draft')}>
-                              Save as Draft
-                            </button>
-                            <button type="submit" className="btn btn-p" onClick={(e) => handleSaveAnnouncement(e, 'Published')}>
-                              Broadcast & Publish
-                            </button>
-                          </div>
-                        </form>
-                      </div>
-                    )}
+                            </svg>
 
-                    {showAnnDeleteModal && (
-                      <div style={{ position: 'fixed', top: 0, left: 0, width: '100%', height: '100%', background: 'rgba(0,0,0,0.8)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}>
-                        <div style={{ background: '#1e293b', border: '1px solid #ef4444', padding: '24px', borderRadius: '8px', width: '90%', maxWidth: '400px', textAlign: 'center', boxShadow: '0 10px 25px -5px rgba(0,0,0,0.5)' }}>
-                          <div style={{ fontSize: '36px', marginBottom: '8px', color: '#ef4444' }}>
-                            <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                            {announcementSubScreen === 'new'
+                              ? 'Create Announcement'
+                              : 'Edit Announcement'}
+                          </div>
+
+                          <div
+                            style={{
+                              marginTop: '5px',
+                              fontSize: '12px',
+                              color: 'var(--muted)'
+                            }}
+                          >
+                            Publish official barangay information for residents.
+                          </div>
+                        </div>
+
+                        <button
+                          type="button"
+                          className="btn btn-g"
+                          onClick={() =>
+                            setAnnouncementSubScreen('list')
+                          }
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            flexShrink: 0
+                          }}
+                        >
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="2"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            aria-hidden="true"
+                          >
+                            <path d="M19 12H5" />
+                            <path d="m12 19-7-7 7-7" />
+                          </svg>
+                          Back
+                        </button>
+                      </div>
+
+                      <form
+                        onSubmit={(e) =>
+                          handleSaveAnnouncement(
+                            e,
+                            announcementForm.status
+                          )
+                        }
+                      >
+
+                        {/* TITLE */}
+                        <div className="fg">
+                          <label className="fl">
+                            Announcement Title
+                          </label>
+
+                          <input
+                            className="fc"
+                            required
+                            placeholder="Enter announcement title"
+                            value={announcementForm.title}
+                            onChange={(e) =>
+                              setAnnouncementForm({
+                                ...announcementForm,
+                                title: e.target.value
+                              })
+                            }
+                          />
+                        </div>
+
+                        {/* CATEGORY + PIN */}
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '12px'
+                          }}
+                        >
+
+                          <div className="fg">
+                            <label className="fl">
+                              Category
+                            </label>
+
+                            <select
+                              className="fc"
+                              value={announcementForm.category}
+                              onChange={(e) =>
+                                setAnnouncementForm({
+                                  ...announcementForm,
+                                  category: e.target.value
+                                })
+                              }
+                            >
+                              <option value="General">General</option>
+                              <option value="Health">Health</option>
+                              <option value="Security">Security</option>
+                              <option value="Events">Events</option>
+                              <option value="Governance">Governance</option>
+                            </select>
+                          </div>
+
+                          <div
+                            className="fg"
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              paddingTop: '24px'
+                            }}
+                          >
+                            <label
+                              style={{
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                gap: '8px',
+                                fontSize: '13px',
+                                cursor: 'pointer'
+                              }}
+                            >
+                              <input
+                                type="checkbox"
+                                checked={announcementForm.pinned}
+                                onChange={(e) =>
+                                  setAnnouncementForm({
+                                    ...announcementForm,
+                                    pinned: e.target.checked
+                                  })
+                                }
+                              />
+
+                              Pin announcement
+                            </label>
+                          </div>
+
+                        </div>
+
+                        {/* CONTENT */}
+                        <div className="fg">
+                          <label className="fl">
+                            Announcement Content
+                          </label>
+
+                          <textarea
+                            className="fc"
+                            required
+                            style={{
+                              minHeight: '160px',
+                              lineHeight: '1.6',
+                              resize: 'vertical'
+                            }}
+                            placeholder="Write the announcement details..."
+                            value={announcementForm.content}
+                            onChange={(e) =>
+                              setAnnouncementForm({
+                                ...announcementForm,
+                                content: e.target.value
+                              })
+                            }
+                          />
+                        </div>
+
+                        {/* FORM ACTIONS */}
+                        <div
+                          className="fa"
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '8px',
+                            marginTop: '20px',
+                            paddingTop: '16px',
+                            borderTop: '1px solid var(--border)'
+                          }}
+                        >
+
+                          <button
+                            type="button"
+                            className="btn btn-g"
+                            onClick={() =>
+                              setAnnouncementSubScreen('list')
+                            }
+                          >
+                            Cancel
+                          </button>
+
+                          <button
+                            type="submit"
+                            className="btn btn-g"
+                            onClick={() => {
+                              setAnnouncementForm((prev) => ({
+                                ...prev,
+                                status: 'Draft'
+                              }));
+                            }}
+                          >
+                            Save Draft
+                          </button>
+
+                          <button
+                            type="submit"
+                            className="btn btn-p"
+                            onClick={() => {
+                              setAnnouncementForm((prev) => ({
+                                ...prev,
+                                status: 'Published'
+                              }));
+                            }}
+                          >
+                            Publish Announcement
+                          </button>
+
+                        </div>
+
+                      </form>
+                    </div>
+                  )}
+
+                  {/* DELETE CONFIRMATION */}
+                  {showAnnDeleteModal && (
+                    <div
+                      style={{
+                        position: 'fixed',
+                        inset: 0,
+                        background: 'rgba(0, 0, 0, 0.65)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 99999,
+                        padding: '20px'
+                      }}
+                    >
+                      <div
+                        className="fp"
+                        style={{
+                          width: '100%',
+                          maxWidth: '420px',
+                          padding: '24px'
+                        }}
+                      >
+
+                        <div
+                          style={{
+                            display: 'flex',
+                            alignItems: 'flex-start',
+                            gap: '12px',
+                            marginBottom: '16px'
+                          }}
+                        >
+                          <div
+                            style={{
+                              flexShrink: 0
+                            }}
+                          >
+                            <svg
+                              width="30"
+                              height="30"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="1.8"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h16.9a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
                               <path d="M12 9v4" />
                               <path d="M12 17h.01" />
                             </svg>
                           </div>
-                          <div style={{ fontSize: '16px', fontWeight: 'bold', color: '#f8fafc', marginBottom: '8px' }}>
-                            Confirm Permanent Deletion?
-                          </div>
-                          <div style={{ fontSize: '12px', color: '#94a3b8', marginBottom: '20px' }}>
-                            Are you sure you want to remove this notice? Residents will immediately lose read access visibility across the portal logs.
-                          </div>
-                          <div style={{ display: 'flex', gap: '10px', justifyContent: 'center' }}>
-                            <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => { setShowAnnDeleteModal(false); setAnnIdToDelete(null); }}>
-                              Cancel
-                            </button>
-                            <button type="button" className="btn" style={{ flex: 1, background: '#ef4444', color: 'white', display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center' }} onClick={handleConfirmDeleteAnnouncement}>
-                              Delete Notice
-                            </button>
+
+                          <div>
+                            <div
+                              style={{
+                                fontSize: '16px',
+                                fontWeight: 800
+                              }}
+                            >
+                              Delete announcement?
+                            </div>
+
+                            <div
+                              style={{
+                                marginTop: '5px',
+                                fontSize: '12px',
+                                color: 'var(--muted)',
+                                lineHeight: '1.5'
+                              }}
+                            >
+                              This action will remove the announcement
+                              from the bulletin list.
+                            </div>
                           </div>
                         </div>
+
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'flex-end',
+                            gap: '8px'
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="btn btn-g"
+                            onClick={() => {
+                              setShowAnnDeleteModal(false);
+                              setAnnIdToDelete(null);
+                            }}
+                          >
+                            Cancel
+                          </button>
+
+                          <button
+                            type="button"
+                            className="btn"
+                            style={{
+                              background: 'var(--red)',
+                              color: '#fff'
+                            }}
+                            onClick={handleConfirmDeleteAnnouncement}
+                          >
+                            Delete
+                          </button>
+                        </div>
+
                       </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
+
+                </div>
                 )}
 
             {/* ════════════════════════════════════════
@@ -9266,9 +9739,6 @@ const updateCtcField = (field) => (e) => {
                       </div>
                     )}
 
-                    {/* HEADER METRICS DESK */}
-                    
-
                     {/* QUICK STATISTICS OVERVIEW TILES (SVG Icons + Glass-Morphism) */}
                     <div style={{
                       display: 'grid',
@@ -9285,16 +9755,6 @@ const updateCtcField = (field) => (e) => {
                         alignItems: 'center',
                         gap: '12px'
                       }}>
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M12 2v4" />
-                          <path d="M12 18v4" />
-                          <path d="M4.93 4.93l2.83 2.83" />
-                          <path d="M16.24 16.24l2.83 2.83" />
-                          <path d="M2 12h2" />
-                          <path d="M20 12h2" />
-                          <path d="M4.93 19.07l2.83-2.83" />
-                          <path d="M16.24 7.76l2.83-2.83" />
-                        </svg>
                         <div>
                           <div style={{ fontSize: '11px', color: '#94a3b8', textTransform: 'uppercase' }}>Pending Submissions</div>
                           <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
@@ -9312,10 +9772,6 @@ const updateCtcField = (field) => (e) => {
                         alignItems: 'center',
                         gap: '12px'
                       }}>
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="12" cy="12" r="10" />
-                          <path d="M21 21l-4.35-4.35" />
-                        </svg>
                         <div>
                           <div style={{ fontSize: '11px', color: '#94a3b8' }}>Under Review</div>
                           <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
@@ -9333,10 +9789,6 @@ const updateCtcField = (field) => (e) => {
                         alignItems: 'center',
                         gap: '12px'
                       }}>
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                          <path d="M22 4L12 14.01l-3-3" />
-                        </svg>
                         <div>
                           <div style={{ fontSize: '11px', color: '#94a3b8' }}>Resolved & Closed</div>
                           <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f8fafc' }}>
@@ -9521,23 +9973,14 @@ const updateCtcField = (field) => (e) => {
                                 <td style={{ fontSize: '12px', padding: '12px 16px' }}>
                                   {fb.priority === 'High' ? (
                                     <span className="badge r" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <circle cx="12" cy="12" r="10" />
-                                      </svg>
                                       High
                                     </span>
                                   ) : fb.priority === 'Medium' ? (
                                     <span className="badge a" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <circle cx="12" cy="12" r="10" />
-                                      </svg>
                                       Medium
                                     </span>
                                   ) : (
                                     <span className="badge g" style={{ fontSize: '10px', padding: '2px 6px' }}>
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <circle cx="12" cy="12" r="10" />
-                                      </svg>
                                       Low
                                     </span>
                                   )}
@@ -9561,10 +10004,6 @@ const updateCtcField = (field) => (e) => {
                                   alignItems: 'center',
                                   gap: '4px'
                                 }}>
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                                    <circle cx="9" cy="7" r="4" />
-                                  </svg>
                                   {fb.assignedTo}
                                 </td>
                                 <td style={{ padding: '12px 16px' }}>
@@ -9588,22 +10027,10 @@ const updateCtcField = (field) => (e) => {
                                   >
                                     {fb.status === 'Pending' || fb.status === 'Under Review' ? (
                                       <>
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                          <path d="M14 2v6h6" />
-                                          <path d="M12 18v-6" />
-                                          <path d="M9 15h6" />
-                                        </svg>
                                         Respond
                                       </>
                                     ) : (
                                       <>
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                          <path d="M14 2v6h6" />
-                                          <path d="M12 18v-6" />
-                                          <path d="M9 15h6" />
-                                        </svg>
                                         View Details
                                       </>
                                     )}
@@ -9951,145 +10378,171 @@ const updateCtcField = (field) => (e) => {
 
             {/* ════════════════════════════════════════
              {/* ── SCREEN: CONFLICT RESOLUTION (Admin only) ── */}
-{role === 'admin' && screen === 'conflicts' && (
-  <div className="screen active">
-    {loadingConflicts ? (
-      <div style={{ padding: '20px', textAlign: 'center', color: 'var(--text-muted)' }}>
-        Loading active database conflicts...
-      </div>
-    ) : conflictsList.length === 0 ? (
-      <div className="note note-g" style={{ marginBottom: '20px' }}>
-        ✅ <strong>No conflicts detected.</strong> All offline changes have synced seamlessly to the cloud.
-      </div>
-    ) : (
-      <>
-        <div className="note note-w" style={{ marginBottom: '20px' }}>
-          ⚠ <strong>{conflictsList.length} conflict{conflictsList.length > 1 ? 's' : ''} detected.</strong>{' '}
-          Records modified on multiple offline devices simultaneously. No data has been overwritten. 
-          Select the correct version to keep.
-        </div>
-
-        {conflictsList.map((conflict, index) => {
-          const isResident = conflict.type === 'residents';
-          const vA = conflict.versionA;
-          const vB = conflict.versionB;
-
-          return (
-            <div className="cf-card" key={`${conflict.docId}-${index}`}>
-              <div className="cf-hdr">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                  <span style={{ fontWeight: 800, color: 'var(--red)', fontSize: '13px' }}>
-                    ⚠ Conflict #{index + 1}
-                  </span>
-                  <span className={`badge ${isResident ? 'g' : 'a'}`} style={{ fontSize: '10px' }}>
-                    {conflict.type || 'residents'}
-                  </span>
-                  <span className="badge gr" style={{ fontFamily: 'var(--mono)', fontSize: '10px' }}>
-                    {conflict.docId}
-                  </span>
-                </div>
-                <div style={{ display: 'flex', gap: '8px' }}>
-                  <button className="btn btn-s btn-sm" onClick={() => handleKeepVersionA(conflict)}>
-                    Keep Version A
-                  </button>
-                  <button className="btn btn-g btn-sm" onClick={() => handleKeepVersionB(conflict)}>
-                    Keep Version B
-                  </button>
-                </div>
-              </div>
-
-              <div className="cf-vs">
-                {/* COLUMN: VERSION A */}
-                <div className="cf-v">
-                  <div className="cf-vl">
-                    Version A — {vA.modifiedBy || 'Device User'} · {vA.device || 'Device 1'}
-                  </div>
-                  {isResident ? (
-                    <>
-                      <div className="cf-vf">
-                        <span>Name:</span>
-                        {vA.name !== vB.name ? <strong>{vA.name}</strong> : vA.name}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Purok:</span>
-                        {vA.purok !== vB.purok ? <strong>{vA.purok}</strong> : vA.purok}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Civil Status:</span>
-                        {vA.civilStatus !== vB.civilStatus ? <strong>{vA.civilStatus}</strong> : vA.civilStatus}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Contact:</span>
-                        {vA.contact !== vB.contact ? <strong>{vA.contact}</strong> : vA.contact}
-                      </div>
-                    </>
+                {screen === 'conflicts' && (
+                <div className="screen active">
+                  {conflictsList.length === 0 ? (
+                    <div
+                      style={{
+                        textAlign: 'center',
+                        padding: '40px',
+                        background: 'var(--surface)',
+                        borderRadius: '12px',
+                        border: '1px solid var(--border)'
+                      }}
+                    >
+                      <p
+                        style={{
+                          color: 'var(--muted)',
+                          fontSize: '14px',
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px'
+                        }}
+                      >
+                        <svg
+                          width="17"
+                          height="17"
+                          viewBox="0 0 24 24"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="2"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          aria-hidden="true"
+                        >
+                          <path d="M9 12l2 2 4-4" />
+                          <circle cx="12" cy="12" r="9" />
+                        </svg>
+                        No conflicts detected. All offline changes have synced seamlessly to the cloud.
+                      </p>
+                    </div>
                   ) : (
-                    <>
-                      <div className="cf-vf">
-                        <span>Beneficiary:</span>
-                        {vA.beneficiary !== vB.beneficiary ? <strong>{vA.beneficiary}</strong> : vA.beneficiary}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Aid Type:</span>
-                        {vA.aidType !== vB.aidType ? <strong>{vA.aidType}</strong> : vA.aidType}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Quantity:</span>
-                        {vA.quantity !== vB.quantity ? <strong>{vA.quantity}</strong> : vA.quantity}
-                      </div>
-                    </>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                      {conflictsList.map((item) => (
+                        <div
+                          key={item.id}
+                          style={{
+                            background: 'var(--surface)',
+                            border: '1px solid rgba(248, 113, 113, 0.4)',
+                            padding: '20px',
+                            borderRadius: '12px'
+                          }}
+                        >
+                          <h3
+                            style={{
+                              color: 'var(--red)',
+                              marginBottom: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: '8px'
+                            }}
+                          >
+                            <svg
+                              width="18"
+                              height="18"
+                              viewBox="0 0 24 24"
+                              fill="none"
+                              stroke="currentColor"
+                              strokeWidth="2"
+                              strokeLinecap="round"
+                              strokeLinejoin="round"
+                              aria-hidden="true"
+                            >
+                              <path d="M12 3L2.5 20h19L12 3z" />
+                              <path d="M12 9v5" />
+                              <path d="M12 17h.01" />
+                            </svg>
+                            Conflict Detected: {item.residentName}
+                          </h3>
+
+                          <p
+                            style={{
+                              fontSize: '13px',
+                              color: 'var(--muted)',
+                              marginBottom: '12px'
+                            }}
+                          >
+                            Document ID: {item.docId}
+                          </p>
+
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 1fr',
+                              gap: '16px',
+                              marginBottom: '16px'
+                            }}
+                          >
+                            <div
+                              style={{
+                                background: 'var(--surface2)',
+                                padding: '12px',
+                                borderRadius: '8px'
+                              }}
+                            >
+                              <strong style={{ color: 'var(--accent)' }}>
+                                Version A (Local Winning):
+                              </strong>
+                              <p style={{ fontSize: '13px', marginTop: '4px' }}>
+                                Purok: {item.docA.purok}
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: '11px',
+                                  fontFamily: 'var(--mono)',
+                                  color: 'var(--muted)'
+                                }}
+                              >
+                                Rev: {item.winningRev}
+                              </p>
+                            </div>
+
+                            <div
+                              style={{
+                                background: 'var(--surface2)',
+                                padding: '12px',
+                                borderRadius: '8px'
+                              }}
+                            >
+                              <strong style={{ color: 'var(--amber)' }}>
+                                Version B (Conflicting):
+                              </strong>
+                              <p style={{ fontSize: '13px', marginTop: '4px' }}>
+                                Purok: {item.docB.purok}
+                              </p>
+                              <p
+                                style={{
+                                  fontSize: '11px',
+                                  fontFamily: 'var(--mono)',
+                                  color: 'var(--muted)'
+                                }}
+                              >
+                                Rev: {item.conflictRev}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button
+                              className="btn btn-p btn-sm"
+                              onClick={() => handleKeepVersionA(item)}
+                            >
+                              Keep Version A
+                            </button>
+
+                            <button
+                              className="btn btn-g btn-sm"
+                              onClick={() => handleKeepVersionB(item)}
+                            >
+                              Keep Version B
+                            </button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
                   )}
                 </div>
-
-                {/* COLUMN: VERSION B */}
-                <div className="cf-v">
-                  <div className="cf-vl">
-                    Version B — {vB.modifiedBy || 'Device User'} · {vB.device || 'Device 2'}
-                  </div>
-                  {isResident ? (
-                    <>
-                      <div className="cf-vf">
-                        <span>Name:</span>
-                        {vA.name !== vB.name ? <strong>{vB.name}</strong> : vB.name}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Purok:</span>
-                        {vA.purok !== vB.purok ? <strong>{vB.purok}</strong> : vB.purok}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Civil Status:</span>
-                        {vA.civilStatus !== vB.civilStatus ? <strong>{vB.civilStatus}</strong> : vB.civilStatus}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Contact:</span>
-                        {vA.contact !== vB.contact ? <strong>{vB.contact}</strong> : vB.contact}
-                      </div>
-                    </>
-                  ) : (
-                    <>
-                      <div className="cf-vf">
-                        <span>Beneficiary:</span>
-                        {vA.beneficiary !== vB.beneficiary ? <strong>{vB.beneficiary}</strong> : vB.beneficiary}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Aid Type:</span>
-                        {vA.aidType !== vB.aidType ? <strong>{vB.aidType}</strong> : vB.aidType}
-                      </div>
-                      <div className="cf-vf">
-                        <span>Quantity:</span>
-                        {vA.quantity !== vB.quantity ? <strong>{vB.quantity}</strong> : vB.quantity}
-                      </div>
-                    </>
-                  )}
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </>
-    )}
-  </div>
-)}
+                )}
 
             {/* ════════════════════════════════════════
                 SCREEN: AUDIT LOG (Admin only)
@@ -10099,7 +10552,20 @@ const updateCtcField = (field) => (e) => {
                 <div className="tw">
                   <div className="tb">
                     <div className="sb-box">
-                      <span>🔍</span>
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                        aria-hidden="true"
+                      >
+                        <circle cx="11" cy="11" r="7" />
+                        <path d="m20 20-4-4" />
+                      </svg>
                       <input placeholder="Search user, action, module..." />
                     </div>
 
