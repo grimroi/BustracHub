@@ -1,0 +1,76 @@
+/* ═══ ULTIMATE DARK THEME FORCE FOR LANDING PAGE ═══ */
+
+/* 1. Universal Color Scheme Force */
+html, 
+body, 
+.landing-page-root, 
+.landing-page-root * {
+  color-scheme: dark !important;
+}
+
+/* 2. Main Container Override - Tatatag kahit may global .light class */
+.landing-page-root,
+html.light .landing-page-root,
+body.light .landing-page-root,
+[data-theme="light"] .landing-page-root {
+  background-color: #020617 !important; /* Tailwind slate-950 */
+  color: #cbd5e1 !important; /* Tailwind slate-300 */
+}
+
+/* 3. Force Dark Backgrounds sa Card Components */
+.landing-page-root .bg-slate-950,
+.landing-page-root [class*="bg-slate-950"],
+html.light .landing-page-root [class*="bg-slate-950"] {
+  background-color: #020617 !important;
+}
+
+.landing-page-root .bg-slate-900,
+.landing-page-root [class*="bg-slate-900"],
+html.light .landing-page-root [class*="bg-slate-900"] {
+  background-color: #0f172a !important;
+}
+
+/* 4. Force Text Colors - Isasapilit ang puti at abong kulay ng text */
+.landing-page-root .text-white,
+html.light .landing-page-root .text-white {
+  color: #ffffff !important;
+}
+
+.landing-page-root .text-slate-200,
+html.light .landing-page-root .text-slate-200 {
+  color: #e2e8f0 !important;
+}
+
+.landing-page-root .text-slate-300,
+html.light .landing-page-root .text-slate-300 {
+  color: #cbd5e1 !important;
+}
+
+.landing-page-root .text-slate-400,
+html.light .landing-page-root .text-slate-400 {
+  color: #94a3b8 !important;
+}
+
+/* 5. Force Borders */
+.landing-page-root [class*="border-slate-800"],
+html.light .landing-page-root [class*="border-slate-800"] {
+  border-color: #1e293b !important;
+}
+
+/* 6. Fix for Header Navigation Buttons */
+.landing-page-root button,
+html.light .landing-page-root button {
+  color: inherit;
+}
+
+/* 7. System Light Mode Override */
+@media (prefers-color-scheme: light) {
+  html, 
+  body, 
+  .landing-page-root,
+  .landing-page-root * {
+    background-color: #020617 !important;
+    color: #cbd5e1 !important;
+    color-scheme: dark !important;
+  }
+}

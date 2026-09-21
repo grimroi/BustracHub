@@ -125,6 +125,128 @@ app.get('/api/status', (req, res) => {
   res.json({ status: "online", message: "BustracHub Backend Server is active!" });
 });
 
+// ============================================================
+// PUBLIC LANDING PAGE API
+// Returns only explicitly published public information.
+// No login/session is required.
+// ============================================================
+
+app.get('/api/public/landing', async (req, res) => {
+  try {
+    if (!db) {
+      return res.status(503).json({
+        success: false,
+        message: 'Database is not ready.'
+      });
+    }
+
+    const result = await db.find({
+      selector: {
+        publicVisible: true
+      },
+      limit: 100
+    });
+
+    const docs = Array.isArray(result.docs) ? result.docs : [];
+
+    const isPublicActive = (doc) =>
+      doc.publicVisible === true &&
+      doc.status !== 'Archived' &&
+      doc.status !== 'Draft';
+
+    const announcements = docs
+      .filter(
+        (doc) =>
+          isPublicActive(doc) &&
+          doc.publicType === 'announcement'
+      )
+      .map((doc) => ({
+        id: doc._id,
+        title: doc.title || 'Announcement',
+        description: doc.description || doc.message || '',
+        date: doc.date || doc.createdAt || doc.timestamp || null,
+        category: doc.category || ''
+      }));
+
+    const advisories = docs
+      .filter(
+        (doc) =>
+          isPublicActive(doc) &&
+          doc.publicType === 'advisory'
+      )
+      .map((doc) => ({
+        id: doc._id,
+        title: doc.title || 'Relief Advisory',
+        description: doc.description || doc.message || '',
+        date: doc.date || doc.createdAt || doc.timestamp || null
+      }));
+
+    const activities = docs
+      .filter(
+        (doc) =>
+          isPublicActive(doc) &&
+          doc.publicType === 'activity'
+      )
+      .map((doc) => ({
+        id: doc._id,
+        title: doc.title || 'Barangay Activity',
+        description: doc.description || doc.message || '',
+        date: doc.date || doc.startDate || doc.createdAt || null
+      }));
+
+    const hotlines = docs
+      .filter(
+        (doc) =>
+          isPublicActive(doc) &&
+          doc.publicType === 'hotline'
+      )
+      .map((doc) => ({
+        id: doc._id,
+        name: doc.name || 'Emergency Hotline',
+        number: doc.number || 'N/A'
+      }));
+
+    const officeDoc = docs.find(
+      (doc) =>
+        isPublicActive(doc) &&
+        doc.publicType === 'office'
+    );
+
+    const office = officeDoc
+      ? {
+          barangay:
+            officeDoc.barangay || 'Barangay Bustrac',
+
+          municipality:
+            officeDoc.municipality || 'Nabua, Camarines Sur',
+
+          officeHours:
+            officeDoc.officeHours || 'Not available',
+
+          publicUpdates:
+            officeDoc.publicUpdates || 'Not available'
+        }
+      : null;
+
+    return res.json({
+      success: true,
+      announcements,
+      advisories,
+      activities,
+      hotlines,
+      office
+    });
+
+  } catch (error) {
+    console.error('Public landing API error:', error);
+
+    return res.status(500).json({
+      success: false,
+      message: 'Unable to load public information.'
+    });
+  }
+});
+
 // Fire up the listener
 app.listen(PORT, () => {
   console.log(`🚀 Server is listening live on http://localhost:${PORT}`);

@@ -1,1 +1,139 @@
 @import "tailwindcss";
+
+/* ==========================================
+   DARK MODE (Default)
+   ========================================== */
+:root,
+html[data-theme="dark"],
+body[data-theme="dark"] {
+  --bg: #111318;
+  --surface: #1a1d24;
+  --surface2: #20242e;
+  --card-bg: #1e293b;
+  --input-bg: #1e293b;
+  --border: #2a2f3d;
+  --border2: #323849;
+  --text: #e8ecf4;
+  --muted: #7b83a0;
+  --hint: #4a5168;
+  --primary: #4f8ef7;
+  --primary-dark: #3a7ae8;
+  --primary-light: rgba(79, 142, 247, 0.1);
+  --green: #34d399;
+  --green-bg: rgba(52, 211, 153, 0.1);
+  --green-border: rgba(52, 211, 153, 0.3);
+  --amber: #fbbf24;
+  --amber-bg: rgba(251, 191, 36, 0.1);
+  --amber-border: rgba(251, 191, 36, 0.3);
+  --red: #f87171;
+  --red-bg: rgba(248, 113, 113, 0.1);
+  --red-border: rgba(248, 113, 113, 0.3);
+  --purple: #a78bfa;
+  --purple-bg: rgba(167, 139, 250, 0.1);
+  --purple-border: rgba(167, 139, 250, 0.3);
+  --teal: #2dd4bf;
+  --teal-bg: rgba(45, 212, 191, 0.1);
+  --teal-border: rgba(45, 212, 191, 0.3);
+  color-scheme: dark;
+}
+
+/* ==========================================
+   LIGHT MODE
+   ========================================== */
+html[data-theme="light"],
+body[data-theme="light"] {
+  --bg: #ffffff;
+  --surface: #f8fafc;
+  --surface2: #ffffff;
+  --card-bg: #ffffff;
+  --input-bg: #ffffff;
+  --border: #e2e8f0;
+  --border2: #cbd5e1;
+  --text: #0f172a;
+  --muted: #64748b;
+  --hint: #94a3b8;
+  --primary: #2563eb;
+  --primary-dark: #1d4ed8;
+  --primary-light: rgba(37, 99, 235, 0.1);
+  --green: #059669;
+  --green-bg: rgba(5, 150, 105, 0.1);
+  --green-border: rgba(5, 150, 105, 0.3);
+  --amber: #d97706;
+  --amber-bg: rgba(217, 119, 6, 0.1);
+  --amber-border: rgba(217, 119, 6, 0.3);
+  --red: #dc2626;
+  --red-bg: rgba(220, 38, 38, 0.1);
+  --red-border: rgba(220, 38, 38, 0.3);
+  --purple: #7c3aed;
+  --purple-bg: rgba(124, 58, 237, 0.1);
+  --purple-border: rgba(124, 58, 237, 0.3);
+  --teal: #0f766e;
+  --teal-bg: rgba(13, 148, 136, 0.1);
+  --teal-border: rgba(13, 148, 136, 0.3);
+  color-scheme: light;
+}
+
+/* ==========================================
+   GLOBAL LAYOUT
+   ========================================== */
+html,
+body,
+#root,
+#app,
+.content,
+.resident-root-container,
+.phone-frame,
+.mobile-container {
+  min-height: 100vh;
+  margin: 0;
+  padding: 0;
+  background-color: var(--surface) !important;
+  color: var(--text) !important;
+  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* ==========================================
+   COMPONENTS
+   ========================================== */
+.card, .sidebar, .topbar, .concern-option {
+  background-color: var(--card-bg) !important;
+  border-color: var(--border) !important;
+  color: var(--text) !important;
+}
+
+/* NOTE: .notice removed from here para hindi ma-override ang colored borders */
+
+.bottom-nav, .topnav {
+  background-color: var(--surface2) !important;
+  border-color: var(--border) !important;
+}
+
+.bnav-item {
+  color: var(--muted) !important;
+}
+
+.bnav-item.active {
+  color: var(--primary) !important;
+}
+
+input, select, textarea, .fc, .input-box {
+  background-color: var(--input-bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+input::placeholder, textarea::placeholder {
+  color: var(--muted) !important;
+}
+
+.page-hdr, .page-title, .card-title, .list-title, label {
+  color: var(--text) !important;
+}
+
+.page-sub, .list-sub, .field-label {
+  color: var(--muted) !important;
+}
+
+.btn-ghost {
+  color: var(--text);
+}

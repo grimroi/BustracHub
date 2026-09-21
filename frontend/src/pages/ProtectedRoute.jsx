@@ -2,13 +2,10 @@ import { Navigate, useLocation } from 'react-router-dom';
 
 export default function ProtectedRoute({ children, allowedRoles }) {
   const location = useLocation();
-  
-  // Kuhanin ang kasalukuyang session configuration ng gumagamit
+
   const role = sessionStorage.getItem('bustrac_role');
   const isLoggedIn = !!sessionStorage.getItem('bustrac_user');
 
-  // 1. KUNG HINDI LOGGED IN: I-redirect sila pabalik sa /login
-  // I-save ang kanilang tinatangkang puntahan gamit ang `state`
   if (!isLoggedIn) {
     return (
       <Navigate 
