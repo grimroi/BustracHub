@@ -3,7 +3,9 @@ import { useNavigate } from 'react-router-dom';
 import bustracLogo from '../assets/logo.png';
 import './LandingPage.css';
 
-const PUBLIC_API = '/api/public';
+const PUBLIC_API = import.meta.env.VITE_API_URL 
+  ? `${import.meta.env.VITE_API_URL}/api/public` 
+  : 'http://localhost:5000/api/public';
 
 export default function LandingPage() {
   const navigate = useNavigate();
@@ -36,22 +38,52 @@ export default function LandingPage() {
   useEffect(() => {
   let cancelled = false;
 
-  // Store the user's initial theme state prior to enforcing dark mode
   const hadLight = document.documentElement.classList.contains('light');
-
-  // Enforce dark mode layout for the landing page view
   document.documentElement.classList.add('dark');
   document.body.classList.add('dark');
   document.documentElement.classList.remove('light');
   document.body.classList.remove('light');
 
+  const fetchPublicData = async () => {
+    try {
+      const response = await fetch(PUBLIC_API);
+      if (!response.ok) {
+        throw new Error('Failed to fetch public portal announcements and details.');
+      }
+      const result = await response.json();
+      if (!cancelled) {
+        setData({
+          announcements: result.announcements || [],
+          advisories: result.advisories || [],
+          activities: result.activities || [],
+          hotlines: result.hotlines || [],
+          office: result.office || null,
+        });
+        setError('');
+      }
+    } catch (err) {
+      console.error('Error fetching public portal data:', err);
+      if (!cancelled) {
+        setError('Hindi maikonekta sa server o ma-load ang mga anunsyo. Pakisubukan ulit mamaya.');
+      }
+    } finally {
+      if (!cancelled) {
+        setLoading(false);
+      }
+    }
+  };
+
+  fetchPublicData();
+
+  const intervalId = setInterval(() => {
+    fetchPublicData();
+  }, 5000);
+
   return () => {
     cancelled = true;
-
-    // Cleanup phase: restore light mode classes if previously active upon unmount
+    clearInterval(intervalId); 
     document.documentElement.classList.remove('dark');
     document.body.classList.remove('dark');
-    
     if (hadLight) {
       document.documentElement.classList.add('light');
       document.body.classList.add('light');

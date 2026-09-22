@@ -19,11 +19,6 @@ const db = new PouchDB('bustrachub_db');
 
 const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@localhost:5984/bustrachub_db';
 
-if (typeof window !== 'undefined') {
-  window.db = db;
-}
-
-
 // ─────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────
@@ -258,6 +253,27 @@ const mapDocToFeedback = (doc) => {
 // COMPONENT
 // ─────────────────────────────────────────────
 export default function DashboardPortal({ role = 'staff' }) {
+useEffect(() => {
+  const syncHandler = db.sync(remoteCouchDB, { 
+    live: true, 
+    retry: true, 
+    ajax: { withCredentials: true } 
+  });
+
+  syncHandler
+    .on('change', (info) => console.log('[SYNC] Changed:', info.direction, info.change.docs.length))
+    .on('paused', (err) => err && console.warn('[SYNC] Paused:', err.message))
+    .on('active', () => console.log('[SYNC] Resumed'))
+    .on('error', (err) => console.error('[SYNC] Failed:', err));
+
+  if (typeof window !== 'undefined') {
+    window.db = db;
+  }
+
+  return () => {
+    syncHandler.cancel();
+  };
+}, []);
 
   // ── INDIGENCY PRINT MODAL STATES ──
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -1155,9 +1171,7 @@ const submitEditHousehold = async (e) => {
 // ─────────────────────────────────────────────
 const handleSaveAnnouncement = async (e, status = 'Published') => {
   e.preventDefault();
-
   const { title, category, content, pinned } = announcementForm;
-
   if (!title.trim() || !content.trim()) {
     alert('Title and Content are required.');
     return;
@@ -1166,56 +1180,34 @@ const handleSaveAnnouncement = async (e, status = 'Published') => {
   const loggedInUser = JSON.parse(
     sessionStorage.getItem('bustrac_user') || '{}'
   );
-
   const now = new Date().toISOString();
 
   const newAnnouncement = {
     _id: `announcement_${Date.now()}`,
     type: 'announcement',
-
     title: title.trim(),
     category: category || 'General',
-
-    // ResidentUI reads body
     body: content.trim(),
-
-    // Keep content too for Admin UI compatibility
     content: content.trim(),
-
     pinned: Boolean(pinned),
-
-    author:
-      loggedInUser?.fullName ||
-      loggedInUser?.name ||
-      'Barangay Office',
-
+    author: loggedInUser?.fullName || loggedInUser?.name || 'Barangay Office',
     date: now,
     status,
-
     timestamp: now,
     createdAt: now,
   };
 
   try {
-    // IMPORTANT: Save to PouchDB
     await db.put(newAnnouncement);
 
-    // Update Admin UI
-    setAnnouncementsList(prev => [
-      newAnnouncement,
-      ...prev.filter(a => a._id !== newAnnouncement._id)
-    ]);
+    if (typeof db.replicate === 'function') {
+      await db.replicate.to(remoteCouchDB);
+    }
 
-    // Optional local cache
-    localStorage.setItem(
-      'bustrac_announcements',
-      JSON.stringify([
-        newAnnouncement,
-        ...announcementsList.filter(
-          a => a._id !== newAnnouncement._id
-        )
-      ])
-    );
+    setAnnouncementsList((prev) => [
+      newAnnouncement,
+      ...prev.filter((a) => a._id !== newAnnouncement._id),
+    ]);
 
     await createAuditLog({
       action: 'CREATE',
@@ -1237,9 +1229,7 @@ const handleSaveAnnouncement = async (e, status = 'Published') => {
       pinned: false,
       status: 'Published',
     });
-
     setAnnouncementSubScreen('list');
-
   } catch (err) {
     console.error('Failed to save announcement:', err);
     alert('Error saving announcement. Check console.');
@@ -8727,12 +8717,16 @@ const clearSelectedCert = useCallback(() => {
                               <select
                                 className="fc"
                                 value={announcementForm.category || 'General'}
-                                onChange={(e) => setAnnouncementForm({ ...announcementForm, category: e.target.value })}
+                                onChange={(e) =>
+                                  setAnnouncementForm({ ...announcementForm, category: e.target.value })
+                                }
                               >
-                                <option value="General">General</option>
-                                <option value="Health">Health</option>
+                                <option value="General">General</option> <option value="Health">Health</option>
                                 <option value="Security">Security</option>
+                                <option value="Relief & Aid">Relief & Aid</option>
+                                <option value="Disaster Response">Disaster Response</option>
                                 <option value="Events">Events</option>
+                                <option value="Activities">Activities</option>
                                 <option value="Governance">Governance</option>
                               </select>
                             </div>
@@ -8997,98 +8991,83 @@ const clearSelectedCert = useCallback(() => {
                     </div>
 
                     {/* Table */}
-                    <div className="tw" style={{ borderRadius: '8px', overflow: 'hidden' }}>
-                      <table style={{ width: '100%' }}>
-                        <thead>
-                          <tr>
-                            <th>Ticket ID</th>
-                            <th>Resident</th>
-                            <th>Type</th>
-                            <th>Priority</th>
-                            <th>Subject</th>
-                            <th>Date</th>
-                            <th>Assigned</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {filteredFeedback.map((fb) => (
-                            <tr key={fb._id || fb.id}>
-                              <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--accent)', fontWeight: 'bold' }}>{fb.id}</td>
-                              <td style={{ fontWeight: 500 }}>{fb.sender}</td>
-                              <td>
-                                <span className={`badge ${fb.type === 'Complaint' ? 'r' : fb.type === 'Suggestion' ? 'b' : 'p'}`}>
-                                  {fb.type}
-                                </span>
-                              </td>
-                              <td>
-                                {fb.priority === 'High' ? (
-                                  <span className="badge r" style={{ fontSize: '10px' }}>High</span>
-                                ) : fb.priority === 'Medium' ? (
-                                  <span className="badge a" style={{ fontSize: '10px' }}>Medium</span>
-                                ) : (
-                                  <span className="badge g" style={{ fontSize: '10px' }}>Low</span>
-                                )}
-                              </td>
-                              <td style={{ fontSize: '12px', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fb.subject}>
-                                {fb.subject}
-                              </td>
-                              <td style={{ fontSize: '11px', color: 'var(--muted)' }}>{fb.date}</td>
-                              <td style={{ fontSize: '12px', color: fb.assignedTo === 'Unassigned' ? 'var(--muted)' : 'inherit' }}>{fb.assignedTo}</td>
-                              <td>
-                                <span className={`badge ${
-                                  fb.status === 'Pending' ? 'r' :
-                                  fb.status === 'Under Review' ? 'b' :
-                                  fb.status === 'Responded' ? 'a' : 'g'
-                                }`}>
-                                  {fb.status}
-                                </span>
-                              </td>
-                              <td>
-                                <button
-                                  type="button"
-                                  className={`btn btn-sm ${fb.status === 'Pending' || fb.status === 'Under Review' ? 'btn-p' : 'btn-g'}`}
-                                  onClick={() => handleOpenFeedbackDetails(fb)}
-                                >
-                                  {fb.status === 'Pending' || fb.status === 'Under Review' ? 'Respond' : 'View'}
-                                </button>
-                              </td>
+                    <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}> 
+                      
+                      {/* Scrollable Table Wrapper (Horizontal + Vertical Scrolling) */} 
+                      <div style={{ maxHeight: '480px', overflowY: 'auto', overflowX: 'auto', width: '100%' }}> 
+                        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: '900px' }}> 
+                          <thead style={{ position: 'sticky', top: 0, zIndex: 5, boxShadow: '0 2px 4px rgba(0, 0, 0, 0.1)' }}>
+                            <tr>
+                              <th style={{ background: 'var(--surface2)' }}>Ticket ID</th>
+                              <th style={{ background: 'var(--surface2)' }}>Resident</th>
+                              <th style={{ background: 'var(--surface2)' }}>Type</th>
+                              <th style={{ background: 'var(--surface2)' }}>Priority</th>
+                              <th style={{ background: 'var(--surface2)' }}>Subject</th>
+                              <th style={{ background: 'var(--surface2)' }}>Date</th>
+                              <th style={{ background: 'var(--surface2)' }}>Assigned</th>
+                              <th style={{ background: 'var(--surface2)' }}>Status</th>
+                              <th style={{ background: 'var(--surface2)', textAlign: 'right', paddingRight: '16px' }}>Action</th>
                             </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                          </thead> 
+                          <tbody> 
+                            {filteredFeedback.map((fb) => ( 
+                              <tr key={fb._id || fb.id}> 
+                                <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--accent)', fontWeight: 'bold' }}>{fb.id}</td> 
+                                <td style={{ fontWeight: 500 }}>{fb.sender}</td> 
+                                <td> 
+                                  <span className={`badge ${fb.type === 'Complaint' ? 'r' : fb.type === 'Suggestion' ? 'b' : 'p'}`}> 
+                                    {fb.type} 
+                                  </span> 
+                                </td> 
+                                <td> 
+                                  {fb.priority === 'High' ? ( 
+                                    <span className="badge r" style={{ fontSize: '10px' }}>High</span> 
+                                  ) : fb.priority === 'Medium' ? ( 
+                                    <span className="badge a" style={{ fontSize: '10px' }}>Medium</span> 
+                                  ) : ( 
+                                    <span className="badge g" style={{ fontSize: '10px' }}>Low</span> 
+                                  )} 
+                                </td> 
+                                <td style={{ fontSize: '12px', maxWidth: '200px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={fb.subject}> 
+                                  {fb.subject} 
+                                </td> 
+                                <td style={{ fontSize: '11px', color: 'var(--muted)' }}>{fb.date}</td> 
+                                <td style={{ fontSize: '12px', color: fb.assignedTo === 'Unassigned' ? 'var(--muted)' : 'inherit' }}>{fb.assignedTo}</td> 
+                                <td> 
+                                  <span className={`badge ${ fb.status === 'Pending' ? 'r' : fb.status === 'Under Review' ? 'b' : fb.status === 'Responded' ? 'a' : 'g' }`}> 
+                                    {fb.status} 
+                                  </span> 
+                                </td> 
+                                <td style={{ textAlign: 'right', paddingRight: '16px' }}> 
+                                  <button type="button" className={`btn btn-sm ${fb.status === 'Pending' || fb.status === 'Under Review' ? 'btn-p' : 'btn-g'}`} onClick={() => handleOpenFeedbackDetails(fb)}> 
+                                    {fb.status === 'Pending' || fb.status === 'Under Review' ? 'Respond' : 'View'} 
+                                  </button> 
+                                </td> 
+                              </tr> 
+                            ))} 
+                          </tbody> 
+                        </table> 
 
-                      {/* Record Counter */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', fontSize: '12px', color: 'var(--muted)', borderTop: '1px solid var(--border)' }}>
-                        <span>
-                          Showing <strong style={{ color: 'var(--text)' }}>{filteredFeedback.length}</strong> of <strong style={{ color: 'var(--text)' }}>{feedbackList.length}</strong> feedback logs
-                          {(searchFbQuery || filterFbType !== 'All Types' || filterFbStatus !== 'All Status' || filterFbPriority !== 'All Priorities') && ' (filtered)'}
-                        </span>
-                        {(searchFbQuery || filterFbType !== 'All Types' || filterFbStatus !== 'All Status' || filterFbPriority !== 'All Priorities') && (
-                          <button
-                            className="btn btn-sm btn-g"
-                            onClick={() => {
-                              setSearchFbQuery('');
-                              setFilterFbType('All Types');
-                              setFilterFbStatus('All Status');
-                              setFilterFbPriority('All Priorities');
-                              setSortFbBy('Newest');
-                            }}
-                            style={{ fontSize: '11px', padding: '4px 10px' }}
-                          >
-                            Clear Filters
-                          </button>
+                        {/* Empty State Inside the Scrollable View */} 
+                        {filteredFeedback.length === 0 && ( 
+                          <div style={{ textAlign: 'center', padding: '32px', color: 'var(--muted)' }}> 
+                            <div style={{ fontWeight: 600, marginBottom: '4px' }}>No feedback logs found</div> 
+                            <div style={{ fontSize: '12px' }}>Try adjusting the search or filter options.</div> 
+                          </div> 
                         )}
-                      </div>
+                      </div> 
 
-                      {/* Empty State */}
-                      {filteredFeedback.length === 0 && (
-                        <div style={{ textAlign: 'center', padding: '32px', color: 'var(--muted)' }}>
-                          <div style={{ fontWeight: 600, marginBottom: '4px' }}>No feedback logs found</div>
-                          <div style={{ fontSize: '12px' }}>Try adjusting the search or filter options.</div>
-                        </div>
-                      )}
+                      {/* Record Counter & Footer (Fixed at Bottom) */} 
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 16px', fontSize: '12px', color: 'var(--muted)', borderTop: '1px solid var(--border)', background: 'var(--surface)' }}> 
+                        <span> 
+                          Showing <strong style={{ color: 'var(--text)' }}>{filteredFeedback.length}</strong> of <strong style={{ color: 'var(--text)' }}>{feedbackList.length}</strong> feedback logs {(searchFbQuery || filterFbType !== 'All Types' || filterFbStatus !== 'All Status' || filterFbPriority !== 'All Priorities') && ' (filtered)'} 
+                        </span> 
+                        {(searchFbQuery || filterFbType !== 'All Types' || filterFbStatus !== 'All Status' || filterFbPriority !== 'All Priorities') && ( 
+                          <button className="btn btn-sm btn-g" onClick={() => { setSearchFbQuery(''); setFilterFbType('All Types'); setFilterFbStatus('All Status'); setFilterFbPriority('All Priorities'); setSortFbBy('Newest'); }} style={{ fontSize: '11px', padding: '4px 10px' }}> 
+                            Clear Filters 
+                          </button> 
+                        )} 
+                      </div> 
                     </div>
 
                     {/* Modal */}

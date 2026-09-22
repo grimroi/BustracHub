@@ -1,37 +1,36 @@
 const express = require('express');
 const cors = require('cors');
-// 1. Import Nano (CouchDB Driver)
 const nano = require('nano');
 
 const app = express();
 const PORT = 5000;
 
 // Middlewares
-app.use(cors());          
-app.use(express.json());  
+app.use(cors());
+app.use(express.json());
 
-// 2. Configure CouchDB Connection String
+// 1. Configure CouchDB Connection String
 const COUCHDB_URL = 'http://admin:capstone2026@localhost:5984';
 const couch = nano(COUCHDB_URL);
 const DB_NAME = 'bustrachub_db';
 let db;
 
-// 3. Connect and Initialize Database
+// 2. Connect, Initialize Database, and Create Mango Indexes
 async function initDB() {
   try {
     const dbList = await couch.db.list();
     if (!dbList.includes(DB_NAME)) {
       await couch.db.create(DB_NAME);
       console.log(`📦 Created missing database: "${DB_NAME}"`);
-      
-      // Inject our initial demo credentials into the database
+
+      // Inject default users
       const targetDb = couch.use(DB_NAME);
       const demoUsers = [
         {
           _id: 'user_mgcortero',
           type: 'user',
           username: 'mgcortero',
-          password: 'password', // In production, this must be hashed (e.g., bcrypt)
+          password: 'password', // Note: Hash in production
           role: 'staff',
           path: '/staff'
         },
@@ -62,23 +61,36 @@ async function initDB() {
           contact: '09171234567',
           household: 'HH-0012 — Dela Cruz Family',
           voterStatus: 'Registered Voter'
-              }
+        }
       ];
-      
-      // Bulk insert demo profiles
+
       await targetDb.bulk({ docs: demoUsers });
       console.log('👥 Injected default Staff and Admin accounts into CouchDB.');
     } else {
       console.log(`📦 Connected to existing CouchDB database: "${DB_NAME}"`);
     }
+
     db = couch.use(DB_NAME);
+
+    // 💡 CREATE MANGO INDEX FOR USER LOGIN
+    try {
+      await db.createIndex({
+        index: { fields: ['type', 'username', 'password'] },
+        name: 'user-login-index'
+      });
+      console.log('🔍 CouchDB Mango Index ("user-login-index") created/verified successfully!');
+    } catch (idxErr) {
+      console.warn('⚠️ Index creation warning (safe to ignore if existing):', idxErr.message);
+    }
+
   } catch (error) {
     console.error('❌ CouchDB Connection Failed! Make sure CouchDB is running.', error);
   }
 }
+
 initDB();
 
-// 4. Refactored Dynamic Database Login Route
+// 3. Fallback-Safe Login Route
 app.post('/api/login', async (req, res) => {
   const { username, password } = req.body;
 
@@ -89,22 +101,39 @@ app.post('/api/login', async (req, res) => {
   const trimmedUser = username.trim();
 
   try {
-    // Query CouchDB using Mango Query syntax to find matching credentials
-    const query = {
-      selector: {
-        type: 'user',
-        username: trimmedUser,
-        password: password
-      },
-      limit: 1
-    };
+    let matchedUser = null;
 
-    const result = await db.find(query);
+    // TRY MANGO QUERY FIRST
+    try {
+      const result = await db.find({
+        selector: {
+          type: 'user',
+          username: trimmedUser,
+          password: password
+        },
+        limit: 1
+      });
 
-    if (result.docs.length > 0) {
-      const matchedUser = result.docs[0];
+      if (result.docs && result.docs.length > 0) {
+        matchedUser = result.docs[0];
+      }
+    } catch (findErr) {
+      console.warn('⚠️ db.find failed, executing db.list fallback scan...', findErr.message);
+      
+      // FALLBACK SCAN: Kapag nag-fail ang CouchDB Mango Query engine (500 undef)
+      const allDocs = await db.list({ include_docs: true });
+      const found = allDocs.rows.find(row => {
+        const d = row.doc;
+        return d && d.type === 'user' && d.username === trimmedUser && d.password === password;
+      });
+
+      if (found) {
+        matchedUser = found.doc;
+      }
+    }
+
+    if (matchedUser) {
       const { password: _pw, ...safeUserData } = matchedUser;
-
       return res.json({
         success: true,
         role: matchedUser.role,
@@ -114,6 +143,7 @@ app.post('/api/login', async (req, res) => {
     } else {
       return res.status(401).json({ success: false, message: "Invalid username or password." });
     }
+
   } catch (error) {
     console.error('Database query error:', error);
     return res.status(500).json({ success: false, message: "Internal server database error." });
@@ -125,108 +155,100 @@ app.get('/api/status', (req, res) => {
   res.json({ status: "online", message: "BustracHub Backend Server is active!" });
 });
 
-// ============================================================
 // PUBLIC LANDING PAGE API
-// Returns only explicitly published public information.
-// No login/session is required.
-// ============================================================
-
-app.get('/api/public/landing', async (req, res) => {
+app.get(['/api/public', '/api/public/landing'], async (req, res) => {
   try {
     if (!db) {
-      return res.status(503).json({
-        success: false,
-        message: 'Database is not ready.'
-      });
+      return res.status(503).json({ success: false, message: 'Database is not ready.' });
     }
 
-    const result = await db.find({
-      selector: {
-        publicVisible: true
-      },
-      limit: 100
-    });
+    let docs = [];
+    try {
+      const result = await db.list({ include_docs: true });
+      docs = result.rows.map(r => r.doc).filter(Boolean);
+    } catch (e) {
+      console.error('Fetch docs error:', e);
+    }
 
-    const docs = Array.isArray(result.docs) ? result.docs : [];
+    const isPublic = (doc) => {
+      if (doc.status === 'Archived' || doc.status === 'Draft') return false;
+      return doc.publicVisible === true || doc.status === 'Published' || doc.type === 'announcement';
+    };
 
-    const isPublicActive = (doc) =>
-      doc.publicVisible === true &&
-      doc.status !== 'Archived' &&
-      doc.status !== 'Draft';
+    const publicDocs = docs.filter(isPublic);
 
-    const announcements = docs
-      .filter(
-        (doc) =>
-          isPublicActive(doc) &&
-          doc.publicType === 'announcement'
-      )
+    // 1. ANNOUNCEMENTS
+    const announcements = publicDocs
+      .filter((doc) => {
+        const cat = (doc.category || '').toLowerCase();
+        const isReliefOrDisaster = cat.includes('relief') || cat.includes('disaster') || doc.publicType === 'advisory';
+        const isActivityOrEvent = cat.includes('event') || cat.includes('activit') || doc.publicType === 'activity';
+
+        return !isReliefOrDisaster && !isActivityOrEvent && (doc.publicType === 'announcement' || doc.type === 'announcement');
+      })
       .map((doc) => ({
         id: doc._id,
         title: doc.title || 'Announcement',
-        description: doc.description || doc.message || '',
+        description: doc.content || doc.description || doc.body || '',
         date: doc.date || doc.createdAt || doc.timestamp || null,
-        category: doc.category || ''
+        category: doc.category || 'General',
+        pinned: doc.pinned || false
       }));
 
-    const advisories = docs
-      .filter(
-        (doc) =>
-          isPublicActive(doc) &&
-          doc.publicType === 'advisory'
-      )
+    // 2. ADVISORIES (Relief & Aid, Disaster Response)
+    const advisories = publicDocs
+      .filter((doc) => {
+        const cat = (doc.category || '').toLowerCase();
+        return doc.publicType === 'advisory' || cat.includes('relief') || cat.includes('disaster');
+      })
       .map((doc) => ({
         id: doc._id,
         title: doc.title || 'Relief Advisory',
-        description: doc.description || doc.message || '',
-        date: doc.date || doc.createdAt || doc.timestamp || null
+        description: doc.content || doc.description || doc.body || '',
+        date: doc.date || doc.createdAt || doc.timestamp || null,
+        category: doc.category || 'Relief & Aid'
       }));
 
-    const activities = docs
-      .filter(
-        (doc) =>
-          isPublicActive(doc) &&
-          doc.publicType === 'activity'
-      )
+    // 3. ACTIVITIES & EVENTS (Events, Activities)
+    const activities = publicDocs
+      .filter((doc) => {
+        const cat = (doc.category || '').toLowerCase();
+        return doc.publicType === 'activity' || cat.includes('event') || cat.includes('activit');
+      })
       .map((doc) => ({
         id: doc._id,
         title: doc.title || 'Barangay Activity',
-        description: doc.description || doc.message || '',
-        date: doc.date || doc.startDate || doc.createdAt || null
+        description: doc.content || doc.description || doc.body || '',
+        date: doc.date || doc.startDate || doc.createdAt || doc.timestamp || null,
+        category: doc.category || 'Events'
       }));
 
-    const hotlines = docs
-      .filter(
-        (doc) =>
-          isPublicActive(doc) &&
-          doc.publicType === 'hotline'
-      )
+    const dbHotlines = publicDocs
+      .filter((doc) => doc.publicType === 'hotline')
       .map((doc) => ({
         id: doc._id,
         name: doc.name || 'Emergency Hotline',
         number: doc.number || 'N/A'
       }));
 
-    const officeDoc = docs.find(
-      (doc) =>
-        isPublicActive(doc) &&
-        doc.publicType === 'office'
-    );
+    const hotlines = dbHotlines.length > 0 ? dbHotlines : [
+      { id: 'h1', name: 'Barangay Emergency Command Center', number: '(054) 123-4567' },
+      { id: 'h2', name: 'MDRRMO Nabua / Rescue', number: '0912-345-6789' },
+      { id: 'h3', name: 'Bustrac Health Station', number: '0998-765-4321' }
+    ];
 
-    const office = officeDoc
-      ? {
-          barangay:
-            officeDoc.barangay || 'Barangay Bustrac',
-
-          municipality:
-            officeDoc.municipality || 'Nabua, Camarines Sur',
-
-          officeHours:
-            officeDoc.officeHours || 'Not available',
-
-          publicUpdates:
-            officeDoc.publicUpdates || 'Not available'
-        }
-      : null;
+    const officeDoc = publicDocs.find((doc) => doc.publicType === 'office');
+    const office = officeDoc ? {
+      barangay: officeDoc.barangay || 'Barangay Bustrac',
+      municipality: officeDoc.municipality || 'Nabua, Camarines Sur',
+      officeHours: officeDoc.officeHours || 'Monday - Friday (8:00 AM - 5:00 PM)',
+      publicUpdates: officeDoc.publicUpdates || 'Active Services'
+    } : {
+      barangay: 'Barangay Bustrac',
+      municipality: 'Nabua, Camarines Sur',
+      officeHours: 'Monday - Friday (8:00 AM - 5:00 PM)',
+      publicUpdates: 'Active Services'
+    };
 
     return res.json({
       success: true,
@@ -239,15 +261,11 @@ app.get('/api/public/landing', async (req, res) => {
 
   } catch (error) {
     console.error('Public landing API error:', error);
-
-    return res.status(500).json({
-      success: false,
-      message: 'Unable to load public information.'
-    });
+    return res.status(500).json({ success: false, message: 'Unable to load public information.' });
   }
 });
 
-// Fire up the listener
+// Start Server
 app.listen(PORT, () => {
   console.log(`🚀 Server is listening live on http://localhost:${PORT}`);
 });
