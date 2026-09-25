@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
-import { createAuditLog } from '../utils/auditLog';
+// ✅ Pinalitan ang import papunta sa central services/db.js
+import { createAuditLog } from '../services/db';
 import './LogIn.css';
 
 const API_BASE_URL = import.meta.env?.VITE_API_URL || 'http://localhost:5000';
@@ -18,6 +19,7 @@ const hashPasswordForOffline = async (password) => {
 export default function LogIn() {
   const navigate = useNavigate();
   const location = useLocation();
+
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
@@ -32,14 +34,69 @@ export default function LogIn() {
       event.preventDefault();
       setShowError(false);
       setIsLoading(true);
+
       const trimmedUsername = username.trim();
+      const lowerUsername = trimmedUsername.toLowerCase();
+
+      // Helper for Local Authentication Check
+      const checkLocalAuth = async () => {
+        try {
+          const storedOfflineAuth = localStorage.getItem('bustrac_offline_auth');
+          if (!storedOfflineAuth) return null;
+
+          const allOfflineAuth = JSON.parse(storedOfflineAuth);
+          const offlineAuth = allOfflineAuth[lowerUsername];
+          if (!offlineAuth) return null;
+
+          const passwordHash = await hashPasswordForOffline(password);
+          if (passwordHash === offlineAuth.passwordHash) {
+            return offlineAuth;
+          }
+          return null;
+        } catch (err) {
+          console.error('Error checking local auth:', err);
+          return null;
+        }
+      };
 
       try {
+        // 1. Try Local Auth first (Fast and no 401 console logs for offline/local users)
+        const localUser = await checkLocalAuth();
+        if (localUser) {
+          sessionStorage.setItem('bustrac_role', localUser.role);
+          sessionStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
+          sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
+          try {
+            await createAuditLog({
+              action: 'USER_LOGIN',
+              module: 'SYSTEM',
+              recordId: localUser.user?.username || trimmedUsername || 'UNKNOWN',
+              user: `${localUser.user?.username || trimmedUsername || 'user'} (${localUser.role})`,
+              details: `${localUser.role === 'admin' ? 'Admin' : localUser.role === 'staff' ? 'Staff' : 'Resident'} logged in via Local Storage`,
+            });
+          } catch (auditErr) {
+            console.warn('Audit log entry failed for Offline Login:', auditErr);
+          }
+
+          if (localUser.role === 'admin') navigate('/admin');
+          else if (localUser.role === 'staff') navigate('/staff');
+          else if (localUser.role === 'resident') {
+            const destination = location.state?.redirectTo || '/resident';
+            navigate(destination, { state: { activeTab: location.state?.activeTab } });
+          } else {
+            navigate('/');
+          }
+          return;
+        }
+
+        // 2. If not found in Local Auth, fetch from the Online Backend API Server
         const response = await fetch(`${API_BASE_URL}/api/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: trimmedUsername, password }),
         });
+
         const data = await response.json();
 
         if (response.ok && data.success) {
@@ -51,69 +108,53 @@ export default function LogIn() {
           const existingOfflineAuth = JSON.parse(
             localStorage.getItem('bustrac_offline_auth') || '{}'
           );
-          existingOfflineAuth[trimmedUsername.toLowerCase()] = {
+          existingOfflineAuth[lowerUsername] = {
             username: trimmedUsername,
             passwordHash,
             role: data.role,
             user: data.user,
           };
-          localStorage.setItem(
-            'bustrac_offline_auth',
-            JSON.stringify(existingOfflineAuth)
-          );
+          localStorage.setItem('bustrac_offline_auth', JSON.stringify(existingOfflineAuth));
 
-          await createAuditLog({
-            action: 'USER_LOGIN',
-            module: 'AUTHENTICATION',
-            details: 'User logged in via Online API',
-          }).catch((err) => console.warn('Audit log skipped:', err));
+          // ✅ Audit Log for Online API Login
+          try {
+            await createAuditLog({
+              action: 'USER_LOGIN',
+              module: 'SYSTEM',
+              recordId: data.user?.username || trimmedUsername || 'UNKNOWN',
+              user: `${data.user?.username || trimmedUsername} (${data.role})`,
+              details: `${data.role === 'admin' ? 'Admin' : data.role === 'staff' ? 'Staff' : 'Resident'} logged in via Online API`,
+            });
+          } catch (auditErr) {
+            console.warn('Audit log entry failed for Online Login:', auditErr);
+          }
 
           if (data.role === 'admin') navigate('/admin');
           else if (data.role === 'staff') navigate('/staff');
           else if (data.role === 'resident') {
             const destination = location.state?.redirectTo || '/resident';
             navigate(destination, { state: { activeTab: location.state?.activeTab } });
-          } else navigate('/');
+          } else {
+            navigate('/');
+          }
           return;
         }
+
+        // If both local and API fail
         setShowError(true);
-      } catch {
-        try {
-          const storedOfflineAuth = localStorage.getItem('bustrac_offline_auth');
-          if (!storedOfflineAuth) {
-            setShowError(true);
-            return;
-          }
-          const allOfflineAuth = JSON.parse(storedOfflineAuth);
-          const offlineAuth = allOfflineAuth[trimmedUsername.toLowerCase()];
-          if (!offlineAuth) {
-            setShowError(true);
-            return;
-          }
-
-          const passwordHash = await hashPasswordForOffline(password);
-          if (passwordHash !== offlineAuth.passwordHash) {
-            setShowError(true);
-            return;
-          }
-
-          sessionStorage.setItem('bustrac_role', offlineAuth.role);
-          sessionStorage.setItem('bustrac_user', JSON.stringify(offlineAuth.user));
+      } catch (err) {
+        console.warn('Network / API Login failed, checking local auth fallback:', err);
+        const localUser = await checkLocalAuth();
+        if (localUser) {
+          sessionStorage.setItem('bustrac_role', localUser.role);
+          sessionStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
           sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
 
-          await createAuditLog({
-            action: 'USER_LOGIN',
-            module: 'AUTHENTICATION',
-            details: 'User logged in via Offline Mode',
-          }).catch((err) => console.warn('Offline audit log skipped:', err));
-
-          if (offlineAuth.role === 'admin') navigate('/admin');
-          else if (offlineAuth.role === 'staff') navigate('/staff');
-          else if (offlineAuth.role === 'resident') {
-            const destination = location.state?.redirectTo || '/resident';
-            navigate(destination, { state: { activeTab: location.state?.activeTab } });
-          } else navigate('/');
-        } catch {
+          if (localUser.role === 'admin') navigate('/admin');
+          else if (localUser.role === 'staff') navigate('/staff');
+          else if (localUser.role === 'resident') navigate('/resident');
+          else navigate('/');
+        } else {
           setShowError(true);
         }
       } finally {
@@ -126,8 +167,10 @@ export default function LogIn() {
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
+
     window.addEventListener('online', handleOnline);
     window.addEventListener('offline', handleOffline);
+
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
@@ -267,8 +310,7 @@ export default function LogIn() {
             <button type="submit" disabled={isLoading} className="submit-btn">
               {isLoading ? (
                 <>
-                  <span className="spinner" />
-                  Authenticating...
+                  <span className="spinner" /> Authenticating...
                 </>
               ) : (
                 'Sign In'
@@ -278,6 +320,28 @@ export default function LogIn() {
 
           {/* FOOTER ACTIONS */}
           <div className="form-footer">
+            <div style={{ textAlign: 'center', marginBottom: '12px', fontSize: '13px', color: '#94a3b8' }}>
+              Don't have a Resident Account yet?{' '}
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.preventDefault();
+                  navigate('/register');
+                }}
+                style={{
+                  color: '#3b82f6',
+                  fontWeight: 'bold',
+                  background: 'none',
+                  border: 'none',
+                  cursor: 'pointer',
+                  textDecoration: 'underline',
+                  padding: 0,
+                }}
+              >
+                Register Here
+              </button>
+            </div>
+
             <button
               type="button"
               onClick={() => navigate('/')}
@@ -285,6 +349,7 @@ export default function LogIn() {
             >
               ← Back to Public Portal
             </button>
+
             <p className="offline-notice">
               Works seamlessly without internet. Your data saves locally and automatically syncs when online.
             </p>

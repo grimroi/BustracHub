@@ -1,9 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import PouchDB from 'pouchdb';
 import logo from '../assets/logo.png';
 import './DashboardLayout.css';
-import { createAuditLog, getAuditLogs } from '../utils/auditLog';
 import nabuaLogo from "../assets/nabua-logo.jpg";
 import bustracLogo from "../assets/bustrac-logo.png";
 import IndigencyTemplate from '../components/certificates/templates/IndigencyTemplate';
@@ -14,8 +14,8 @@ import { ThemeToggle } from '../components/ThemeToggle';
 import CertificateLifecycle, { CertificateIssuancePrint } from './CertificateLifecycle';
 import CertPrintScreen from './CertPrintScreen';
 import ResidentCombobox, { formatPurok } from '../components/ResidentCombobox'; 
-
-const db = new PouchDB('bustrachub_db');
+import AuditLogView from '../components/AuditLogView';
+import { localDb as db, forceSyncToRemote, createAuditLog } from '../services/db';
 
 const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@localhost:5984/bustrachub_db';
 
@@ -249,6 +249,78 @@ const mapDocToFeedback = (doc) => {
     rawDoc: doc,
   };
 };
+
+const searchResidentHelper = (queryStr, residents) => {
+  if (!queryStr) return [];
+  const q = queryStr.toLowerCase().trim();
+  
+  return residents.filter((res) => {
+    // 1. Kuhanin ang buong pangalan sa lahat ng posibleng format
+    const fullFirstLast = `${res.firstName || ''} ${res.middleName || ''} ${res.lastName || ''}`.toLowerCase();
+    const fullLastFirst = `${res.lastName || ''}, ${res.firstName || ''}`.toLowerCase();
+    const directName = String(res.name || '').toLowerCase();
+    
+    // 2. Kuhanin ang mga IDs
+    const resId = String(res.id || res._id || '').toLowerCase();
+    const rbiId = String(res.rbiId || '').toLowerCase();
+    
+    // 3. I-check kung may nag-match sa query
+    return (
+      fullFirstLast.includes(q) ||
+      fullLastFirst.includes(q) ||
+      directName.includes(q) ||
+      resId.includes(q) ||
+      rbiId.includes(q)
+    );
+  });
+};
+
+// ── Helper Mapper Function outside the component ──
+export const mapDocToBlotter = (doc) => {
+  if (!doc) return null;
+
+  // Extract Complainant Name (String or Object)
+  const complainantName = typeof doc.complainant === 'object'
+    ? (doc.complainant?.name || doc.complainant?.displayName || 'Resident')
+    : (doc.complainant || doc.complainantName || doc.compName || 'Resident');
+
+  // Extract Respondent Name (String or Object)
+  const respondentName = typeof doc.respondent === 'object'
+    ? (doc.respondent?.name || doc.respondent?.displayName || 'N/A')
+    : (doc.respondent || doc.respondentName || doc.respName || 'N/A');
+
+  // Extract Case/Ref Number
+  const caseId = doc.refNumber || doc.trackingNo || doc.caseNo || doc.caseNum || doc.id || doc._id;
+
+  // Extract Type / Subject
+  const caseType = doc.subject || doc.incidentType || doc.type || doc.docType || 'General Complaint';
+
+  // Extract Date
+  const caseDate = doc.incidentDate || doc.dateFiled || doc.createdAt || doc.date || 'N/A';
+
+  // Extract Timestamp for Sorting (Latest edit or creation)
+  const lastUpdated = doc.updatedAt || doc.timestamp || doc.createdAt || doc.dateFiled || new Date().toISOString();
+
+  return {
+    _id: doc._id,
+    id: caseId,
+    trackingNo: caseId,
+    type: caseType,
+    incidentType: caseType,
+    complainant: complainantName,
+    respondent: respondentName,
+    location: doc.location || doc.purok || 'Barangay Bustrac',
+    date: caseDate,
+    updatedAt: lastUpdated, 
+    status: doc.status || 'Pending',
+    summonCount: Number(doc.summonCount || 0),
+    cfaIssued: Boolean(doc.cfaIssued),
+    details: doc.details || doc.narrative || doc.description || '',
+    isVawc: Boolean(doc.isVawc || doc.type === 'VAWC' || caseType.includes('VAWC')),
+    rawDoc: doc
+  };
+};
+
 // ─────────────────────────────────────────────
 // COMPONENT
 // ─────────────────────────────────────────────
@@ -278,7 +350,8 @@ useEffect(() => {
   // ── INDIGENCY PRINT MODAL STATES ──
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedPrintCert, setSelectedPrintCert] = useState(null);
-
+  
+  const [printMode, setPrintMode] = useState('original');
   const handleOpenPrintModal = useCallback((certData) => {
   setSelectedPrintCert(certData);
   setShowPrintModal(true);
@@ -533,10 +606,11 @@ useEffect(() => {
   // ──  We will use this to remember which Resident ID is currently being updated ──
   const [editingResidentId, setEditingResidentId] = useState(null);
   
-  // 1. Array list for approved certificates that are ready to be issued.
   const [issuedCertificates, setIssuedCertificates] = useState([]);
-  const [issuedHistorySearch, setIssuedHistorySearch] = useState('');
-  const [issuedCertificateSearch, setIssuedCertificateSearch] = useState('');
+const [issuedHistorySearch, setIssuedHistorySearch] = useState('');
+const [issuedCertificateSearch, setIssuedCertificateSearch] = useState('');
+
+
 
 const filteredIssuedCertificates = issuedCertificates.filter((cert) => {
   const query = issuedCertificateSearch.toLowerCase().trim();
@@ -560,15 +634,34 @@ const handleIssueCertificate = async (cert) => {
       step: 5,
       status: 'Issued',
       issuedAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
 
     await db.put(updated);
 
+    // ➔ Add Audit Log Call
+    try {
+      await createAuditLog({
+        action: 'APPROVE_CERTIFICATE',
+        module: 'CERTIFICATES',
+        recordId: updated.refNumber || updated._id,
+        user: `${currentUser?.username || 'admin'} (${role})`,
+        details: `Issued ${updated.certificateType || updated.certType || 'Certificate'} for ${
+          updated.firstName || updated.lastName
+            ? `${updated.firstName || ''} ${updated.lastName || ''}`.trim()
+            : updated.fullName || updated.residentName || 'Resident'
+        }`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for Certificate:', auditErr);
+    }
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
     setIssuedCertificates((prev) =>
-      prev.map((item) =>
-        item._id === cert._id ? updated : item
-      )
+      prev.map((item) => (item._id === cert._id ? updated : item))
     );
   } catch (error) {
     console.error('Unable to issue certificate:', error);
@@ -584,15 +677,34 @@ const handleReleaseDocument = async (cert) => {
       step: 6,
       status: 'Released',
       releasedAt: now,
-      updatedAt: now
+      updatedAt: now,
     };
 
     await db.put(updated);
 
+    // ➔ Add Audit Log Call
+    try {
+      await createAuditLog({
+        action: 'APPROVE_CERTIFICATE',
+        module: 'CERTIFICATES',
+        recordId: updated.refNumber || updated._id,
+        user: `${currentUser?.username || 'admin'} (${role})`,
+        details: `Released ${updated.certificateType || updated.certType || 'Certificate'} for ${
+          updated.firstName || updated.lastName
+            ? `${updated.firstName || ''} ${updated.lastName || ''}`.trim()
+            : updated.fullName || updated.residentName || 'Resident'
+        }`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for Certificate release:', auditErr);
+    }
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
     setIssuedCertificates((prev) =>
-      prev.map((item) =>
-        item._id === cert._id ? updated : item
-      )
+      prev.map((item) => (item._id === cert._id ? updated : item))
     );
   } catch (error) {
     console.error('Unable to release certificate:', error);
@@ -1322,42 +1434,209 @@ const cancelEdit = () => {
   }
 };
 
-const sendSummons = () => {
-  const { caseNum, summonDate, summonTime, respName, sendSMS, sendEmail } = complaint;
-  
-  if (!summonDate || !summonTime) {
-    alert('⚠️ Please set a valid date and time for appearance.');
+const sendSummons = async (caseRecord) => {
+  // 1. Get the correct record from the parameter or state
+  const targetCase = caseRecord || selectedBlotter || complaint || {};
+  const caseId = targetCase._id || targetCase.trackingNo || targetCase.id || targetCase.caseNo;
+  const respondentName = typeof targetCase.respondent === 'object'
+    ? (targetCase.respondent.name || targetCase.respondent.displayName)
+    : (targetCase.respondent || targetCase.respondentName || targetCase.respName || 'Respondent');
+
+  const summonDate = targetCase.nextHearingDate || targetCase.summonDate || '2026-09-30';
+  const summonTime = targetCase.timeFiled || '02:00 PM';
+
+  if (!caseId) {
+    alert('⚠️ Invalid Case ID. Cannot send summons.');
     return;
   }
-  
-  // Identify the selected notification channels
-  const methods = [];
-  if (sendSMS || sendSMS === undefined) methods.push('SMS'); // Fallback logic kung true by default
-  if (sendEmail) methods.push('Email');
 
-  const confirmMsg = `Send official summons to ${respName} via ${methods.join(' and ')}?\n\n` +
-                     `Appearance Schedule: ${summonDate} at ${summonTime}\n\n` +
-                     `This operational transaction will toggle data logs.`;
-  
+  // 2. Determine which Summon number is next based on the current count
+  const currentCount = typeof targetCase.summonCount === 'number'
+    ? targetCase.summonCount
+    : (targetCase.status?.includes('1st') ? 1 : targetCase.status?.includes('2nd') ? 2 : targetCase.status?.includes('3rd') ? 3 : 0);
+
+  let nextActionType = '1st_summon';
+  let nextStatusLabel = '1st Summon Issued';
+
+  if (currentCount === 1) {
+    nextActionType = '2nd_summon';
+    nextStatusLabel = '2nd Summon Issued';
+  } else if (currentCount >= 2) {
+    nextActionType = '3rd_summon';
+    nextStatusLabel = '3rd Summon Issued';
+  }
+
+  // 3. Confirmation Dialog
+  const confirmMsg = `Send official summons (${nextStatusLabel}) to ${respondentName} via SMS and Email?\n\n` +
+    `Appearance Schedule: ${summonDate} at ${summonTime}\n\n` +
+    `This operational transaction will toggle data logs and sync to Resident Portal.`;
+
   if (window.confirm(confirmMsg)) {
-    // When a summons is sent, automatically set the case status to "Under Mediation"
-    if (typeof setBlotterList === 'function') {
-      setBlotterList((prevList) =>
-        prevList.map((item) =>
-          item.id === caseNum ? { ...item, status: 'Under Mediation' } : item
-        )
-      );
-      updateComplaintField('caseStatus', 'Under Mediation');
-    }
+    try {
+      // 4. Execute the PouchDB Update and State Refresh
+      await handleBlotterAction(caseId, nextActionType);
 
-    alert(
-      `✓ Summons successfully dispatched via ${methods.join(' and ')} engine!\n\n` +
-      `Tracking Log: ${caseNum}\n` +
-      `Recipient Party: ${respName}\n` +
-      `Scheduled Date: ${summonDate} [${summonTime}]`
-    );
+      alert(
+        `✓ Summons successfully dispatched via SMS & Email engine!\n\n` +
+        `Tracking Log: ${caseId}\n` +
+        `Recipient Party: ${respondentName}\n` +
+        `Updated Status: ${nextStatusLabel}\n` +
+        `Scheduled Date: ${summonDate} [${summonTime}]`
+      );
+    } catch (err) {
+      console.error('Failed to dispatch summons:', err);
+      alert(`⚠️ Dispatch failed: ${err.message}`);
+    }
   }
 };
+
+// 1. Trigger Function: Just opens the modal and sets the initial states
+const handleBlotterAction = (blotterId, actionType) => {
+  setSelectedBlotterForAction(blotterId);
+  setActionType(actionType);
+  setScheduleDate('');
+  setActionNotes('');
+  setActionModalOpen(true);
+};
+
+// 2. Submit Function: This is what saves to PouchDB
+const submitBlotterAction = async () => {
+  if (!db) {
+    alert('Database connection is unavailable.');
+    return;
+  }
+  if (!scheduleDate && actionType.includes('summon')) {
+    alert('Please enter a Schedule Date & Time for the summon.');
+    return;
+  }
+  setActionSaving(true);
+  try {
+    const blotterId = selectedBlotterForAction;
+    let doc;
+    try {
+      doc = await db.get(blotterId);
+    } catch (getErr) {
+      const allRes = await db.allDocs({ include_docs: true });
+      const foundRow = allRes.rows.find(r => r.doc && (
+        r.doc._id === blotterId || r.doc.trackingNo === blotterId || r.doc.caseNo === blotterId || r.doc.id === blotterId
+      ));
+      if (foundRow) {
+        doc = foundRow.doc;
+      } else {
+        throw new Error(`Record with ID ${blotterId} not found in database.`);
+      }
+    }
+    const nowIso = new Date().toISOString();
+    let updatedDoc = { ...doc, updatedAt: nowIso };
+
+    if (!Array.isArray(updatedDoc.history)) {
+      updatedDoc.history = [];
+    }
+
+    let newStatus = doc.status;
+    let newSummonCount = doc.summonCount || 0;
+
+    if (actionType === '1st_summon') {
+      newStatus = '1st Summon Issued';
+      newSummonCount = 1;
+      updatedDoc.nextHearingDate = scheduleDate;
+    } else if (actionType === '2nd_summon') {
+      newStatus = '2nd Summon Issued';
+      newSummonCount = 2;
+      updatedDoc.nextHearingDate = scheduleDate;
+    } else if (actionType === '3rd_summon') {
+      newStatus = '3rd Summon Issued';
+      newSummonCount = 3;
+      updatedDoc.nextHearingDate = scheduleDate;
+    } else if (actionType === 'settled') {
+      newStatus = 'Settled / Resolved';
+      updatedDoc.resolution = actionNotes || 'Amicable Settlement Reached';
+      updatedDoc.resolvedAt = nowIso;
+    } else if (actionType === 'escalate_cfa') {
+      newStatus = 'Referred to PNP (CFA Issued)';
+      updatedDoc.cfaIssued = true;
+      updatedDoc.cfaIssuedAt = nowIso;
+    }
+
+    updatedDoc.status = newStatus;
+    updatedDoc.summonCount = newSummonCount;
+    updatedDoc.lastSummonDate = nowIso.split('T')[0];
+
+    updatedDoc.history.push({
+      action: actionType,
+      status: newStatus,
+      date: nowIso,
+      scheduleDate: scheduleDate || null,
+      notes: actionNotes,
+      performedBy: 'Admin'
+    });
+
+    const putRes = await db.put(updatedDoc);
+    updatedDoc._rev = putRes.rev;
+
+    try {
+      await createAuditLog({
+        action: 'UPDATE_BLOTTER_STATUS',
+        module: 'BLOTTER',
+        recordId: doc.refNumber || doc._id,
+        user: `${currentUser?.username || 'admin'} (admin)`,
+        details: `Updated Blotter status to "${newStatus}" for Case Ref: ${doc.refNumber || doc._id}`
+      });
+      console.log('✅ Admin Audit log saved successfully for blotter action');
+    } catch (auditErr) {
+      console.warn('⚠️ Admin audit log creation failed:', auditErr);
+    }
+
+    if (typeof setSelectedBlotter === 'function') {
+      setSelectedBlotter(updatedDoc);
+    }
+    localStorage.setItem('active_blotter_data', JSON.stringify(updatedDoc));
+
+    setActionModalOpen(false);
+    setSelectedBlotterForAction(null);
+    console.log(`✅ Blotter status successfully updated to: ${updatedDoc.status}`);
+
+  } catch (err) {
+    console.error('Failed to update blotter case status:', err);
+    alert(`Unable to update case status: ${err.message}`);
+  } finally {
+    setActionSaving(false);
+  }
+};
+
+const handleStatusDropdownChange = async (newStatus) => {
+  if (!selectedBlotter) return;
+
+  const caseId = selectedBlotter._id || selectedBlotter.trackingNo || selectedBlotter.id;
+
+  let actionType = '';
+  if (newStatus === '1st Summon Issued') actionType = '1st_summon';
+  else if (newStatus === '2nd Summon Issued') actionType = '2nd_summon';
+  else if (newStatus === '3rd Summon Issued') actionType = '3rd_summon';
+  else if (newStatus === 'Settled / Resolved') actionType = 'settled';
+  else if (newStatus === 'Referred to PNP (CFA Issued)') actionType = 'escalate_cfa';
+
+  if (actionType) {
+    await handleBlotterAction(caseId, actionType);
+  } else {
+    try {
+      const doc = await db.get(caseId);
+      const updatedDoc = {
+        ...doc,
+        status: newStatus,
+        updatedAt: new Date().toISOString()
+      };
+      const putRes = await db.put(updatedDoc);
+      updatedDoc._rev = putRes.rev;
+      
+      setSelectedBlotter(updatedDoc);
+      localStorage.setItem('active_blotter_data', JSON.stringify(updatedDoc));
+    } catch (err) {
+      console.error('Failed to update status via dropdown:', err);
+    }
+  }
+};
+
   // ─────────────────────────────────────────────
   // HANDLERS — ADMIN BENEFICIARY LIST
   // ─────────────────────────────────────────────
@@ -1378,16 +1657,70 @@ const sendSummons = () => {
   const removeFromList = (index) =>
     setBeneficiaryList((prev) => prev.filter((_, i) => i !== index));
 
-  const saveAll = () => {
-    if (beneficiaryList.length === 0) {
-      alert('No beneficiaries to save.');
-      return;
+  const saveAll = async () => {
+  if (beneficiaryList.length === 0) {
+    alert('No beneficiaries to save.');
+    return;
+  }
+
+  try {
+    const now = new Date().toISOString();
+    const batchId = `AIDBATCH-${Date.now()}`;
+
+    // Persist each beneficiary as its own doc so it replicates + gets audited
+    for (let i = 0; i < beneficiaryList.length; i++) {
+      const b = beneficiaryList[i];
+      const docId = `${batchId}-${String(i + 1).padStart(3, '0')}`;
+
+      const aidPayload = {
+        _id: docId,
+        type: 'aid_distribution',
+        refNumber: docId,
+        programId: currentProgramId,
+        residentId: b.residentId,
+        residentName: b.name,
+        aid: b.aidType,
+        qty: b.qty,
+        officer: displayName.split(' ')[0],
+        status: 'OK',
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await db.put(aidPayload);
+
+      // ➔ Add Audit Log Call per beneficiary
+      try {
+        await createAuditLog({
+          action: 'CREATE_AID_DISTRIBUTION',
+          module: 'AID_DISTRIBUTION',
+          recordId: aidPayload.refNumber,
+          user: `${currentUser?.username || 'admin'} (${role})`,
+          details: `Saved aid "${aidPayload.aid}" (x${aidPayload.qty}) for ${aidPayload.residentName}`,
+        });
+      } catch (auditErr) {
+        console.warn('Audit log failed for Aid Distribution:', auditErr);
+      }
     }
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
     alert(`✓ Saved ${beneficiaryList.length} beneficiary record(s).`);
     setBeneficiaryList([]);
-  };
+  } catch (err) {
+    console.error('Failed to save beneficiaries:', err);
+    alert('Failed to save beneficiaries. Please try again.');
+  }
+};
+
   const handlePrintRelease = async (req) => {
-  if (!issuanceMeta.orNumber || !String(issuanceMeta.orNumber).trim() || !issuanceMeta.amountPaid) {
+  if (
+    !issuanceMeta.orNumber ||
+    !String(issuanceMeta.orNumber).trim() ||
+    !issuanceMeta.amountPaid
+  ) {
     alert('Please fill in required payment fields (OR No. and Amount Paid).');
     return;
   }
@@ -1405,14 +1738,40 @@ const sendSummons = () => {
       status: 'Issued',
       issuanceMeta: {
         ...issuanceMeta,
-        issuedAt: new Date().toISOString()
-      }
+        issuedAt: new Date().toISOString(),
+      },
+      updatedAt: new Date().toISOString(),
     };
-    
+
     await db.put(updatedDoc);
 
-    setApprovedCertificates(prev => 
-      prev.map(item => item._id === targetId ? { ...item, status: 'Issued' } : item)
+    // ➔ Add Audit Log Call
+    try {
+      await createAuditLog({
+        action: 'APPROVE_CERTIFICATE',
+        module: 'CERTIFICATES',
+        recordId: updatedDoc.refNumber || updatedDoc._id,
+        user: `${currentUser?.username || 'admin'} (${role})`,
+        details: `Issued & printed ${
+          updatedDoc.certificateType || updatedDoc.certType || 'Certificate'
+        } for ${
+          updatedDoc.firstName || updatedDoc.lastName
+            ? `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim()
+            : updatedDoc.fullName || updatedDoc.residentName || 'Resident'
+        } (OR#: ${issuanceMeta.orNumber})`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for Certificate print-release:', auditErr);
+    }
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
+    setApprovedCertificates((prev) =>
+      prev.map((item) =>
+        item._id === targetId ? { ...item, status: 'Issued' } : item
+      )
     );
 
     window.print();
@@ -1438,33 +1797,47 @@ const sendSummons = () => {
   })();
   // Dynamic computing: This looks for a match in the typed input against Name, ID, or Purok
   const filteredResidents = residentsList.filter((res) => {
-    const query = searchTerm.toLowerCase();
-    const matchesSearch =
-      res.name.toLowerCase().includes(query) ||
-      res.id.toLowerCase().includes(query) ||
-      res.rbiId?.toLowerCase().includes(query) ||
-      res.purok.toLowerCase().includes(query) ||
-      res.household?.toLowerCase().includes(query);
+  const query = searchTerm.toLowerCase();
+  
+  // Buuin ang Buong Pangalan mula sa available fields
+  const fullName = res.name || `${res.firstName || ''} ${res.middleName || ''} ${res.lastName || ''}`.trim();
+  
+  const matchesSearch = 
+    fullName.toLowerCase().includes(query) || 
+    (res.id && String(res.id).toLowerCase().includes(query)) || 
+    (res._id && String(res._id).toLowerCase().includes(query)) ||
+    (res.rbiId && String(res.rbiId).toLowerCase().includes(query)) || 
+    (res.purok && String(res.purok).toLowerCase().includes(query));
 
-    const matchesPurok = purokFilter === 'All Puroks' || res.purok === purokFilter;
-    const matchesGender = genderFilter === 'All Gender' || res.gender === genderFilter;
+  return matchesSearch;
+});
 
-    return matchesSearch && matchesPurok && matchesGender;
-  });
-
-// Dynamic Calculations for the Dashboard Panels
+// Dynamic Calculations para sa Dashboard Panels
 const totalResidents = residentsList.length;
 const totalHouseholds = householdsList.length;
-const totalVoters = residentsList.filter(r => r.voter).length;
-const totalConflicts = residentsList.filter(r => r.conflict).length;
+const totalVoters = residentsList.filter(r => r.voter || r.isVoter === 'Yes' || r.voterStatus === 'Yes').length;
+const totalConflicts = residentsList.filter(r => r.conflict || r.hasDerogatory).length;
 
-// Purok Breakdown Statistics (For the CSS Bar Graph)
-const getPurokCount = (purokName) => residentsList.filter(r => r.purok === purokName).length;
-const p1Count = getPurokCount('Purok 1');
-const p2Count = getPurokCount('Purok 2');
-const p3Count = getPurokCount('Purok 3');
-const p5Count = getPurokCount('Purok 5');
-const p6Count = getPurokCount('Purok 6');
+// Safe Purok Counter (Ina-extract at pino-format ang Purok kahit may kasamang Zone o Address text)
+const getPurokCount = (purokNumber) => {
+  return residentsList.filter(r => {
+    const p = String(r.purok || r.address || '').toLowerCase();
+    return p.includes(`purok ${purokNumber}`) || p.includes(`purok${purokNumber}`);
+  }).length;
+};
+
+// Tamang Breakdown para sa 5 Puroks ng Barangay Bustrac
+const p1Count = getPurokCount(1);
+const p2Count = getPurokCount(2);
+const p3Count = getPurokCount(3);
+const p4Count = getPurokCount(4);
+const p5Count = getPurokCount(5);
+
+// Helper function para sa tamang Percentage computation
+const getPurokPercent = (count) => {
+  if (!totalResidents || totalResidents === 0) return '0%';
+  return `${Math.round((count / totalResidents) * 100)}%`;
+};
 const [currentBeneficiaryId, setCurrentBeneficiaryId] = useState('');
 const [formAttempted, setFormAttempted] = useState(false);
 
@@ -1652,42 +2025,69 @@ const handleLogAidEntry = async () => {
     return;
   }
 
-  const targetResident = residentsList.find(r => r.id === currentBeneficiaryId);
+  const targetResident = residentsList.find((r) => r.id === currentBeneficiaryId);
   if (!targetResident) return;
 
   const now = new Date();
-  const timeStamp = now.toLocaleTimeString('en-US', { hour12: false, hour: '2-digit', minute: '2-digit' });
+  const timeStamp = now.toLocaleTimeString('en-US', {
+    hour12: false,
+    hour: '2-digit',
+    minute: '2-digit',
+  });
 
-  // Paggawa ng bagong record schema block
   const newLogEntry = {
     id: `LOG-${Date.now()}`,
     programId: currentProgramId,
     residentName: targetResident.name,
     residentId: targetResident.id,
     aid: aidType,
-    officer: displayName.split(' ')[0], // Kukunin ang first name ng admin/staff account
+    officer: displayName.split(' ')[0],
     time: timeStamp,
-    status: 'OK'
+    status: 'OK',
+    createdAt: now.toISOString(),
+    updatedAt: now.toISOString(),
   };
 
-  // I-salansan sa unahan ng logs array
-  setAidLogs([newLogEntry, ...aidLogs]);
+  try {
+    // Persist to PouchDB so it survives refresh + replicates to CouchDB
+    await db.put({
+      _id: newLogEntry.id,
+      type: 'aid_distribution',
+      ...newLogEntry,
+    });
 
-  await createAuditLog({
-    action: 'CREATE',
-    module: 'AID_DISTRIBUTION',
-    recordId: newLogEntry.id,
-    details: `Distributed ${newLogEntry.aid} to ${newLogEntry.residentName} under program ${currentProgramId}`,
-  });
-  
-  setRemarks('');
+    // ➔ Add Audit Log Call
+    try {
+      await createAuditLog({
+        action: 'CREATE_AID_DISTRIBUTION',
+        module: 'AID_DISTRIBUTION',
+        recordId: newLogEntry.id,
+        user: `${currentUser?.username || 'admin'} (${role})`,
+        details: `Distributed "${newLogEntry.aid}" to ${newLogEntry.residentName} under program ${currentProgramId}`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for Aid Distribution:', auditErr);
+    }
 
-  if (selectedResidents.length > 0) {
-    setSelectedResidents(prev => prev.slice(1));
-    alert(`Success: Na-log na ang ayuda para kay ${targetResident.name}. Umuusad na ang Batch Mode Queue!`);
-  } else {
-    setCurrentBeneficiaryId('');
-    alert(`Success: Aid has been successfully recorded for ${targetResident.name}!`);
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
+    setAidLogs([newLogEntry, ...aidLogs]);
+    setRemarks('');
+
+    if (selectedResidents.length > 0) {
+      setSelectedResidents((prev) => prev.slice(1));
+      alert(
+        `Success: Na-log na ang ayuda para kay ${targetResident.name}. Umuusad na ang Batch Mode Queue!`
+      );
+    } else {
+      setCurrentBeneficiaryId('');
+      alert(`Success: Aid has been successfully recorded for ${targetResident.name}!`);
+    }
+  } catch (err) {
+    console.error('Failed to save aid log to PouchDB:', err);
+    alert('Hindi na-save ang aid entry sa offline database. Subukan muli.');
   }
 };
 
@@ -1758,14 +2158,34 @@ const handleEncodeSubmit = async (e) => {
   // 7. Update Log State
   setAidLogs((prev) => [newLog, ...prev]);
 
-  // 8. Audit Trace (PouchDB / System Log)
-  if (typeof createAuditLog === 'function') {
-    await createAuditLog({
-      action: 'CREATE',
-      module: 'AID_DISTRIBUTION',
-      recordId: newLog.id,
-      details: `Distributed ${newLog.aid} to ${newLog.residentName} under program ${selectedProgramId}`,
+    // 8. Persist aid log to PouchDB + Audit Trace
+  try {
+    await db.put({
+      _id: newLog.id,
+      type: 'aid_distribution',
+      ...newLog,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
     });
+
+    // ➔ Add Audit Log Call
+    try {
+      await createAuditLog({
+        action: 'CREATE_AID_DISTRIBUTION',
+        module: 'AID_DISTRIBUTION',
+        recordId: newLog.id,
+        user: `${currentUser?.username || 'admin'} (${role})`,
+        details: `Saved aid program entry: distributed "${newLog.aid}" to ${newLog.residentName} under ${selectedProgramId}`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for Aid Distribution:', auditErr);
+    }
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+  } catch (dbErr) {
+    console.error('Failed to persist aid log to PouchDB:', dbErr);
   }
 
   // 9. Reset Inputs & Success Notification
@@ -1918,8 +2338,12 @@ const handleUpdateResidentChanges = async (e) => {
 
 // ── 1. CORE BLOTTER LIST STATE DATABASE ──
 const [blotterList, setBlotterList] = useState(() => {
-  const saved = localStorage.getItem('bustrac_blotter');
-  return saved ? JSON.parse(saved) : [];
+  try {
+    const saved = localStorage.getItem('bustrac_blotter');
+    return saved ? JSON.parse(saved) : [];
+  } catch (e) {
+    return [];
+  }
 });
 
 // ── 2. MAIN CORE BLOTTER FORM OBJECT STATE ──
@@ -1941,73 +2365,75 @@ const [blotterForm, setBlotterForm] = useState({
   attachments: []
 });
 
+// Master Effect para sa Admin Blotter Management sa DashboardPortal.jsx
 useEffect(() => {
-    if (!db) return;
+  if (!db) return;
 
-    // Mapper function para sa Blotter records
-    const mapDocToBlotter = (doc) => ({
-      _id: doc._id,
-      _rev: doc._rev,
-      id: doc.refNumber || doc.caseNo || doc.id || doc._id,
-      caseNo: doc.refNumber || doc.caseNo || doc.id || 'BLTR-LOG',
-      type: doc.incidentType || doc.type || 'Incident',
-      complainant: doc.complainant || doc.residentName || doc.fullName || doc.sender || 'Resident',
-      respondent: doc.respondent || doc.respondentName || 'Under Investigation',
-      location: doc.location || doc.purok || 'Barangay Bustrac',
-      date: doc.incidentDate || doc.date || doc.timestamp || 'Recently',
-      status: doc.status || 'Pending',
-      details: doc.details || doc.description || doc.message || '',
-      rawDoc: doc,
-    });
+  const fetchBlotters = async () => {
+    try {
+      const res = await db.allDocs({ include_docs: true });
+      const blotterDocs = res.rows
+        .map((row) => row.doc)
+        .filter((doc) => {
+          if (!doc) return false;
 
-    // 1. Initial Fetch mula sa local PouchDB
-    const fetchBlotters = async () => {
-      try {
-        const res = await db.allDocs({ include_docs: true });
-        const blotterDocs = res.rows
-          .map((row) => row.doc)
-          .filter(
-            (doc) =>
-              doc &&
-              (doc.type === 'blotter' ||
-                doc.type === 'blotter_report' ||
-                doc.type === 'blotter_record' ||
-                (doc._id && String(doc._id).startsWith('blotter_')))
-          )
-          .map(mapDocToBlotter);
-        setBlotterList(blotterDocs);
-      } catch (err) {
-        console.error('Error fetching blotter records from PouchDB:', err);
-      }
-    };
+          // Exclude Certificate Documents
+          if (doc.docType === 'certificate' || doc.type === 'certificate_request') {
+            return false;
+          }
 
-    fetchBlotters();
+          // Strict Blotter Document Identification
+          const isExplicitBlotter =
+            doc.docType === 'blotter' ||
+            doc.type === 'blotter' ||
+            doc.type === 'blotter_report';
 
-    // 2. Real-time changes listener
-    const changes = db
-      .changes({ since: 'now', live: true, include_docs: true })
-      .on('change', (change) => {
-        const doc = change.doc;
-        if (
-          doc &&
-          (doc.type === 'blotter' ||
-            doc.type === 'blotter_report' ||
-            doc.type === 'blotter_record' ||
-            (doc._id && String(doc._id).startsWith('blotter_')))
-        ) {
-          const mappedDoc = mapDocToBlotter(doc);
-          setBlotterList((prev) => {
-            const filtered = prev.filter(
-              (item) => item._id !== doc._id && item.id !== mappedDoc.id
-            );
-            return [mappedDoc, ...filtered];
-          });
-        }
-      })
-      .on('error', (err) => console.error('PouchDB blotter change listener error:', err));
+          const hasBlotterRef = Boolean(
+            doc.trackingNo?.startsWith('BLT') ||
+            doc.caseNo?.startsWith('BLT') ||
+            doc.refNumber?.startsWith('BLT') ||
+            doc.id?.startsWith('BLT')
+          );
 
-    return () => changes.cancel();
-  }, [db]);
+          return isExplicitBlotter || hasBlotterRef;
+        })
+        .map(mapDocToBlotter)
+        .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+
+      console.log('📌 Consolidated Admin Blotters Loaded:', blotterDocs.length, blotterDocs);
+      setBlotterList(blotterDocs);
+    } catch (err) {
+      console.error('❌ Error fetching blotter records from PouchDB:', err);
+    }
+  };
+
+  fetchBlotters();
+
+  const changes = db.changes({ live: true, since: 'now', include_docs: true });
+  changes.on('change', (changeInfo) => {
+    const doc = changeInfo.doc;
+    const isBlotter =
+      doc &&
+      (doc.docType === 'blotter' ||
+        doc.type === 'blotter' ||
+        doc.type === 'blotter_report' ||
+        doc.trackingNo?.startsWith('BLT') ||
+        doc.caseNo?.startsWith('BLT'));
+
+    if (isBlotter || changeInfo.deleted) {
+      console.log('⚡ Real-time blotter update detected in Admin Dashboard:', changeInfo.id);
+      fetchBlotters();
+    }
+  });
+
+  changes.on('error', (err) => {
+    console.error('❌ Admin blotter changes listener error:', err);
+  });
+
+  return () => {
+    changes.cancel();
+  };
+}, [db]);
 
 // ── 3. LOOKUP TEXT INPUT QUERIES (Eksaktong tugma sa variable ng JSX mo!) ──
 const [complainantQuery, setComplainantQuery] = useState('');
@@ -2017,6 +2443,32 @@ const [respondentQuery, setRespondentQuery] = useState('');
 const [showComplainantDropdown, setShowComplainantDropdown] = useState(false);
 const [showRespondentDropdown, setShowRespondentDropdown] = useState(false);
 
+const handleSearchResident = (inputQuery) => {
+  if (!inputQuery.trim()) return [];
+  
+  const cleanQuery = inputQuery.toLowerCase().trim();
+  
+  return residentsList.filter((res) => {
+    // Kinukuha ang lahat ng posibleng pagkakabuo ng pangalan
+    const fName = String(res.firstName || '').toLowerCase();
+    const mName = String(res.middleName || '').toLowerCase();
+    const lName = String(res.lastName || '').toLowerCase();
+    
+    const combineFirstLast = `${fName} ${lName}`; // "juan reyes"
+    const combineFull = `${fName} ${mName} ${lName}`; // "juan b. reyes"
+    const combineLastFirst = `${lName}, ${fName}`; // "reyes, juan"
+    const directName = String(res.name || '').toLowerCase();
+    const idNum = String(res.id || res._id || '').toLowerCase();
+
+    return (
+      combineFirstLast.includes(cleanQuery) ||
+      combineFull.includes(cleanQuery) ||
+      combineLastFirst.includes(cleanQuery) ||
+      directName.includes(cleanQuery) ||
+      idNum.includes(cleanQuery)
+    );
+  });
+};
 // ── 5. SUCCESS DIALOG ROUTINE INTERFACES (Eksaktong tugma sa variable ng JSX mo!) ──
 const [showSuccessModal, setShowSuccessModal] = useState(false);
 const [recentlyFiledId, setRecentlyFiledId] = useState('');
@@ -2094,6 +2546,54 @@ const handleClearBlotterForm = () => {
   setShowRespondentDropdown(false);
 };
 
+const handleViewBlotter = (blotterRecord) => {
+  const caseId = blotterRecord._id || blotterRecord.trackingNo || blotterRecord.id || blotterRecord.caseNo;
+  
+  const mappedCase = {
+    ...blotterRecord,
+    _id: caseId,
+    caseNum: blotterRecord.trackingNo || blotterRecord.caseNum || blotterRecord.caseNo || blotterRecord.id || caseId,
+    status: blotterRecord.status || 'Open',
+    dateFiled: blotterRecord.dateLogged || blotterRecord.dateFiled || blotterRecord.date || blotterRecord.incidentDate || '',
+    timeFiled: blotterRecord.incidentTime || blotterRecord.timeFiled || blotterRecord.time || '10:30 PM',
+    type: blotterRecord.incidentType || blotterRecord.type || 'N/A',
+    location: blotterRecord.location || 'Barangay Bustrac',
+    complainantName: typeof blotterRecord.complainant === 'object' 
+      ? (blotterRecord.complainant.name || blotterRecord.complainant.displayName) 
+      : (blotterRecord.complainant || blotterRecord.complainantName || blotterRecord.compName || 'N/A'),
+    respondentName: typeof blotterRecord.respondent === 'object' 
+      ? (blotterRecord.respondent.name || blotterRecord.respondent.displayName) 
+      : (blotterRecord.respondent || blotterRecord.respondentName || blotterRecord.respName || 'N/A'),
+    narrative: blotterRecord.narrative || blotterRecord.statement || blotterRecord.details || blotterRecord.description || 'No narrative provided.',
+    summonCount: typeof blotterRecord.summonCount === 'number' 
+      ? blotterRecord.summonCount 
+      : (blotterRecord.status?.includes('1st') ? 1 : blotterRecord.status?.includes('2nd') ? 2 : blotterRecord.status?.includes('3rd') ? 3 : 0),
+    nextHearingDate: blotterRecord.nextHearingDate || blotterRecord.nextMediationDate || blotterRecord.summonDate || 'N/A',
+    witnesses: blotterRecord.witnesses || ''
+  };
+
+  // 1. I-update ang Active React States
+  setSelectedBlotter(mappedCase);
+  setSelectedBlotterId(caseId);
+  if (typeof setStaffCase === 'function') {
+    setStaffCase(mappedCase);
+  }
+
+  // 2. LocalStorage Persistence
+  localStorage.setItem('active_blotter_id', caseId);
+  localStorage.setItem('active_blotter_data', JSON.stringify(mappedCase));
+
+
+  const baseUrl = window.location.pathname; 
+  const cleanUrl = `${baseUrl}?page=blotter-detail&id=${encodeURIComponent(caseId)}`;
+  
+  window.history.pushState({ internalScreen: 'blotter-detail', id: caseId }, '', cleanUrl);
+
+  if (typeof setScreen === 'function') {
+    setScreen('blotter-detail');
+  }
+};
+
 const fileToBase64 = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -2156,9 +2656,61 @@ const [filterStatus, setFilterStatus] = useState('All Status');
 const [dateFrom, setDateFrom] = useState('');
 const [dateTo, setDateTo] = useState('');
 const [filterVawc, setFilterVawc] = useState(false);
+
+const sortedBlotters = useMemo(() => {
+  if (!blotterList || !Array.isArray(blotterList)) return [];
+
+  return [...blotterList].sort((a, b) => {
+    const timeA = new Date(a.updatedAt || a.createdAt || a.timestamp || 0).getTime();
+    const timeB = new Date(b.updatedAt || b.createdAt || b.timestamp || 0).getTime();
+    return timeB - timeA; // Pinakabago sa taas
+  });
+}, [blotterList]);
+
+const filteredBlotters = sortedBlotters.filter((b) => {
+  const query = (blotterSearch || '').toLowerCase().trim();
+  const caseId = (b.id || b.trackingNo || b.refNumber || b.caseNo || b._id || '').toLowerCase();
+  const complainantStr = (b.complainant || b.complainantName || '').toLowerCase();
+  const respondentStr = (b.respondent || b.respondentName || '').toLowerCase();
+  const locationStr = (b.location || b.purok || '').toLowerCase();
+  const matchesSearch = !query || caseId.includes(query) || complainantStr.includes(query) || respondentStr.includes(query) || locationStr.includes(query);
+
+  // 2. Incident Type Filtering
+  const matchesType = !filterType || filterType === 'All Types' || filterType === 'All' || b.type === filterType || b.incidentType === filterType;
+
+  // 3. Status Filtering
+  const matchesStatus = !filterStatus || filterStatus === 'All Status' || filterStatus === 'All' || b.status === filterStatus || (filterStatus === 'Under Mediation' && (b.status?.includes('Mediation') || b.status?.includes('Summon')));
+
+  // 4. Date Range Filtering
+  const rawDate = b.date || b.incidentDate || b.dateFiled || b.createdAt;
+  let caseDate = null;
+  if (rawDate && rawDate !== 'N/A' && rawDate !== 'Recently') {
+    const formattedDateStr = String(rawDate).split('T')[0];
+    caseDate = new Date(formattedDateStr);
+  }
+  const fromDate = dateFrom ? new Date(dateFrom) : null;
+  const toDate = dateTo ? new Date(dateTo) : null;
+  const matchesDateFrom = !fromDate || (caseDate && caseDate >= fromDate);
+  const matchesDateTo = !toDate || (caseDate && caseDate <= toDate);
+
+  // 5. VAWC Toggle Filtering
+  const matchesVawc = !filterVawc || b.isVawc === true || b.vawc === true || b.type === 'VAWC';
+
+  return (
+    matchesSearch && matchesType && matchesStatus && matchesDateFrom && matchesDateTo && matchesVawc
+  );
+});
+
+const [selectedBlotter, setSelectedBlotter] = useState(null);
 const [selectedBlotterId, setSelectedBlotterId] = useState(null);
 const [blotterVerifyQuery, setBlotterVerifyQuery] = useState('');
 const [blotterMatches, setBlotterMatches] = useState([]);
+const [actionModalOpen, setActionModalOpen] = useState(false);
+const [selectedBlotterForAction, setSelectedBlotterForAction] = useState(null);
+const [actionType, setActionType] = useState(''); // '1st_summon', '2nd_summon', '3rd_summon', 'settled', 'escalate_cfa'
+const [scheduleDate, setScheduleDate] = useState('');
+const [actionNotes, setActionNotes] = useState('');
+const [actionSaving, setActionSaving] = useState(false);
 
 // ── CTC MASTERLIST STATES ──
 const [ctcQuery, setCtcQuery] = useState('');
@@ -2183,56 +2735,48 @@ useEffect(() => {
 }, [blotterVerifyQuery, blotterList]);
 
 useEffect(() => {
-  const params = new URLSearchParams(location.search);
+  const params = new URLSearchParams(window.location.search);
   const pageFromUrl = params.get('page');
-  
+  const idFromUrl = params.get('id');
+
   if (pageFromUrl) {
-    setScreen(pageFromUrl); // Navigate to the screen specified by the ?page= URL parameter.
+    setScreen(pageFromUrl);
+
+    // ✅ FIX: Kapag blotter-detail ang nasa URL, siguraduhing nai-load ang tamang record state!
+    if (pageFromUrl === 'blotter-detail') {
+      const activeId = idFromUrl || localStorage.getItem('active_blotter_id');
+      const cachedData = localStorage.getItem('active_blotter_data');
+
+      // 1. Unang subukang i-load mula sa cached LocalStorage data para mabilis (No flicker)
+      if (cachedData) {
+        try {
+          const parsed = JSON.parse(cachedData);
+          setSelectedBlotter(parsed);
+          setSelectedBlotterId(parsed._id || activeId);
+          if (typeof setStaffCase === 'function') setStaffCase(parsed);
+        } catch (err) {
+          console.error('Failed to parse cached blotter data:', err);
+        }
+      }
+
+      // 2. I-verify/Fall back sa blotterList kapag available na ito mula sa PouchDB
+      if (activeId && blotterList && blotterList.length > 0) {
+        const foundCase = blotterList.find(
+          (b) => b._id === activeId || b.id === activeId || b.trackingNo === activeId || b.caseNo === activeId
+        );
+        if (foundCase) {
+          setSelectedBlotter(foundCase);
+          setSelectedBlotterId(foundCase._id || foundCase.trackingNo || activeId);
+          if (typeof setStaffCase === 'function') setStaffCase(foundCase);
+        }
+      }
+    }
   } else {
-    setScreen('dashboard'); 
+    setScreen('dashboard');
   }
-}, [location]);
+}, [location, blotterList]);
 
-// Use a fallback array in case blotterList is empty or undefined.
-const currentBlotterRoster = typeof blotterList !== 'undefined' ? blotterList : [
-  { id: 'BLT-2024-041', type: 'Noise Complaint', complainant: 'Reyes, Carmen', respondent: 'Torres, Mark', location: 'Purok 5', date: '2024-04-07', time: '08:30', status: 'Open', narrative: 'Laging malakas ang karaoke tuwing hatinggabi.', actionTaken: 'Summoned parties' },
-  { id: 'BLT-2024-040', type: 'Property Dispute', complainant: 'Santos, Jose', respondent: 'Cruz, Ana', location: 'Purok 2', date: '2024-04-05', time: '10:15', status: 'Under Mediation', narrative: 'Kinasuhan dahil sa bakod na lumampas.', actionTaken: 'Pending hearing' }
-];
-
-const filteredBlotters = (currentBlotterRoster || []).filter((b) => {
-  const query = blotterSearch.toLowerCase().trim();
-
-  // 1. Search Box (Null-Safe for ID, Complainant, Respondent)
-  const matchesSearch =
-    !query ||
-    (b.id && b.id.toLowerCase().includes(query)) ||
-    (b.complainant && b.complainant.toLowerCase().includes(query)) ||
-    (b.respondent && b.respondent.toLowerCase().includes(query));
-
-  // 2. Incident Type & Status
-  const matchesType = filterType === 'All Types' || b.type === filterType;
-  const matchesStatus =
-    filterStatus === 'All Status' ||
-    b.status === filterStatus ||
-    (filterStatus === 'Under Mediation' && b.status === 'Mediation');
-
-  // 3. Date Range Filtering (Mula sa UI inputs: dateFrom at dateTo)
-  const caseDate = b.date ? new Date(b.date) : null;
-  const matchesDateFrom = !dateFrom || (caseDate && caseDate >= new Date(dateFrom));
-  const matchesDateTo = !dateTo || (caseDate && caseDate <= new Date(dateTo));
-
-  // 4. VAWC Filter Toggle (Mula sa UI input: filterVawc)
-  const matchesVawc = !filterVawc || b.isVawc === true || b.vawc === true;
-
-  return (
-    matchesSearch &&
-    matchesType &&
-    matchesStatus &&
-    matchesDateFrom &&
-    matchesDateTo &&
-    matchesVawc
-  );
-});
+const currentBlotterRoster = Array.isArray(blotterList) ? blotterList : [];
 
 // Dropdown control para sa Residents Submenu
 const [isResidentsOpen, setIsResidentsOpen] = useState(false);
@@ -2266,10 +2810,13 @@ const handleNewCertificateRequest = async (newRequestData) => {
   }
 };
 
-const approvedCertificates = (issuedCertificates || []).filter(cert => 
-  (cert.step === 4 || cert.status === 'Approved' || cert.status?.toLowerCase() === 'approved') &&
-  cert.status !== 'Issued' && 
-  cert.status !== 'Released'
+const approvedCertificates = useMemo(() => 
+  (issuedCertificates || []).filter(cert => 
+    (Number(cert.step) === 4 || cert.status === 'Approved' || cert.status?.toLowerCase() === 'approved') && 
+    cert.status !== 'Issued' && 
+    cert.status !== 'Released'
+  ), 
+  [issuedCertificates]
 );
 
 const strictlyIssuedCertificates = issuedCertificates.filter(cert => cert.step === 5 || cert.status === 'Issued');
@@ -2284,22 +2831,45 @@ const filteredIssuedHistory = strictlyIssuedCertificates.filter((cert) => {
     certId.includes(query)
   );
 });
+
 const handleApproveCertificate = async (currentRequest) => {
   if (!currentRequest) return;
-
   try {
     const latestDoc = await db.get(currentRequest._id);
-
     const formattedPayload = {
       ...latestDoc,
       status: 'Approved',
-      step: 3,
+      step: 4, // Step 4 = Approved, waiting for issuance
       orNumber: currentRequest.orNumber || latestDoc.orNumber || `OR-${Date.now()}`,
-      updatedAt: new Date().toISOString().split('T')[0]
+      updatedAt: new Date().toISOString()
     };
 
+    // 1. I-save sa CouchDB / PouchDB Database
     await db.put(formattedPayload);
 
+    // 2. I-update ang issuedCertificates state agad (Dahil dito nakadepende ang approvedCertificates useMemo!)
+    if (typeof setIssuedCertificates === 'function') {
+      setIssuedCertificates(prev => {
+        const filtered = prev.filter(cert => cert._id !== formattedPayload._id);
+        return [formattedPayload, ...filtered];
+      });
+    }
+
+    // 3. I-update din ang ibang states kung mayroon
+    if (typeof setApprovedCertificates === 'function') {
+      setApprovedCertificates(prev => {
+        const filtered = prev.filter(cert => cert._id !== formattedPayload._id);
+        return [formattedPayload, ...filtered];
+      });
+    }
+
+    if (typeof setCertificates === 'function') {
+      setCertificates(prev => 
+        prev.map(c => c._id === formattedPayload._id ? formattedPayload : c)
+      );
+    }
+
+    // 4. Audit Log Entry
     await createAuditLog({
       action: 'APPROVE',
       module: 'CERTIFICATES',
@@ -2307,13 +2877,28 @@ const handleApproveCertificate = async (currentRequest) => {
       details: `Approved certificate request for ${currentRequest.firstName || ''} ${currentRequest.lastName || ''}`,
     });
 
+    // 5. Navigate pabalik sa Issuance & Print screen
     if (typeof nav === 'function') {
       nav('cert-print');
     }
   } catch (err) {
-    console.error('Failed to update certificate status to Approved:', err);
+    console.error('Failed to approve certificate:', err);
+    alert('Failed to approve certificate. Please try again.');
   }
 };
+
+const fetchIssuedCertificates = useCallback(async () => {
+  try {
+    const result = await db.allDocs({ include_docs: true });
+    const docs = result.rows
+      .map(r => r.doc)
+      .filter(d => d && d.type === 'certificate_request');
+    setIssuedCertificates(docs);
+  } catch (err) {
+    console.error('Failed to fetch certificates:', err);
+  }
+}, []);
+
 const [logSearchQuery, setLogSearchQuery] = useState('');
 const [programFilter, setProgramFilter] = useState('All');
 const [statusFilter, setStatusFilter] = useState('All');
@@ -2500,43 +3085,37 @@ const handleOpenFeedbackDetails = (fb) => {
   setFbStatusUpdate(fb.status);
   setFbStaffAssignment(fb.assignedTo);
 };
-  
+// Automatically updates the UI whenever there is a change in PouchDB
 useEffect(() => {
-    if (!db) return;
-
-    const loadIssuedCertificates = async () => {
-      try {
-        const result = await db.allDocs({ include_docs: true });
-        const docs = result.rows
-          .map((row) => row.doc)
-          .filter(
-            (doc) => doc.type === 'certificate_request' && (Number(doc.step) === 3 || Number(doc.step) === 4)
-          );
-        setIssuedCertificates(docs);
-      } catch (err) {
-        console.error('Failed to load issued certificates:', err);
-      }
-    };
-
-    loadIssuedCertificates();
-
-    const changes = db
-      .changes({ since: 'now', live: true, include_docs: true })
-      .on('change', (change) => {
-        if (
-          change.doc &&
-          change.doc.type === 'certificate_request' &&
-          (Number(change.doc.step) === 3 || Number(change.doc.step) === 4)
-        ) {
-          setIssuedCertificates((prev) => {
-            const filtered = prev.filter((cert) => cert._id !== change.doc._id);
-            return [change.doc, ...filtered];
-          });
-        }
+  const fetchAllCerts = async () => {
+    try {
+      const result = await db.allDocs({ include_docs: true });
+      const certs = result.rows
+        .map(row => row.doc)
+        .filter(doc => doc && doc.type === 'certificate_request');
+      setIssuedCertificates(certs);
+    } catch (err) {
+      console.error("Error loading initial certs:", err);
+    }
+  };
+  fetchAllCerts();
+  // Listen for real-time database changes (Insert, Update, Delete)
+  const changes = db.changes({
+    since: 'now',
+    live: true,
+    include_docs: true
+  }).on('change', (change) => {
+    if (change.doc && change.doc.type === 'certificate_request') {
+      setIssuedCertificates((prevCerts) => {
+        const filtered = prevCerts.filter(c => c._id !== change.doc._id);
+        return [change.doc, ...filtered];
       });
-
-    return () => changes.cancel();
-  }, [db]);
+    }
+  }).on('error', (err) => {
+    console.error("PouchDB change listener error:", err);
+  });
+  return () => changes.cancel();
+}, []);
   // ════════════════════════════════════════════════════════════════
   // 4. EFFECT #2: FEEDBACK & COMPLAINTS POUCHDB LISTENER
   // ════════════════════════════════════════════════════════════════
@@ -2661,9 +3240,6 @@ const handleSubmitFeedbackAction = async (e) => {
 
   setTimeout(() => setShowFbSuccessToast(false), 4000);
 };
-
-// ── AUDIT LOGS STATE ──
-const [auditLogs, setAuditLogs] = useState([]);
 
 const [issuanceMeta, setIssuanceMeta] = useState({
   orNumber: '',
@@ -2929,14 +3505,11 @@ const [barangaySettings, setBarangaySettings] = useState({
   }
 });
 
-// ── AUDIT FILTER STATES ──
-const [auditSearch, setAuditSearch] = useState('');
-const [auditModuleFilter, setAuditModuleFilter] = useState('ALL');
-const [auditActionFilter, setAuditActionFilter] = useState('ALL');
+
 
 // ── AUDIT LOGS LOADER ──
 useEffect(() => {
-  loadAuditLogs();
+
 }, [role]);
 
 useEffect(() => {
@@ -2973,41 +3546,9 @@ useEffect(() => {
   // eslint-disable-next-line react-hooks/exhaustive-deps
 }, []);
 
-async function loadAuditLogs() {
-  try {
-    const logs = await getAuditLogs();
-    // Newest first
-    const sorted = logs.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-    setAuditLogs(sorted);
-  } catch (err) {
-    console.error('Failed to load audit logs:', err);
-  }
-}
-const filteredAuditLogs = auditLogs.filter((log) => {
-    const search = auditSearch.toLowerCase();
 
-    const matchesSearch =
-        !search ||
-        log.actor?.username?.toLowerCase().includes(search) ||
-        log.action?.toLowerCase().includes(search) ||
-        log.module?.toLowerCase().includes(search) ||
-        String(log.recordId || '').toLowerCase().includes(search) ||
-        log.details?.toLowerCase().includes(search);
 
-    const matchesModule =
-        auditModuleFilter === 'ALL' ||
-        log.module === auditModuleFilter;
-
-    const matchesAction =
-        auditActionFilter === 'ALL' ||
-        log.action === auditActionFilter;
-
-    return matchesSearch && matchesModule && matchesAction;
-});
 const [isAidOpen, setIsAidOpen] = useState(true);
-// ════════════════════════════════════════════════════════════════
-// HELPER FUNCTION (Ilagay sa itaas bago ang return statement)
-// ════════════════════════════════════════════════════════════════
 const getStatusBadgeClass = (status) => {
   switch (status) {
     case 'Active':
@@ -3070,40 +3611,132 @@ const handleSelectCtc = (ctc) => {
 };
 
 const handlePrintFormat = (format) => {
-  console.log(`Printing format: ${format}`);
-  window.print();
+  if (!selectedCertificate) {
+    alert('Please select a certificate from the table first.');
+    return;
+  }
+  // Small delay para ma-render muna ang hidden container
+  setTimeout(() => window.print(), 150);
 };
 
 const handleSaveOnly = async () => {
   if (!selectedCertificate) return;
+
   try {
     const latestDoc = await db.get(selectedCertificate._id);
-
     const updatedDoc = {
       ...latestDoc,
-      status: 'Issued', 
-      step: 5,        
-      issuanceMeta: { 
-        ...issuanceMeta, 
-        savedAt: new Date().toISOString() 
+      status: 'Issued',
+      step: 5,
+      issuanceMeta: {
+        ...issuanceMeta,
+        savedAt: new Date().toISOString(),
       },
+      updatedAt: new Date().toISOString(),
     };
 
     await db.put(updatedDoc);
-    
-    alert('Transaction saved and certificate successfully marked as Issued!');
 
-    if (typeof fetchRequests === 'function') {
-      fetchRequests();
+    // ➔ Add Audit Log Call
+    try {
+      await createAuditLog({
+        action: 'APPROVE_CERTIFICATE',
+        module: 'CERTIFICATES',
+        recordId: updatedDoc.refNumber || updatedDoc._id,
+        user: `${currentUser?.username || 'admin'} (${role})`,
+        details: `Saved & marked as Issued: ${
+          updatedDoc.certificateType || updatedDoc.certType || 'Certificate'
+        } for ${
+          updatedDoc.firstName || updatedDoc.lastName
+            ? `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim()
+            : updatedDoc.fullName || updatedDoc.residentName || 'Resident'
+        }`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for Certificate save:', auditErr);
     }
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
+    // ✅ IMMEDIATE STATE UPDATE
+    setIssuedCertificates((prev) => {
+      const filtered = prev.filter((cert) => cert._id !== updatedDoc._id);
+      return [updatedDoc, ...filtered];
+    });
+
+    alert('Transaction saved and certificate marked as Issued!');
 
     if (typeof clearSelectedCert === 'function') {
       clearSelectedCert();
     }
-
   } catch (err) {
     console.error('Save failed:', err);
     alert('Failed to save transaction.');
+  }
+};
+
+const handlePrintDocument = async () => {
+  const targetCert = selectedCertificate || selectedPrintCert;
+  if (!targetCert) {
+    console.warn('No certificate selected for printing.');
+    return;
+  }
+
+  try {
+    if (targetCert._id && targetCert.type === 'certificate_request') {
+      const latestDoc = await db.get(targetCert._id);
+      const updatedDoc = {
+        ...latestDoc,
+        status: 'Issued',
+        step: 5,
+        issuanceMeta: {
+          ...issuanceMeta,
+          printedAt: new Date().toISOString(),
+        },
+        updatedAt: new Date().toISOString(),
+      };
+
+      await db.put(updatedDoc);
+
+      // ➔ Add Audit Log Call
+      try {
+        await createAuditLog({
+          action: 'APPROVE_CERTIFICATE',
+          module: 'CERTIFICATES',
+          recordId: updatedDoc.refNumber || updatedDoc._id,
+          user: `${currentUser?.username || 'admin'} (${role})`,
+          details: `Printed & issued ${
+            updatedDoc.certificateType || updatedDoc.certType || 'Certificate'
+          } for ${
+            updatedDoc.firstName || updatedDoc.lastName
+              ? `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim()
+              : updatedDoc.fullName || updatedDoc.residentName || 'Resident'
+          }`,
+        });
+      } catch (auditErr) {
+        console.warn('Audit log failed for Certificate print:', auditErr);
+      }
+
+      if (typeof forceSyncToRemote === 'function') {
+        await forceSyncToRemote();
+      }
+
+      setIssuedCertificates((prev) => {
+        const filtered = prev.filter((cert) => cert._id !== updatedDoc._id);
+        return [updatedDoc, ...filtered];
+      });
+    }
+
+    setTimeout(() => {
+      window.print();
+    }, 300);
+  } catch (err) {
+    console.error('Print DB update failed (falling back to print only):', err);
+    setTimeout(() => {
+      window.print();
+    }, 300);
   }
 };
 
@@ -3115,8 +3748,14 @@ const executePrintAndIssue = async (targetCert) => {
     return;
   }
 
-  if (!issuanceMeta.orNumber || !String(issuanceMeta.orNumber).trim() || !issuanceMeta.amountPaid) {
-    alert('Please fill in required payment fields (OR No. and Amount Paid) in the receipt section before printing.');
+  if (
+    !issuanceMeta.orNumber ||
+    !String(issuanceMeta.orNumber).trim() ||
+    !issuanceMeta.amountPaid
+  ) {
+    alert(
+      'Please fill in required payment fields (OR No. and Amount Paid) in the receipt section before printing.'
+    );
     return;
   }
 
@@ -3127,7 +3766,7 @@ const executePrintAndIssue = async (targetCert) => {
     const updatedDoc = {
       ...latestDoc,
       status: 'Issued',
-      step: 5, 
+      step: 5,
       issuanceMeta: {
         ...issuanceMeta,
         issuedAt: now,
@@ -3137,12 +3776,44 @@ const executePrintAndIssue = async (targetCert) => {
 
     await db.put(updatedDoc);
 
+    // ➔ Add Audit Log Call
+    try {
+      await createAuditLog({
+        action: 'APPROVE_CERTIFICATE',
+        module: 'CERTIFICATES',
+        recordId: updatedDoc.refNumber || updatedDoc._id,
+        user: `${currentUser?.username || 'admin'} (${role})`,
+        details: `Issued ${
+          updatedDoc.certificateType || updatedDoc.certType || 'Certificate'
+        } for ${
+          updatedDoc.firstName || updatedDoc.lastName
+            ? `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim()
+            : updatedDoc.fullName || updatedDoc.residentName || 'Resident'
+        } (OR#: ${issuanceMeta.orNumber}, Paid: ₱${issuanceMeta.amountPaid})`,
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for Certificate issuance:', auditErr);
+    }
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
     if (typeof setApprovedCertificates === 'function') {
-      setApprovedCertificates(prev => 
-        prev.map(item => item._id === targetId ? { ...item, status: 'Issued', step: 5, issuanceMeta: updatedDoc.issuanceMeta } : item)
+      setApprovedCertificates((prev) =>
+        prev.map((item) =>
+          item._id === targetId
+            ? {
+                ...item,
+                status: 'Issued',
+                step: 5,
+                issuanceMeta: updatedDoc.issuanceMeta,
+              }
+            : item
+        )
       );
     }
-    
+
     setSelectedCertificate(updatedDoc);
 
     window.print();
@@ -3168,6 +3839,7 @@ const [ctcForm, setCtcForm] = useState({
 // Handle saving new CTC record locally to PouchDB engine
 const handleSaveCtc = async (e) => {
   e.preventDefault();
+
   if (!ctcForm.ctcNo.trim() || !ctcForm.amtPaid.trim()) return;
 
   try {
@@ -3189,8 +3861,24 @@ const handleSaveCtc = async (e) => {
       await db.put(ctcPayload);
     }
 
+    // Create audit log after successful CTC save
+    try {
+      if (typeof createAuditLog === 'function') {
+        await createAuditLog({
+          action: 'CREATE_CTC_RECORD',
+          module: 'CTC_MANAGEMENT',
+          recordId: ctcPayload.ctcNo,
+          user: `${currentUser?.username || 'admin'} (${role || 'admin'})`,
+          details: `Issued CTC #${ctcPayload.ctcNo} for ${ctcPayload.ctcName} (Amount: ₱${ctcPayload.amtPaid})`
+        });
+      }
+    } catch (auditErr) {
+      console.warn('CTC Audit log failed:', auditErr);
+    }
+
     // Auto-close modal and fully reset state
     setShowCtcModal(false);
+
     setCtcForm({
       rbiNo: '',
       ctcNo: '',
@@ -3300,7 +3988,6 @@ const handleSaveBusinessClearance = async (e) => {
   }
 
   try {
-    // Preserve existing _id and _rev if editing, or create new _id if new record
     const payload = {
       ...businessForm,
       _id: businessForm._id || `bus_clearance_${Date.now()}`,
@@ -3363,10 +4050,79 @@ const handleSaveBusinessClearance = async (e) => {
   }
 };
 
+
 const handleEditBusinessClearance = (record) => {
-  setBusinessForm(record);
-  setBusinessTab('page1');
-  window.scrollTo({ top: 0, behavior: 'smooth' });
+  if (!record) return;
+
+  setBusinessForm({
+    bcIdNo: record.bcIdNo || '',
+    civilStatus: record.civilStatus || '',
+    lastName: record.lastName || '',
+    firstName: record.firstName || '',
+    middleName: record.middleName || '',
+    contactNo: record.contactNo || '',
+    email: record.email || '',
+    applicantAddress: record.applicantAddress || '',
+    applicantBgyCityProv: record.applicantBgyCityProv || '',
+    occupation: record.occupation || '',
+    nationality: record.nationality || '',
+    isFemale: record.isFemale || false,
+    remarks: record.remarks || '',
+    photoUrl: record.photoUrl || '',
+    regDate: record.regDate || '',
+    storeAreaSqm: record.storeAreaSqm || '',
+    businessName: record.businessName || '',
+    natureOfBusiness: record.natureOfBusiness || '',
+    businessCategory: record.businessCategory || '',
+    typeOfBusiness: record.typeOfBusiness || '',
+    businessAddress: record.businessAddress || '',
+    businessBgyCityProv: record.businessBgyCityProv || '',
+    businessContactNo: record.businessContactNo || '',
+    businessEmail: record.businessEmail || '',
+    cctvEnabled: record.cctvEnabled || false,
+    sanitaryWasteDisposal: record.sanitaryWasteDisposal || false,
+    hasFireExtinguisher: record.hasFireExtinguisher || false,
+    hasFireExit: record.hasFireExit || false,
+    sanitaryCompliant: record.sanitaryCompliant || false,
+    employeeCount: record.employeeCount || '',
+    employeeMasterlistName: record.employeeMasterlistName || '',
+    orNo: record.orNo || '',
+    orDateIssued: record.orDateIssued || new Date().toISOString().split('T')[0],
+    clearanceFee: record.clearanceFee || '',
+    garbageFee: record.garbageFee || '',
+    _id: record._id,
+    _rev: record._rev
+  });
+
+  setBusinessModalMode('edit');
+  setIsBusinessModalOpen(true);
+};
+
+
+const [printingCert, setPrintingCert] = useState(null);
+
+const handlePrintBusinessClearance = (record) => {
+  if (!record) return;
+
+  setSelectedCertificate({
+    ...record,
+    certType: 'Business Clearance',
+    certificateType: 'Business Clearance',
+    applicantName: `${record.firstName || ''} ${record.lastName || ''}`.trim(),
+    purpose: record.natureOfBusiness || 'Business Clearance Registration'
+  });
+
+  if (typeof setSelectedPrintCertFn === 'function') {
+    setSelectedPrintCertFn(record);
+  }
+
+  setTimeout(() => {
+    if (typeof handlePrintDocument === 'function') {
+      handlePrintDocument(record);
+    } else {
+      window.print();
+    }
+  }, 300);
 };
 
 const handleOpenIndigencyPrintModal = (record) => {
@@ -3466,13 +4222,23 @@ const sortedFilteredResidents = [...filteredResidents].sort((a, b) => {
   return 0;
 });
 
-const isBlotterFormValid =
-  blotterForm.date &&
-  blotterForm.time &&
-  blotterForm.location &&
-  blotterForm.narrative &&
-  blotterForm.complainant.trim() !== '' &&
-  blotterForm.respondent.trim() !== '';
+const isBlotterFormValid = useMemo(() => {
+  const getPartyName = (party) => {
+    if (!party) return '';
+    if (typeof party === 'string') return party.trim();
+    if (typeof party === 'object') return (party.name || party.displayName || party.firstName || '').trim();
+    return '';
+  };
+
+  const hasComplainant = getPartyName(blotterForm.complainant) !== '' || getPartyName(blotterForm.complainantName) !== '';
+  const hasRespondent = getPartyName(blotterForm.respondent) !== '' || getPartyName(blotterForm.respondentName) !== '';
+  const hasDate = Boolean(blotterForm.date);
+  const hasTime = Boolean(blotterForm.time);
+  const hasLocation = Boolean(blotterForm.location && blotterForm.location.trim() !== '');
+  const hasNarrative = Boolean(blotterForm.narrative && blotterForm.narrative.trim() !== '');
+
+  return hasComplainant && hasRespondent && hasDate && hasTime && hasLocation && hasNarrative;
+}, [blotterForm]);
 
 const filteredFeedback = feedbackList
   .slice()
@@ -3804,61 +4570,6 @@ const handleGenerateReport = async (module) => {
   }
 };
 
-const handlePrintDocument = useCallback(async (target) => {
-  const docToPrint = target || selectedPrintCert;
-
-  if (!docToPrint?._id) {
-    window.print();
-    return;
-  }
-
-  try {
-    const doc = await db.get(docToPrint._id);
-    const currentStep = Number(doc.step) || 0;
-
-    const updatedDoc = {
-      ...doc,
-      status: currentStep >= 6 ? 'Released' : 'Issued',
-      step: currentStep >= 6 ? 6 : 5,
-      issuedAt: doc.issuedAt || new Date().toISOString(),
-      printedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await db.put(updatedDoc);
-
-    setSelectedCertificate(updatedDoc); // refresh workspace
-    if (selectedPrintCert?._id === docToPrint._id) {
-      setSelectedPrintCert(updatedDoc);
-    }
-
-    const certType =
-      updatedDoc.certificateType || updatedDoc.type || 'Certificate';
-
-    const entityName = updatedDoc.businessName
-      ? `${updatedDoc.businessName} (${updatedDoc.ownerName || 'Owner'})`
-      : updatedDoc.fullName ||
-        `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim() ||
-        'Resident';
-
-    await createAuditLog({
-      action: 'PRINT_CERTIFICATE',
-      module: 'Certificate Lifecycle',
-      recordId:
-        updatedDoc._id ||
-        updatedDoc.bcIdNo ||
-        updatedDoc.trackingCode ||
-        'N/A',
-      details: `Issued and printed ${certType} for ${entityName}`,
-      performedBy: 'Barangay Official',
-    });
-  } catch (err) {
-    console.error('Failed to update status or record audit log:', err);
-  } finally {
-    setTimeout(() => window.print(), 150);
-  }
-}, [selectedPrintCert]);
-
 const getPageTitle = () => {
   const currentScreen = typeof screen !== 'undefined' ? screen : (typeof activeScreen !== 'undefined' ? activeScreen : '');
   if (currentScreen === 'profile' || currentScreen === 's-profile') return 'My Profile';
@@ -3887,6 +4598,129 @@ const clearSelectedCert = useCallback(() => {
   window.history.pushState({}, '', url.toString());
 }, []);
 
+const handleSaveBlotter = async (e) => {
+  if (e) e.preventDefault();
+
+  // Extract names safely
+  const compName = typeof blotterForm.complainant === 'object' 
+    ? blotterForm.complainant.name || blotterForm.complainant.displayName 
+    : (blotterForm.complainant || blotterForm.complainantName || '');
+
+  const respName = typeof blotterForm.respondent === 'object' 
+    ? blotterForm.respondent.name || blotterForm.respondent.displayName 
+    : (blotterForm.respondent || blotterForm.respondentName || '');
+
+  if (!compName || !respName) {
+    alert('⚠️ Please fill in the Complainant and Respondent fields.');
+    return;
+  }
+
+  try {
+    const trackingNo = blotterForm.trackingNo || `BLT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    
+    // Complete payload mapped for both old & new table views
+    const blotterPayload = {
+      _id: trackingNo,
+      type: 'blotter_record',
+      trackingNo: trackingNo,
+      id: trackingNo,
+      caseNum: trackingNo, // Fallback for older table components
+      officer: blotterForm.officer || 'Juhairo Macabangon',
+      dateLogged: blotterForm.dateLogged || new Date().toISOString().split('T')[0],
+      date: blotterForm.date || blotterForm.incidentDate || new Date().toISOString().split('T')[0],
+      incidentDate: blotterForm.incidentDate || blotterForm.date || new Date().toISOString().split('T')[0],
+      incidentTime: blotterForm.incidentTime || blotterForm.time || '22:30',
+      time: blotterForm.incidentTime || blotterForm.time || '22:30',
+      priority: blotterForm.priority || 'Medium Priority',
+      incidentType: blotterForm.incidentType || blotterForm.type || 'Physical Altercation',
+      location: blotterForm.location || 'Zone 4, near Barangay Hall Plaza, Brgy. Bustrac, Nabua',
+      isVAWC: !!blotterForm.isVAWC,
+      
+      // Parties Data (Dual-key mapping)
+      complainant: compName,
+      complainantName: compName,
+      complainantId: blotterForm.complainantId || '',
+      isComplainantNonResident: !!blotterForm.isComplainantNonResident,
+      
+      respondent: respName,
+      respondentName: respName,
+      respondentId: blotterForm.respondentId || '',
+      isRespondentNonResident: !!blotterForm.isRespondentNonResident,
+      
+      witnesses: blotterForm.witnesses || 'Ana L. Garcia, Maria Santos',
+      narrative: blotterForm.narrative || '',
+      formalAction: blotterForm.formalAction || 'Summoned Parties',
+      status: blotterForm.status || 'Open',
+      summonCount: blotterForm.summonCount || 0,
+      nextHearingDate: blotterForm.nextHearingDate || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+
+    // 1. Save directly to PouchDB
+    await db.put(blotterPayload);
+
+    // 2. React state instant update
+    if (typeof setBlotterList === 'function') {
+      setBlotterList(prev => {
+        const filtered = prev.filter(b => b._id !== trackingNo && b.id !== trackingNo);
+        return [blotterPayload, ...filtered];
+      });
+    }
+
+    // 3. System Audit Log
+    if (typeof createAuditLog === 'function') {
+      await createAuditLog({
+        action: 'CREATE_BLOTTER',
+        module: 'BLOTTER',
+        recordId: trackingNo,
+        details: `Filed blotter entry ${trackingNo} for ${compName} vs ${respName}`,
+      });
+    }
+
+    alert(`✓ Blotter Record successfully saved!\nTracking No: ${trackingNo}`);
+
+    // 4. Navigate back to correct Blotter List / Ledger page
+    if (typeof nav === 'function') {
+      nav('blotter-manage'); // Match this with your navigation page key
+    }
+  } catch (err) {
+    console.error('Error saving blotter record:', err);
+    alert('⚠️ An error occurred while saving the Blotter Record. Please try again.');
+  }
+};
+
+const activeCase = selectedBlotter || staffCase || INITIAL_COMPLAINT;
+const [recentLogs, setRecentLogs] = useState([]);
+
+useEffect(() => {
+  const fetchRecentLogs = async () => {
+    try {
+      const res = await db.allDocs({ include_docs: true });
+      const logs = res.rows
+        .map((r) => r.doc)
+        .filter((doc) => doc && (doc.type === 'audit_log' || doc.docType === 'audit_log'))
+        .sort((a, b) => new Date(b.timestamp || b.createdAt) - new Date(a.timestamp || a.createdAt))
+        .slice(0, 5); // Kukunin lang ang top 5
+      setRecentLogs(logs);
+    } catch (e) {
+      console.error('Error loading recent logs widget:', e);
+    }
+  };
+
+  fetchRecentLogs();
+
+  const changes = db.changes({ live: true, since: 'now', include_docs: true });
+  changes.on('change', (change) => {
+    if (change.doc && (change.doc.type === 'audit_log' || change.doc.docType === 'audit_log')) {
+      fetchRecentLogs();
+    }
+  });
+
+  return () => changes.cancel();
+}, []);
+const [isBusinessModalOpen, setIsBusinessModalOpen] = useState(false);
+const [businessModalMode, setBusinessModalMode] = useState('edit');
   // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
@@ -4394,14 +5228,25 @@ const clearSelectedCert = useCallback(() => {
                         <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
                           {role === 'admin' ? 'Recent Audit Trail' : 'Recent Activity'}
                         </div>
-                        {auditLogs.length === 0 ? (
+
+                        {recentLogs.length === 0 ? (
                           <div style={{ textAlign: 'center', color: 'var(--hint)', padding: '30px', fontSize: '12px', background: 'var(--surface2)', border: '1px dashed var(--border)', borderRadius: '8px' }}>
                             No recent activity recorded.
                           </div>
                         ) : (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-                            {auditLogs.slice(0, 5).map((log) => {
-                              const meta = getActionMeta(log.action);
+                            {recentLogs.map((log) => {
+                              // Fallback helper kung wala ang getActionMeta sa file
+                              const getMeta = typeof getActionMeta === 'function' 
+                                ? getActionMeta 
+                                : (act = '') => ({
+                                    bg: 'rgba(59, 130, 246, 0.15)',
+                                    ico: '📋'
+                                  });
+
+                              const meta = getMeta(log.action);
+                              const userText = log.user || log.actor?.username || 'System';
+
                               return (
                                 <div key={log._id || log.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px', borderRadius: '8px', background: 'var(--surface2)', border: '1px solid var(--border)' }}>
                                   <div style={{ width: '30px', height: '30px', borderRadius: '6px', background: meta.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
@@ -4413,19 +5258,20 @@ const clearSelectedCert = useCallback(() => {
                                       {log.module && <span style={{ color: 'var(--muted)', fontSize: '11px' }}>• {log.module}</span>}
                                     </div>
                                     <div style={{ fontSize: '11px', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {log.actor?.username || 'System'} • {log.details}
+                                      {userText} {log.details ? `• ${log.details}` : ''}
                                     </div>
                                   </div>
                                   <div style={{ fontSize: '10px', color: 'var(--hint)', flexShrink: 0, fontFamily: 'var(--mono)' }}>
-                                    {log.timestamp ? new Date(log.timestamp).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit' }) : ''}
+                                    {log.timestamp ? new Date(log.timestamp).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true }) : ''}
                                   </div>
                                 </div>
                               );
                             })}
                           </div>
                         )}
+
                         {role === 'admin' && (
-                          <button onClick={() => nav('audit')} style={{ width: '100%', padding: '8px', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', fontWeight: 700, fontSize: '12px', borderRadius: '6px', cursor: 'pointer' }}>
+                          <button onClick={() => setScreen('audit')} style={{ width: '100%', padding: '8px', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', fontWeight: 700, fontSize: '12px', borderRadius: '6px', cursor: 'pointer' }}>
                             View Full Audit Log
                           </button>
                         )}
@@ -4796,21 +5642,19 @@ const clearSelectedCert = useCallback(() => {
 
                           {/* ── LEFT SIDEBAR: PHOTO & BARANGAY STATUS ── */}
                           <div style={{ borderRight: '1px solid var(--border)', paddingRight: '20px' }}>
-                            <div
-                              style={{
-                                width: '100%',
-                                height: '180px',
-                                border: '2px dashed var(--border)',
-                                borderRadius: '8px',
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                marginBottom: '12px',
-                                backgroundColor: 'var(--surface2)',
-                                color: 'var(--text)',
-                                overflow: 'hidden',
-                              }}
-                            >
+                            <div style={{
+                              width: '100%',
+                              height: '180px',
+                              border: '2px dashed var(--border)',
+                              borderRadius: '8px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              marginBottom: '12px',
+                              backgroundColor: 'var(--surface2)',
+                              color: 'var(--text)',
+                              overflow: 'hidden',
+                            }}>
                               {residentForm.photoUrl ? (
                                 <img src={residentForm.photoUrl} alt="Resident" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                               ) : (
@@ -4827,6 +5671,10 @@ const clearSelectedCert = useCallback(() => {
                                 onChange={(e) => {
                                   const file = e.target.files?.[0];
                                   if (file) {
+                                    if (file.size > 2 * 1024 * 1024) {
+                                      alert('Masyadong malaki ang larawan. Paki-upload ng file na mas mababa sa 2MB.');
+                                      return;
+                                    }
                                     const reader = new FileReader();
                                     reader.onloadend = () => {
                                       updateResidentField('photoUrl', reader.result);
@@ -4835,60 +5683,54 @@ const clearSelectedCert = useCallback(() => {
                                   }
                                 }}
                               />
-
+                              
                               <label
                                 htmlFor="resident-photo-upload"
                                 className="btn btn-g"
-                                style={{
-                                  width: '100%',
-                                  marginBottom: '16px',
-                                  cursor: 'pointer',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  gap: '8px'
-                                }}
+                                style={{ width: '100%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                               >
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                   <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
                                   <circle cx="12" cy="13" r="4" />
                                 </svg>
-                                Upload / Take Photo
+                                {residentForm.photoUrl ? 'Change Photo' : 'Upload / Take Photo'}
                               </label>
 
+                              {/* SVG REMOVE PHOTO BUTTON */}
                               {residentForm.photoUrl && (
-                                <img
-                                  src={residentForm.photoUrl}
-                                  alt="Resident Photo"
+                                <button
+                                  type="button"
+                                  className="btn btn-g btn-sm"
                                   style={{
-                                    width: '100px',
-                                    height: '100px',
-                                    objectFit: 'cover',
-                                    borderRadius: '8px',
-                                    border: '2px solid var(--border)',
-                                    display: 'block',
-                                    margin: '8px auto 0 auto'
+                                    width: '100%',
+                                    marginTop: '8px',
+                                    color: 'var(--red, #ef4444)',
+                                    borderColor: 'rgba(239, 68, 68, 0.3)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'center',
+                                    gap: '6px'
                                   }}
-                                />
+                                  onClick={() => updateResidentField('photoUrl', '')}
+                                >
+                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <polyline points="3 6 5 6 21 6" />
+                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+                                    <line x1="10" y1="11" x2="10" y2="17" />
+                                    <line x1="14" y1="11" x2="14" y2="17" />
+                                  </svg>
+                                  Remove Photo
+                                </button>
                               )}
                             </div>
 
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
                               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={residentForm.isBarangayOfficial}
-                                  onChange={(e) => updateResidentField('isBarangayOfficial', e.target.checked)}
-                                />
+                                <input type="checkbox" checked={residentForm.isBarangayOfficial} onChange={(e) => updateResidentField('isBarangayOfficial', e.target.checked)} />
                                 Barangay Official
                               </label>
-
                               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--red)' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={residentForm.isDeceased}
-                                  onChange={(e) => updateResidentField('isDeceased', e.target.checked)}
-                                />
+                                <input type="checkbox" checked={residentForm.isDeceased} onChange={(e) => updateResidentField('isDeceased', e.target.checked)} />
                                 Mark as Deceased
                               </label>
                             </div>
@@ -5201,6 +6043,7 @@ const clearSelectedCert = useCallback(() => {
                     </form>
                   </div>
                 )}
+
             {/* ════════════════════════════════════════
                 SCREEN: VIEW RESIDENT PROFILE
                 ════════════════════════════════════════ */}
@@ -6003,11 +6846,10 @@ const clearSelectedCert = useCallback(() => {
                 SCREEN: ISSUANCE & PRINT
                 ════════════════════════════════════════ */}
                 {screen === 'cert-print' && (
-                  <CertPrintScreen
+                  <CertPrintScreen 
                     approvedCertificates={approvedCertificates}
                     selectedCertificate={selectedCertificate}
                     setSelectedCertificate={setSelectedCertificate}
-                    clearSelectedCert={clearSelectedCert}
                     issuanceMeta={issuanceMeta}
                     setIssuanceMeta={setIssuanceMeta}
                     blotterVerifyQuery={blotterVerifyQuery}
@@ -6016,6 +6858,13 @@ const clearSelectedCert = useCallback(() => {
                     handlePrintFormat={handlePrintFormat}
                     handleSaveOnly={handleSaveOnly}
                     handlePrintDocument={handlePrintDocument}
+                    issuedCertificates={issuedCertificates}
+                    showPrintModal={showPrintModal}
+                    setShowPrintModal={setShowPrintModal}
+                    selectedPrintCert={selectedPrintCert}
+                    setSelectedPrintCert={setSelectedPrintCert}
+                    printMode={printMode}
+                    setPrintMode={setPrintMode}
                   />
                 )}
 
@@ -6726,69 +7575,64 @@ const clearSelectedCert = useCallback(() => {
                             </tr>
                           </thead>
                           <tbody>
-                            {businessMasterlist.length === 0 ? (
-                              <tr>
-                                <td colSpan="7" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
-                                  No business clearance records found in local database.
+                          {businessMasterlist.length === 0 ? (
+                            <tr>
+                              <td colSpan="7" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
+                                No business clearance records found in local database.
+                              </td>
+                            </tr>
+                          ) : (
+                            businessMasterlist.map((rec, index) => (
+                              <tr key={rec._id || rec.id || `bus-${index}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                                <td style={{ padding: '8px', fontWeight: 'bold' }}>{rec.bcIdNo || 'N/A'}</td>
+                                <td style={{ padding: '8px' }}>{rec.businessName || 'N/A'}</td>
+                                <td style={{ padding: '8px' }}>{`${rec.lastName || ''}, ${rec.firstName || ''}`.replace(/^,\s*/, '') || 'N/A'}</td>
+                                <td style={{ padding: '8px' }}>{rec.natureOfBusiness || 'N/A'}</td>
+                                <td style={{ padding: '8px' }}>{rec.regDate || 'N/A'}</td>
+                                <td style={{ padding: '8px' }}>{rec.orNo || 'N/A'}</td>
+                                <td style={{ padding: '8px', textAlign: 'center' }}>
+                                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                                    {/* Edit Button */}
+                                    <button
+                                      type="button"
+                                      className="btn btn-g"
+                                      style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handleEditBusinessClearance(rec);
+                                      }}
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                      </svg>
+                                      Edit
+                                    </button>
+
+                                    {/* Print Button */}
+                                    <button
+                                      type="button"
+                                      className="btn btn-p"
+                                      style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                      onClick={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        handlePrintBusinessClearance(rec);
+                                      }}
+                                    >
+                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                                        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path> <rect x="6" y="14" width="12" height="8"></rect>
+                                      </svg>
+                                      Print
+                                    </button>
+                                  </div>
                                 </td>
                               </tr>
-                            ) : (
-                              businessMasterlist.map((rec) => (
-                                <tr key={rec._id} style={{ borderBottom: '1px solid var(--border)' }}>
-                                  <td style={{ padding: '8px', fontWeight: 'bold' }}>{rec.bcIdNo}</td>
-                                  <td style={{ padding: '8px' }}>{rec.businessName}</td>
-                                  <td style={{ padding: '8px' }}>{`${rec.lastName || ''}, ${rec.firstName || ''}`}</td>
-                                  <td style={{ padding: '8px' }}>{rec.natureOfBusiness || 'N/A'}</td>
-                                  <td style={{ padding: '8px' }}>{rec.regDate}</td>
-                                  <td style={{ padding: '8px' }}>{rec.orNo || 'N/A'}</td>
-                                  <td style={{ padding: '8px', textAlign: 'center' }}>
-                                    <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                                      <button 
-                                        type="button" 
-                                        className="btn btn-g" 
-                                        style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }} 
-                                        onClick={() => handleEditBusinessClearance(rec)}
-                                      >
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                        </svg>
-                                        Edit
-                                      </button>
-
-                                      {/* DITO ILALAGAY ANG BAGONG PRINT BUTTON */}
-                                      <button 
-                                        type="button" 
-                                        className="btn btn-p" 
-                                        style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }} 
-                                        onClick={() => {
-                                          // Universal payload structure na swak sa BusinessPermit props
-                                          const certPayload = {
-                                            ...rec,
-                                            certificateType: 'Business Clearance',
-                                            // Dynamic fallback mappings
-                                            ownerName: `${rec.lastName || ''}, ${rec.firstName || ''}`.replace(/^,\s*/, '').trim() || rec.ownerName,
-                                            businessName: rec.businessName,
-                                            businessType: rec.natureOfBusiness || rec.businessType,
-                                            orNo: rec.orNo,
-                                            issuedAt: rec.regDate || rec.dateIssued
-                                          };
-                                          handleOpenPrintModal(certPayload);
-                                        }}
-                                      >
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                          <polyline points="6 9 6 2 18 2 18 9"></polyline>
-                                          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
-                                          <rect x="6" y="14" width="12" height="8"></rect>
-                                        </svg>
-                                        Print
-                                      </button>
-                                    </div>
-                                  </td>
-                                </tr>
-                              ))
-                            )}
-                          </tbody>
+                            ))
+                          )}
+                        </tbody>
                         </table>
                       </div>
                     </div>
@@ -6928,173 +7772,173 @@ const clearSelectedCert = useCallback(() => {
                                 {/* Compact action row */}
                                 <div style={{ display: 'flex', gap: '6px', marginTop: '16px', borderTop: '1px solid rgba(79, 142, 247, 0.2)', paddingTop: '12px', alignItems: 'center' }}>
                                   {prog.status === 'Active' && (
-                  <>
-                    <button className="btn btn-p btn-sm" onClick={() => nav('aid-encode')}>Encode</button>
-                    <button className="btn btn-g btn-sm" onClick={() => nav('aid-logs')}>Logs</button>
+                                  <>
+                                    <button className="btn btn-p btn-sm" onClick={() => nav('aid-encode')}>Encode</button>
+                                    <button className="btn btn-g btn-sm" onClick={() => nav('aid-logs')}>Logs</button>
 
-                    {readyToComplete && (
-                      <button
-                        className="btn btn-sm"
-                        style={{ background: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}
-                        onClick={() => {
-                          const updated = programsList.map(p => p.id === prog.id ? { ...p, status: 'Completed' } : p);
-                          setProgramsList(updated);
-                        }}
-                      >
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                          <polyline points="20 6 9 17 4 12" />
-                        </svg>
-                        Complete
-                      </button>
-                    )}
+                                    {readyToComplete && (
+                                      <button
+                                        className="btn btn-sm"
+                                        style={{ background: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}
+                                        onClick={() => {
+                                          const updated = programsList.map(p => p.id === prog.id ? { ...p, status: 'Completed' } : p);
+                                          setProgramsList(updated);
+                                        }}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                                          <polyline points="20 6 9 17 4 12" />
+                                        </svg>
+                                        Complete
+                                      </button>
+                                    )}
 
-                        {/* Kebab menu for secondary actions */}
-                        <div style={{ 
-                          position: 'relative', 
-                          marginLeft: 'auto',
-                          zIndex: 100 
-                        }}>
-                         {/* Kebab button */}
-                        <button 
-                          data-kebab-btn 
-                          className="btn btn-sm" 
-                          style={{ background: '#475569', color: '#cbd5e1', padding: '6px 10px', display: 'flex', alignItems: 'center', zIndex: 101 }} 
-                          onClick={() => setOpenActionMenu(openActionMenu === prog.id ? null : prog.id)}
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                            <circle cx="12" cy="5" r="2" />
-                            <circle cx="12" cy="12" r="2" />
-                            <circle cx="12" cy="19" r="2" />
-                          </svg>
-                        </button>
+                                        {/* Kebab menu for secondary actions */}
+                                        <div style={{ 
+                                          position: 'relative', 
+                                          marginLeft: 'auto',
+                                          zIndex: 100 
+                                        }}>
+                                        {/* Kebab button */}
+                                        <button 
+                                          data-kebab-btn 
+                                          className="btn btn-sm" 
+                                          style={{ background: '#475569', color: '#cbd5e1', padding: '6px 10px', display: 'flex', alignItems: 'center', zIndex: 101 }} 
+                                          onClick={() => setOpenActionMenu(openActionMenu === prog.id ? null : prog.id)}
+                                        >
+                                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                                            <circle cx="12" cy="5" r="2" />
+                                            <circle cx="12" cy="12" r="2" />
+                                            <circle cx="12" cy="19" r="2" />
+                                          </svg>
+                                        </button>
 
-                        {/* Dropdown menu */}
-                       {openActionMenu === prog.id && (
-  <div 
-    data-kebab-menu 
-    style={{ 
-      position: 'absolute', 
-      right: 0, 
-      top: '100%',
-      marginTop: '4px',
-      background: 'var(--surface)', 
-      border: '1px solid rgba(79, 142, 247, 0.3)', 
-      borderRadius: '6px', 
-      minWidth: '150px', 
-      zIndex: 9999, 
-      boxShadow: '0 8px 24px rgba(0,0,0,0.5)', 
-      overflow: 'hidden', 
-      animation: 'dp-fadeIn 0.15s ease' 
-    }}
-  >
-    {/* Edit Button */}
-    <button 
-      style={{ 
-        width: '100%', 
-        textAlign: 'left', 
-        padding: '8px 12px', 
-        background: 'transparent', 
-        border: 'none', 
-        color: '#f1f5f9', 
-        cursor: 'pointer', 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: '8px', 
-        fontSize: '12px',
-        transition: 'background 0.15s ease'
-      }}
-      onClick={() => { 
-        setEditingProgram(prog); 
-        setOpenActionMenu(null); 
-      }}
-      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'}
-      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-      </svg>
-      Edit
-    </button>
+                                        {/* Dropdown menu */}
+                                      {openActionMenu === prog.id && (
+                                      <div 
+                                        data-kebab-menu 
+                                        style={{ 
+                                          position: 'absolute', 
+                                          right: 0, 
+                                          top: '100%',
+                                          marginTop: '4px',
+                                          background: 'var(--surface)', 
+                                          border: '1px solid rgba(79, 142, 247, 0.3)', 
+                                          borderRadius: '6px', 
+                                          minWidth: '150px', 
+                                          zIndex: 9999, 
+                                          boxShadow: '0 8px 24px rgba(0,0,0,0.5)', 
+                                          overflow: 'hidden', 
+                                          animation: 'dp-fadeIn 0.15s ease' 
+                                        }}
+                                      >
+                                        {/* Edit Button */}
+                                        <button 
+                                          style={{ 
+                                            width: '100%', 
+                                            textAlign: 'left', 
+                                            padding: '8px 12px', 
+                                            background: 'transparent', 
+                                            border: 'none', 
+                                            color: '#f1f5f9', 
+                                            cursor: 'pointer', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '8px', 
+                                            fontSize: '12px',
+                                            transition: 'background 0.15s ease'
+                                          }}
+                                          onClick={() => { 
+                                            setEditingProgram(prog); 
+                                            setOpenActionMenu(null); 
+                                          }}
+                                          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'}
+                                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                        >
+                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                          </svg>
+                                          Edit
+                                        </button>
 
-    {/* Mark Complete Button (only if not ready to complete) */}
-    {!readyToComplete && (
-      <button 
-        style={{ 
-          width: '100%', 
-          textAlign: 'left', 
-          padding: '8px 12px', 
-          background: 'transparent', 
-          border: 'none', 
-          color: '#f1f5f9', 
-          cursor: 'pointer', 
-          display: 'flex', 
-          alignItems: 'center', 
-          gap: '8px', 
-          fontSize: '12px',
-          transition: 'background 0.15s ease'
-        }}
-        onClick={() => { 
-          const updated = programsList.map(p => 
-            p.id === prog.id ? { ...p, status: 'Completed' } : p
-          ); 
-          setProgramsList(updated); 
-          setOpenActionMenu(null); 
-        }}
-        onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'}
-        onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <polyline points="20 6 9 17 4 12" />
-        </svg>
-        Mark Complete
-      </button>
-    )}
+                                        {/* Mark Complete Button (only if not ready to complete) */}
+                                        {!readyToComplete && (
+                                          <button 
+                                            style={{ 
+                                              width: '100%', 
+                                              textAlign: 'left', 
+                                              padding: '8px 12px', 
+                                              background: 'transparent', 
+                                              border: 'none', 
+                                              color: '#f1f5f9', 
+                                              cursor: 'pointer', 
+                                              display: 'flex', 
+                                              alignItems: 'center', 
+                                              gap: '8px', 
+                                              fontSize: '12px',
+                                              transition: 'background 0.15s ease'
+                                            }}
+                                            onClick={() => { 
+                                              const updated = programsList.map(p => 
+                                                p.id === prog.id ? { ...p, status: 'Completed' } : p
+                                              ); 
+                                              setProgramsList(updated); 
+                                              setOpenActionMenu(null); 
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'}
+                                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                          >
+                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                              <polyline points="20 6 9 17 4 12" />
+                                            </svg>
+                                            Mark Complete
+                                          </button>
+                                        )}
 
-    {/* Archive Button */}
-    <button 
-      style={{ 
-        width: '100%', 
-        textAlign: 'left', 
-        padding: '8px 12px', 
-        background: 'transparent', 
-        border: 'none', 
-        color: '#f87171', 
-        cursor: 'pointer', 
-        display: 'flex', 
-        alignItems: 'center', 
-        gap: '8px', 
-        fontSize: '12px',
-        transition: 'background 0.15s ease'
-      }}
-      onClick={async () => { 
-        const updated = programsList.map(p => 
-          p.id === prog.id ? { ...p, status: 'Archived' } : p
-        ); 
-        setProgramsList(updated); 
-        setOpenActionMenu(null); 
-        await createAuditLog({ 
-          action: 'ARCHIVE', 
-          module: 'PROGRAMS', 
-          recordId: prog.id, 
-          details: `Archived program: ${prog.title}` 
-        }); 
-      }}
-      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(248, 113, 113, 0.1)'}
-      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-    >
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-        <polyline points="21 8 21 21 3 21 3 8" />
-        <rect x="1" y="3" width="22" height="5" />
-        <line x1="10" y1="12" x2="14" y2="12" />
-      </svg>
-      Archive
-    </button>
-  </div>
-)}
-                        </div>
-                  </>
-                )}
+                                        {/* Archive Button */}
+                                        <button 
+                                          style={{ 
+                                            width: '100%', 
+                                            textAlign: 'left', 
+                                            padding: '8px 12px', 
+                                            background: 'transparent', 
+                                            border: 'none', 
+                                            color: '#f87171', 
+                                            cursor: 'pointer', 
+                                            display: 'flex', 
+                                            alignItems: 'center', 
+                                            gap: '8px', 
+                                            fontSize: '12px',
+                                            transition: 'background 0.15s ease'
+                                          }}
+                                          onClick={async () => { 
+                                            const updated = programsList.map(p => 
+                                              p.id === prog.id ? { ...p, status: 'Archived' } : p
+                                            ); 
+                                            setProgramsList(updated); 
+                                            setOpenActionMenu(null); 
+                                            await createAuditLog({ 
+                                              action: 'ARCHIVE', 
+                                              module: 'PROGRAMS', 
+                                              recordId: prog.id, 
+                                              details: `Archived program: ${prog.title}` 
+                                            }); 
+                                          }}
+                                          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(248, 113, 113, 0.1)'}
+                                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                                        >
+                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <polyline points="21 8 21 21 3 21 3 8" />
+                                            <rect x="1" y="3" width="22" height="5" />
+                                            <line x1="10" y1="12" x2="14" y2="12" />
+                                          </svg>
+                                          Archive
+                                        </button>
+                                      </div>
+                                    )}
+                                        </div>
+                                  </>
+                                )}
 
                                   {prog.status === 'Upcoming' && (
                                     <>
@@ -7814,13 +8658,29 @@ const clearSelectedCert = useCallback(() => {
                                   </div>
                                 )}
                               </div>
+                              {/* COMPLAINANT DROPDOWN */}
                               {showComplainantDropdown && complainantQuery && (
                                 <div style={{ position: 'absolute', top: '64px', left: 0, width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '4px', zIndex: 10, maxHeight: '140px', overflowY: 'auto' }}>
-                                  {residentsRegistry.filter((r) => r.name.toLowerCase().includes(complainantQuery.toLowerCase())).map((res) => (
-                                    <div key={res.id} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #334155', fontSize: '12px' }} onClick={() => { setBlotterForm({ ...blotterForm, complainant: res.name }); setComplainantQuery(res.name); setShowComplainantDropdown(false); }}>
-                                      {res.name} ({res.purok})
-                                    </div>
-                                  ))}
+                                  {handleSearchResident(complainantQuery).length > 0 ? (
+                                    handleSearchResident(complainantQuery).map((res) => {
+                                      const displayName = res.name || `${res.firstName || ''} ${res.middleName || ''} ${res.lastName || ''}`.trim();
+                                      return (
+                                        <div
+                                          key={res.id || res._id}
+                                          style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #334155', fontSize: '12px' }}
+                                          onClick={() => {
+                                            setBlotterForm({ ...blotterForm, complainant: displayName, complainantId: res.id || res._id });
+                                            setComplainantQuery(displayName);
+                                            setShowComplainantDropdown(false);
+                                          }}
+                                        >
+                                          {displayName} ({res.purok || 'No Purok'})
+                                        </div>
+                                      );
+                                    })
+                                  ) : (
+                                    <div style={{ padding: '8px 12px', fontSize: '12px', color: '#94a3b8' }}>Walang nahanap na residente</div>
+                                  )}
                                 </div>
                               )}
                             </>
@@ -7861,13 +8721,43 @@ const clearSelectedCert = useCallback(() => {
                                   </div>
                                 )}
                               </div>
+                              {/* RESPONDENT DROPDOWN FILTER */}
                               {showRespondentDropdown && respondentQuery && (
-                                <div style={{ position: 'absolute', top: '64px', left: 0, width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '4px', zIndex: 10, maxHeight: '140px', overflowY: 'auto' }}>
-                                  {residentsRegistry.filter((r) => r.name.toLowerCase().includes(respondentQuery.toLowerCase())).map((res) => (
-                                    <div key={res.id} style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #334155', fontSize: '12px' }} onClick={() => { setBlotterForm({ ...blotterForm, respondent: res.name }); setRespondentQuery(res.name); setShowRespondentDropdown(false); }}>
-                                      {res.name} ({res.purok})
-                                    </div>
-                                  ))}
+                                <div 
+                                  style={{ 
+                                    position: 'absolute', 
+                                    top: '64px', 
+                                    left: 0, 
+                                    width: '100%', 
+                                    background: 'var(--surface)', 
+                                    border: '1px solid var(--border)', 
+                                    borderRadius: '4px', 
+                                    zIndex: 10, 
+                                    maxHeight: '140px', 
+                                    overflowY: 'auto' 
+                                  }}
+                                >
+                                  {handleSearchResident(respondentQuery).map((res) => {
+                                    const displayName = res.name || `${res.firstName || ''} ${res.lastName || ''}`.trim();
+                                    return (
+                                      <div 
+                                        key={res.id || res._id} 
+                                        style={{ 
+                                          padding: '8px 12px', 
+                                          cursor: 'pointer', 
+                                          borderBottom: '1px solid #334155', 
+                                          fontSize: '12px' 
+                                        }} 
+                                        onClick={() => {
+                                          setBlotterForm({ ...blotterForm, respondent: displayName, respondentId: res.id || res._id });
+                                          setRespondentQuery(displayName);
+                                          setShowRespondentDropdown(false);
+                                        }}
+                                      >
+                                        {displayName} ({res.purok || 'No Purok'})
+                                      </div>
+                                    );
+                                  })}
                                 </div>
                               )}
                             </>
@@ -8007,13 +8897,18 @@ const clearSelectedCert = useCallback(() => {
 
                         {/* Integrated Action Buttons */}
                         <div className="fa" style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid #334155', paddingTop: '16px' }}>
-                          <button type="submit" className="btn btn-p" disabled={!isBlotterFormValid} style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center', opacity: !isBlotterFormValid ? 0.5 : 1 }}>
+                          <button 
+                            type="button"
+                            className="btn btn-p" 
+                            disabled={!isBlotterFormValid} 
+                            onClick={handleSaveBlotter}
+                            style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center', opacity: !isBlotterFormValid ? 0.5 : 1, cursor: !isBlotterFormValid ? 'not-allowed' : 'pointer' }}
+                          >
                             Save Blotter Case Record
                           </button>
                           <button type="button" className="btn" onClick={handleClearBlotterForm} style={{ flex: 1, background: 'rgba(71, 85, 105, 0.6)', color: '#e2e8f0', borderRadius: '6px' }}>
                             Clear
-                          </button>
-                          <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => nav('blotter-manage')}>
+                          </button> <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => nav('blotter-manage')}>
                             Cancel
                           </button>
                         </div>
@@ -8128,35 +9023,74 @@ const clearSelectedCert = useCallback(() => {
                             </tr>
                           ) : (
                             filteredBlotters.map((b) => {
-                              const statusBadge = {
-                                'Pending': { cls: 'a', text: 'Pending' },
-                                'Open': { cls: 'r', text: 'Open' },
-                                'Under Mediation': { cls: 'a', text: 'Under Mediation' },
-                                'Resolved': { cls: 'g', text: 'Resolved' },
-                                'Referred to Higher Authority': { cls: 't', text: 'Referred' },
-                              }[b.status] || { cls: 'a', text: b.status };
+                              const currentSummon = Number(b.summonCount || 0);
+                              const isSettled = b.status === 'Settled / Resolved' || b.status === 'Resolved';
+                              const isCfaIssued = b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)' || b.status === 'Referred to Higher Authority';
 
                               return (
-                                <tr key={b.id}>
-                                  <td style={mono10}>{b.id}</td>
-                                  <td>{b.type ? b.type.replace('_', ' ') : 'N/A'}</td>
-                                  <td><strong>{b.complainant}</strong></td>
-                                  <td>{b.respondent}</td>
-                                  <td>{b.location}</td>
-                                  <td style={{ fontSize: '11px' }}>{b.date}</td>
+                                <tr key={b._id || b.id}>
+                                  <td style={mono10}>{b.id || b.trackingNo || b.refNumber || b._id}</td>
+                                  <td>{b.type || b.incidentType ? (b.type || b.incidentType).replace('_', ' ') : 'N/A'}</td>
+                                  <td><strong>{b.complainant || b.complainantName || 'N/A'}</strong></td>
+                                  <td>{b.respondent || b.respondentName || 'Under Investigation'}</td>
+                                  
+                                  {/* UPDATE LOCATION DISPLAY HERE */}
                                   <td>
-                                    <span className={`badge ${statusBadge.cls}`}>
-                                      {statusBadge.text}
+                                    <strong>{b.location || b.purok || 'Brgy. Bustrac'}</strong>
+                                  </td>
+                                  
+                                  <td style={{ fontSize: '11px' }}>{b.date || b.incidentDate || 'N/A'}</td>
+                                  <td>
+                                    <span className={`badge ${ isSettled ? 'g' : isCfaIssued ? 'r' : 'a' }`}>
+                                      {b.status}
                                     </span>
                                   </td>
                                   <td>
-                                    <button className="btn btn-g btn-sm" onClick={() => { setSelectedBlotterId(b.id); nav('blotter-detail'); }}>
-                                      View
-                                    </button>
-                                    {' '}
-                                    <button className="btn btn-g btn-sm" onClick={() => window.print()}>
-                                      Print
-                                    </button>
+                                    {/* Dynamic Action Buttons (View, Summon, Settled, etc.) */}
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                      <button className="btn btn-g btn-sm" onClick={() => {
+                                        const caseId = b._id || b.id;
+                                        setSelectedBlotterId(caseId);
+                                        if (typeof setSelectedBlotter === 'function') {
+                                          setSelectedBlotter(b);
+                                        }
+                                        if (typeof handleViewBlotter === 'function') {
+                                          handleViewBlotter(b);
+                                        } else {
+                                          nav('blotter-detail');
+                                        }
+                                      }}>
+                                        View
+                                      </button>
+
+                                      {!isSettled && !isCfaIssued && (
+                                        <>
+                                          {currentSummon === 0 && (
+                                            <button className="btn btn-primary btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}>
+                                              📩 1st Summon
+                                            </button>
+                                          )}
+                                          {currentSummon === 1 && (
+                                            <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}>
+                                              📩 2nd Summon
+                                            </button>
+                                          )}
+                                          {currentSummon === 2 && (
+                                            <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}>
+                                              📩 3rd Summon
+                                            </button>
+                                          )}
+                                          <button className="btn btn-success btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'settled')}>
+                                            🤝 Settled
+                                          </button>
+                                          {currentSummon >= 3 && (
+                                            <button className="btn btn-danger btn-sm" style={{ backgroundColor: '#dc2626', color: '#fff' }} onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}>
+                                              📄 Escalate / Issue CFA
+                                            </button>
+                                          )}
+                                        </>
+                                      )}
+                                    </div>
                                   </td>
                                 </tr>
                               );
@@ -8197,347 +9131,208 @@ const clearSelectedCert = useCallback(() => {
             {/* ════════════════════════════════════════
                 SCREEN: BLOTTER DETAIL (DYNAMIC LOGIC ROUTE)
                 ════════════════════════════════════════ */}
-                {screen === 'blotter-detail' && (
-  <div className="screen active" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-    {/* TWO-COLUMN LAYOUT */}
-    <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'stretch' }}>
-      
-      {/* LEFT COLUMN */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Case Information */}
-        <div className="fp">
-          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            Case Information
-          </div>
-          <div className="fg2">
-            <div className="fg">
-              <label className="fl">Case Number</label>
-              <input className="fc" value={selectedBlotterId || ''} readOnly style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }} />
-            </div>
-            <div className="fg">
-              <label className="fl">Current Status</label>
-              <select 
-                className="fc" 
-                value={role === 'admin' ? (complaint?.caseStatus || 'Open') : (staffCase?.status || 'Open')} 
-                onChange={(e) => role === 'admin' ? updateComplaintField('caseStatus', e.target.value) : updateCase('status', e.target.value)}
-              >
-                <option value="Open">Open</option>
-                <option value="Under Mediation">Under Mediation</option>
-                <option value="Resolved">Resolved</option>
-                <option value="Referred to Higher Authority">Referred</option>
-              </select>
-            </div>
-          </div>
-          <div className="fg2">
-            <div className="fg">
-              <label className="fl">Date Filed</label>
-              <input className="fc" type="date" value={role === 'admin' ? (complaint?.dateFiled || '') : (staffCase?.dateFiled || '')} onChange={(e) => role === 'admin' ? updateComplaintField('dateFiled', e.target.value) : updateCase('dateFiled', e.target.value)} />
-            </div>
-            <div className="fg">
-              <label className="fl">Time Filed</label>
-              <input className="fc" type="time" value={role === 'admin' ? (complaint?.timeFiled || '') : (staffCase?.timeFiled || '')} onChange={(e) => role === 'admin' ? updateComplaintField('timeFiled', e.target.value) : updateCase('timeFiled', e.target.value)} />
-            </div>
-          </div>
-          <div className="fg">
-            <label className="fl">Incident Type</label>
-            <select className="fc" value={role === 'admin' ? (complaint?.incidentType || 'Noise Complaint') : (staffCase?.incidentType || 'Noise Complaint')} onChange={(e) => role === 'admin' ? updateComplaintField('incidentType', e.target.value) : updateCase('incidentType', e.target.value)}>
-              <option value="Noise Complaint">Noise Complaint</option>
-              <option value="Physical Altercation">Physical Altercation</option>
-              <option value="Property Dispute">Property Dispute</option>
-              <option value="Domestic Concern">Domestic Concern</option>
-              <option value="Theft">Theft</option>
-              <option value="Other">Other</option>
-            </select>
-          </div>
-          <div className="fg">
-            <label className="fl">Location of Incident</label>
-            <input className="fc" value={role === 'admin' ? (complaint?.location || '') : (staffCase?.location || '')} onChange={(e) => role === 'admin' ? updateComplaintField('location', e.target.value) : updateCase('location', e.target.value)} />
-          </div>
-        </div>
+                {screen === 'blotter-detail' && (() => {
+                  const currentCase = selectedBlotter || complaint || staffCase || {};
 
-        {/* Complainant */}
-        <div className="fp">
-          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            Complainant Information
-          </div>
-          <div className="fg">
-            <label className="fl">Full Name</label>
-            <input className="fc" value={role === 'admin' ? (complaint?.compName || '') : (staffCase?.compName || '')} onChange={(e) => role === 'admin' ? updateComplaintField('compName', e.target.value) : updateCase('compName', e.target.value)} />
-          </div>
-          <div className="fg2">
-            <div className="fg">
-              <label className="fl">Resident ID</label>
-              <input className="fc" value={role === 'admin' ? (complaint?.compID || 'RES-XXXX') : (staffCase?.compID || 'RES-XXXX')} readOnly style={{ color: 'var(--muted)' }} />
-            </div>
-            <div className="fg">
-              <label className="fl">Verification</label>
-              <input className="fc" value="Registered Resident" readOnly style={{ color: 'var(--muted)' }} />
-            </div>
-          </div>
-          <div className="fg2">
-            <div className="fg">
-              <label className="fl">Contact Number</label>
-              <input className="fc" value={role === 'admin' ? (complaint?.compContact || '') : (staffCase?.compContact || '')} onChange={(e) => role === 'admin' ? updateComplaintField('compContact', e.target.value) : updateCase('compContact', e.target.value)} />
-            </div>
-            <div className="fg">
-              <label className="fl">Purok Area</label>
-              <select className="fc" value={role === 'admin' ? (complaint?.compPurok || 'Purok 1') : (staffCase?.compPurok || 'Purok 1')} onChange={(e) => role === 'admin' ? updateComplaintField('compPurok', e.target.value) : updateCase('compPurok', e.target.value)}>
-                <option value="Purok 1">Purok 1</option>
-                <option value="Purok 2">Purok 2</option>
-                <option value="Purok 3">Purok 3</option>
-                <option value="Purok 4">Purok 4</option>
-                <option value="Purok 5">Purok 5</option>
-              </select>
-            </div>
-          </div>
-        </div>
+                  // Helper function para makuha ang Pangalan ng Party (Complainant / Respondent)
+                  const getPartyName = (partyData, fallbackName) => {
+                    if (typeof partyData === 'object' && partyData !== null) {
+                      return partyData.name || partyData.fullName || fallbackName || '';
+                    }
+                    if (typeof partyData === 'string' && partyData.trim() !== '') {
+                      return partyData;
+                    }
+                    return fallbackName || 'N/A';
+                  };
 
-        {/* Narrative */}
-        <div className="fp" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            Incident Narrative
-          </div>
-          <div className="fg">
-            <label className="fl">Official Narrative Statement</label>
-            <textarea className="fc" rows={4} value={role === 'admin' ? (complaint?.narrative || '') : (staffCase?.narrative || '')} onChange={(e) => role === 'admin' ? updateComplaintField('narrative', e.target.value) : updateCase('narrative', e.target.value)} />
-          </div>
-          <div className="fg" style={{ flex: 1 }}>
-            <label className="fl">Action & Status Notes</label>
-            <textarea className="fc" rows={3} value={role === 'admin' ? (complaint?.statusNotes || '') : (staffCase?.statusNotes || '')} onChange={(e) => role === 'admin' ? updateComplaintField('statusNotes', e.target.value) : updateCase('statusNotes', e.target.value)} />
-          </div>
-        </div>
-      </div>
+                  // Helper function para makuha ang Resident ID
+                  const getPartyId = (partyData, fallbackId) => {
+                    if (typeof partyData === 'object' && partyData !== null) {
+                      return partyData.id || partyData.residentId || fallbackId || 'Registered Resident';
+                    }
+                    return fallbackId || 'Registered Resident';
+                  };
 
-      {/* RIGHT COLUMN */}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {/* Respondent */}
-        <div className="fp">
-          <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            Respondent Information
-          </div>
-          <div className="fg">
-            <label className="fl">Full Name</label>
-            <input className="fc" value={role === 'admin' ? (complaint?.respName || '') : (staffCase?.respName || '')} onChange={(e) => role === 'admin' ? updateComplaintField('respName', e.target.value) : updateCase('respName', e.target.value)} />
-          </div>
-          <div className="fg2">
-            <div className="fg">
-              <label className="fl">Resident ID</label>
-              <input className="fc" value={role === 'admin' ? (complaint?.respID || 'RES-YYYY') : (staffCase?.respID || 'RES-YYYY')} readOnly style={{ color: 'var(--muted)' }} />
-            </div>
-            <div className="fg">
-              <label className="fl">Status</label>
-              <input className="fc" value="Registered Resident" readOnly style={{ color: 'var(--muted)' }} />
-            </div>
-          </div>
-          <div className="fg">
-            <label className="fl">Contact Number</label>
-            <input className="fc" value={role === 'admin' ? (complaint?.respContact || '') : (staffCase?.respContact || '')} onChange={(e) => role === 'admin' ? updateComplaintField('respContact', e.target.value) : updateCase('respContact', e.target.value)} />
-          </div>
-          <div className="fg">
-            <label className="fl">Email Address</label>
-            <input className="fc" type="email" value={role === 'admin' ? (complaint?.respEmail || '') : (staffCase?.respEmail || '')} onChange={(e) => role === 'admin' ? updateComplaintField('respEmail', e.target.value) : updateCase('respEmail', e.target.value)} />
-          </div>
-          <div className="fg">
-            <label className="fl">Residential Address</label>
-            <input className="fc" value={role === 'admin' ? (complaint?.respAddress || '') : (staffCase?.respAddress || '')} onChange={(e) => role === 'admin' ? updateComplaintField('respAddress', e.target.value) : updateCase('respAddress', e.target.value)} />
-          </div>
-        </div>
+                  const complainantDisplayName = getPartyName(currentCase.complainant, currentCase.complainantName || currentCase.compName);
+                  const respondentDisplayName = getPartyName(currentCase.respondent, currentCase.respondentName || currentCase.respName);
+                  const caseNarrative = currentCase.narrative || currentCase.statement || currentCase.details || 'No narrative provided.';
 
-        {/* Summons Panel */}
-        {(() => {
-          const targetData = role === 'admin' ? complaint : staffCase;
-          const updateField = (field, val) => role === 'admin' ? updateComplaintField(field, val) : updateCase(field, val);
-          return (
-            <div
-              className="fp"
-              style={{
-                background: 'var(--surface)',
-                border: '1px solid var(--border)',
-                borderRadius: 12,
-                padding: 16,
-                flex: 1,
-                display: 'flex',
-                flexDirection: 'column'
-              }}
-            >
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 800, color: 'var(--text)', marginBottom: 4 }}>
-                <span>Send Official Summons</span>
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.4 }}>
-                Prepare and record official summons details for the scheduled barangay mediation hearing.
-              </div>
+                  return (
+                    <div className="screen active" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                      {/* TWO-COLUMN LAYOUT */}
+                      <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'stretch' }}>
+                        
+                        {/* LEFT COLUMN */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                          {/* Case Information */}
+                          <div className="fp">
+                            <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              Case Information
+                            </div>
+                            <div className="fg2">
+                              <div className="fg">
+                                <label className="fl">Case Number</label>
+                                <input 
+                                  className="fc" 
+                                  value={currentCase.trackingNo || currentCase.caseNum || currentCase._id || currentCase.id || selectedBlotterId || ''} 
+                                  readOnly 
+                                  style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }} 
+                                />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Current Status</label>
+                                <select 
+                                  className="fc" 
+                                  value={currentCase.status || currentCase.caseStatus || 'Open'} 
+                                  onChange={(e) => handleStatusDropdownChange(e.target.value)}
+                                >
+                                  <option value="Open">Open</option> <option value="1st Summon Issued">1st Summon Issued</option>
+                                  <option value="2nd Summon Issued">2nd Summon Issued</option>
+                                  <option value="3rd Summon Issued">3rd Summon Issued</option>
+                                  <option value="Under Mediation">Under Mediation</option>
+                                  <option value="Settled / Resolved">Settled / Resolved</option>
+                                  <option value="Referred to PNP (CFA Issued)">Referred to PNP (CFA Issued)</option>
+                                </select>
+                              </div>
+                            </div>
+                            <div className="fg2">
+                              <div className="fg">
+                                <label className="fl">Date Filed</label>
+                                <input className="fc" type="text" value={currentCase.dateFiled || currentCase.dateLogged || currentCase.date || ''} readOnly />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Time Filed</label>
+                                <input className="fc" type="text" value={currentCase.timeFiled || currentCase.incidentTime || currentCase.time || ''} readOnly />
+                              </div>
+                            </div>
+                            <div className="fg">
+                              <label className="fl">Incident Type</label>
+                              <input className="fc" value={currentCase.incidentType || currentCase.type || 'N/A'} readOnly />
+                            </div>
+                            <div className="fg">
+                              <label className="fl">Location of Incident</label>
+                              <input className="fc" value={currentCase.location || ''} readOnly />
+                            </div>
+                          </div>
 
-              <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-                <div className="fg">
-                  <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
-                    Appearance Date
-                  </label>
-                  <input className="fc" type="date" value={targetData?.summonDate || ''} onChange={(e) => updateField('summonDate', e.target.value)} style={{ width: '100%' }} />
-                </div>
-                <div className="fg">
-                  <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
-                    Appearance Time
-                  </label>
-                  <input className="fc" type="time" value={targetData?.summonTime || ''} onChange={(e) => updateField('summonTime', e.target.value)} style={{ width: '100%' }} />
-                </div>
-              </div>
+                          {/* Complainant Information */}
+                          <div className="fp">
+                            <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              Complainant Information
+                            </div>
+                            <div className="fg">
+                              <label className="fl">Full Name</label>
+                              <input className="fc" value={complainantDisplayName} readOnly />
+                            </div>
+                            <div className="fg2">
+                              <div className="fg">
+                                <label className="fl">Resident ID / Non-Resident</label>
+                                <input 
+                                  className="fc" 
+                                  value={getPartyId(currentCase.complainant, currentCase.compID)} 
+                                  readOnly 
+                                  style={{ color: 'var(--muted)' }} 
+                                />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Verification</label>
+                                <input 
+                                  className="fc" 
+                                  value={currentCase.complainant?.isNonResident ? 'External Party' : 'Verified Resident'} 
+                                  readOnly 
+                                  style={{ color: 'var(--muted)' }} 
+                                />
+                              </div>
+                            </div>
+                          </div>
 
-              <div className="fg" style={{ marginBottom: 14, flex: 1, display: 'flex', flexDirection: 'column' }}>
-                <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
-                  Message Content
-                </label>
-                <textarea
-                  className="fc"
-                  rows={4}
-                  placeholder="Enter official hearing remarks or summons details..."
-                  value={targetData?.summonMsg || ''}
-                  onChange={(e) => updateField('summonMsg', e.target.value)}
-                  style={{ width: '100%', resize: 'none', flex: 1 }}
-                />
-              </div>
+                          {/* Narrative */}
+                          <div className="fp" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                            <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              Incident Narrative
+                            </div>
+                            <div className="fg">
+                              <label className="fl">Official Narrative Statement</label>
+                              <textarea className="fc" rows={4} value={caseNarrative} readOnly />
+                            </div>
+                          </div>
+                        </div>
 
-              <button
-                type="button"
-                className="btn btn-p"
-                onClick={sendSummons}
-                style={{
-                  width: '100%',
-                  padding: '10px 14px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: 8,
-                  fontSize: 13,
-                  fontWeight: 700,
-                  cursor: 'pointer'
-                }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M22 2L11 13" />
-                  <path d="M22 2l-7 20-4-9-9-4 20-7z" />
-                </svg>
-                Log Summons Notice
-              </button>
-            </div>
-          );
-        })()}
-      </div>
-    </div>
+                        {/* RIGHT COLUMN */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+                          {/* Respondent Information */}
+                          <div className="fp">
+                            <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                              Respondent Information
+                            </div>
+                            <div className="fg">
+                              <label className="fl">Full Name</label>
+                              <input className="fc" value={respondentDisplayName} readOnly />
+                            </div>
+                            <div className="fg2">
+                              <div className="fg">
+                                <label className="fl">Resident ID / Non-Resident</label>
+                                <input 
+                                  className="fc" 
+                                  value={getPartyId(currentCase.respondent, currentCase.respID)} 
+                                  readOnly 
+                                  style={{ color: 'var(--muted)' }} 
+                                />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Status</label>
+                                <input 
+                                  className="fc" 
+                                  value={currentCase.respondent?.isNonResident ? 'External Party' : 'Verified Resident'} 
+                                  readOnly 
+                                  style={{ color: 'var(--muted)' }} 
+                                />
+                              </div>
+                            </div>
+                          </div>
 
-    {/* REVISED FOOTER ACTION BAR */}
-    <div
-      style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        paddingTop: 14,
-        borderTop: '1px solid var(--border)',
-        gap: 12
-      }}
-    >
-      {/* Primary Actions (Left Side) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        {/* Solid & Clean Save Button */}
-        <button
-          type="button"
-          className="btn btn-p"
-          onClick={() => { alert('Case configuration saved successfully.'); nav('blotter-manage'); }}
-          style={{
-            padding: '9px 18px',
-            borderRadius: 8,
-            fontSize: 13,
-            fontWeight: 700,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            cursor: 'pointer'
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-            <polyline points="17 21 17 13 7 13 7 21" />
-            <polyline points="7 3 7 8 15 8" />
-          </svg>
-          Save Changes
-        </button>
+                          {/* Summons & Hearing Panel */}
+                          <div className="fp" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, flex: 1, display: 'flex', flexDirection: 'column' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 800, color: 'var(--text)', marginBottom: 4 }}>
+                              <span>Send Official Summons</span>
+                            </div>
+                            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
+                              Current Summon Count: <strong>{currentCase.summonCount || 0} / 3</strong>
+                            </div>
+                            <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                              <div className="fg">
+                                <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4 }}>
+                                  Appearance Date
+                                </label>
+                                <input className="fc" type="text" value={currentCase.nextHearingDate || currentCase.summonDate || 'N/A'} readOnly />
+                              </div>
+                            </div>
+                            <button 
+                              type="button" 
+                              className="btn btn-p" 
+                              onClick={() => sendSummons && sendSummons(currentCase)} 
+                              style={{ width: '100%', padding: '10px 14px', marginTop: 'auto', cursor: 'pointer' }}
+                            >
+                              Log & Send Summons Notice
+                            </button>
+                          </div>
+                        </div>
+                      </div>
 
-        {/* Modern Soft Amber Schedule Button */}
-        <button
-          type="button"
-          onClick={() => alert('Hearing date posted to operational calendar.')}
-          style={{
-            padding: '9px 16px',
-            background: 'rgba(245, 158, 11, 0.12)',
-            color: '#fbbf24',
-            border: '1px solid rgba(245, 158, 11, 0.3)',
-            borderRadius: 8,
-            fontSize: 13,
-            fontWeight: 700,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 8,
-            cursor: 'pointer',
-            transition: 'all 0.2s ease'
-          }}
-        >
-          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-            <line x1="16" y1="2" x2="16" y2="6" />
-            <line x1="8" y1="2" x2="8" y2="6" />
-            <line x1="3" y1="10" x2="21" y2="10" />
-          </svg>
-          Schedule Mediation
-        </button>
-      </div>
-
-      {/* Cancel / Secondary Actions (Right Side) */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-        <button
-          type="button"
-          className="btn btn-g"
-          onClick={() => nav('blotter-manage')}
-          style={{
-            padding: '9px 16px',
-            borderRadius: 8,
-            fontSize: 13,
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            cursor: 'pointer'
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M18 6L6 18M6 6l12 12" />
-          </svg>
-          Cancel Updates
-        </button>
-
-        <button
-          type="button"
-          className="btn btn-g"
-          onClick={() => nav('blotter-manage')}
-          style={{
-            padding: '9px 16px',
-            borderRadius: 8,
-            fontSize: 13,
-            fontWeight: 600,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            cursor: 'pointer'
-          }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M19 12H5" />
-            <path d="M12 19l-7-7 7-7" />
-          </svg>
-          Close View
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+                      {/* FOOTER ACTION BAR */}
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, borderTop: '1px solid var(--border)', gap: 12 }}>
+                        <button 
+                          type="button" 
+                          className="btn btn-g" 
+                          onClick={() => nav('blotter-manage')} 
+                          style={{ padding: '9px 16px', borderRadius: 8, cursor: 'pointer' }}
+                        >
+                          ← Back to Blotter Roster
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
             
             {/* ════════════════════════════════════════
                 SCREEN: ANNOUNCEMENTS
@@ -9324,92 +10119,8 @@ const clearSelectedCert = useCallback(() => {
                 SCREEN: AUDIT LOG (Admin only)
                 ════════════════════════════════════════ */}
                 {role === 'admin' && screen === 'audit' && (
-                <div className="screen active">
-                  <div className="tb" style={{ flexWrap: 'wrap', gap: '10px', marginBottom: '12px' }}>
-                    <div className="sb-box">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <circle cx="11" cy="11" r="7" />
-                        <path d="m20 20-4-4" />
-                      </svg>
-                      <input placeholder="Search user, action, module..." value={auditSearch} onChange={(e) => setAuditSearch(e.target.value)} />
-                    </div>
-                    <select className="fc" style={{ width: '150px' }} value={auditModuleFilter} onChange={(e) => setAuditModuleFilter(e.target.value)}>
-                      <option value="ALL">All Modules</option>
-                      <option value="Residents">Residents</option>
-                      <option value="Certificates">Certificates</option>
-                      <option value="Aid Distribution">Aid Distribution</option>
-                      <option value="Blotter">Blotter</option>
-                    </select>
-                    <select className="fc" style={{ width: '130px' }} value={auditActionFilter} onChange={(e) => setAuditActionFilter(e.target.value)}>
-                      <option value="ALL">All Actions</option>
-                      <option value="CREATE">CREATE</option>
-                      <option value="UPDATE">UPDATE</option>
-                      <option value="ARCHIVE">ARCHIVE</option>
-                      <option value="APPROVE">APPROVE</option>
-                      <option value="LOGIN">LOGIN</option>
-                      <option value="SYNC">SYNC</option>
-                      <option value="RESOLVE">RESOLVE</option>
-                    </select>
-                  </div>
-
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: '0 4px' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                      Showing <strong>{filteredAuditLogs.length}</strong> of <strong>{auditLogs.length}</strong> activity trails
-                      {filteredAuditLogs.length !== auditLogs.length && ' (filtered)'}
-                    </span>
-                    {(auditSearch || auditModuleFilter !== 'ALL' || auditActionFilter !== 'ALL') && (
-                      <button className="btn btn-sm btn-g" onClick={() => { setAuditSearch(''); setAuditModuleFilter('ALL'); setAuditActionFilter('ALL'); }}>
-                        Reset
-                      </button>
-                    )}
-                  </div>
-
-                  <div className="tw" style={{ maxHeight: '60vh' }}>
-                    {filteredAuditLogs.length === 0 ? (
-                      <div className="al-row" style={{ justifyContent: 'center', color: 'var(--muted)', padding: '24px' }}>
-                        No audit logs found.
-                      </div>
-                    ) : (
-                      filteredAuditLogs.map((log) => {
-                        const meta = getActionMeta(log.action);
-                        return (
-                          <div key={log._id} className="al-row">
-                            <div className="al-ico" style={{ background: meta.bg }}>
-                              {meta.ico}
-                            </div>
-                            <div style={{ flex: 1, minWidth: 0 }}>
-                              <div className="al-a">
-                                {log.action}
-                                {log.module ? ` — ${log.module}` : ''}
-                                {log.recordId && (
-                                  <>
-                                    {' · '}
-                                    <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', opacity: 0.9 }}>
-                                      {log.recordId}
-                                    </span>
-                                  </>
-                                )}
-                              </div>
-                              <div className="al-d">
-                                User: {log.actor?.username || 'System'} ({log.actor?.role || 'N/A'})
-                                {log.details ? ` · ${log.details}` : ''}
-                              </div>
-                            </div>
-                            <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                              <span className={`badge ${meta.bClass}`} style={{ fontSize: '9px', marginBottom: '3px', display: 'inline-flex' }}>
-                                {meta.badge}
-                              </span>
-                              <div className="al-t">
-                                {log.timestamp ? new Date(log.timestamp).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true }) : ''}
-                              </div>
-                            </div>
-                          </div>
-                        );
-                      })
-                    )}
-                  </div>
-                </div>
-              )}
+                  <AuditLogView />
+                )}
 
             {/* ════════════════════════════════════════
                 SCREEN: MANAGE USERS (Admin only)
@@ -9757,105 +10468,630 @@ const clearSelectedCert = useCallback(() => {
         </div>
       )}
          
-         {showPrintModal && selectedPrintCert && (
+        {showPrintModal && selectedPrintCert && (
+        <div style={{ 
+          position: 'fixed', 
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          bottom: 0, 
+          backgroundColor: 'rgba(0, 0, 0, 0.85)', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          zIndex: 999999, 
+          backdropFilter: 'blur(6px)', 
+          padding: '20px' 
+        }}>
           <div style={{ 
-            position: 'fixed', 
-            top: 0, 
-            left: 0, 
-            right: 0, 
-            bottom: 0, 
-            backgroundColor: 'rgba(0, 0, 0, 0.85)', 
+            background: 'var(--surface, #1e293b)', 
+            color: 'var(--text, #f8fafc)', 
+            borderRadius: '12px', 
+            width: '100%', 
+            maxWidth: '900px', 
+            maxHeight: '90vh', 
             display: 'flex', 
-            alignItems: 'center', 
-            justify: 'center', 
-            zIndex: 9999, 
-            backdropFilter: 'blur(6px)', 
-            padding: '20px' 
+            flexDirection: 'column', 
+            padding: '20px', 
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', 
+            border: '1px solid var(--border, #334155)' 
           }}>
-            {/* Dark Mode Friendly Modal Box */}
+            {/* Scrollable Document Container */}
             <div style={{ 
-              background: 'var(--surface, #1e293b)', /* Gagamit ng Dark Theme Color kung naka-dark mode */
-              color: 'var(--text, #f8fafc)', 
-              borderRadius: '12px', 
-              width: '100%', 
-              maxWidth: '880px', 
-              maxHeight: '90vh', 
-              display: 'flex', 
-              flexDirection: 'column', 
+              flex: 1, 
+              overflowY: 'auto', 
+              overflowX: 'hidden',
               padding: '20px', 
-              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
-              border: '1px solid var(--border, #334155)'
+              background: 'var(--surface2, #0f172a)', 
+              borderRadius: '8px', 
+              display: 'flex', 
+              justifyContent: 'center',
+              alignItems: 'flex-start' /* Changed to flex-start to prevent vertical centering issues */
             }}>
-              {/* Scrollable Document Container */}
-              <div style={{ 
-                flex: 1, 
-                overflowY: 'auto', 
-                padding: '20px', 
-                background: 'var(--surface2, #0f172a)', /* Darker contrast backdrop */
-                borderRadius: '8px', 
-                display: 'flex', 
-                justify: 'center' 
-              }}>
-                <div style={{ width: '100%', display: 'flex', justifyContent: 'center', overflow: 'hidden' }}>
-                  <div id="printable-certificate-card" style={{ 
+              <div style={{ width: '210mm', minHeight: '297mm', position: 'relative' }}>
+                <div 
+                  id="printable-certificate-card" 
+                  data-print-mode={printMode}
+                  style={{ 
                     width: '210mm', 
                     minHeight: '297mm', 
-                    transform: 'scale(0.55)', 
-                    transformOrigin: 'top center', 
-                    marginBottom: '-40%', 
-                    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)', 
-                    background: '#ffffff',
-                    color: '#000000'
-                  }}>
-                    {/* Dynamic Rendering Depende sa Certificate Type */}
-                    {(() => {
-                      const typeStr = String(
-                        selectedPrintCert.certificateType || selectedPrintCert.type || selectedPrintCert.clearanceType || selectedPrintCert.certType || ''
-                      ).toLowerCase();
-
-                      if (typeStr.includes('business') || typeStr.includes('permit') || selectedPrintCert.businessName) {
-                        return <BusinessPermit data={selectedPrintCert} />;
-                      } else if (typeStr.includes('indigency')) {
-                        return <IndigencyTemplate data={selectedPrintCert} />;
-                      } else if (typeStr.includes('residency') || typeStr.includes('resident')) {
-                        return <ResidencyCertificate data={selectedPrintCert} />;
-                      } else {
-                        return <BarangayClearance data={selectedPrintCert} />;
-                      }
-                    })()}
-                  </div>
+                    background: '#ffffff', 
+                    color: '#000000',
+                    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
+                    transform: 'scale(0.55)',
+                    transformOrigin: 'top left', /* Predictable scaling from top-left */
+                    position: 'absolute',
+                    top: 0,
+                    left: 0
+                  }}
+                >
+                  {/* Dynamic Rendering Depende sa Certificate Type */}
+                  {(() => {
+                    const typeStr = String(
+                      selectedPrintCert.certificateType || selectedPrintCert.type || selectedPrintCert.clearanceType || selectedPrintCert.certType || ''
+                    ).toLowerCase();
+                    if (typeStr.includes('business') || typeStr.includes('permit') || selectedPrintCert.businessName) {
+                      return <BusinessPermit data={selectedPrintCert} />;
+                    } else if (typeStr.includes('indigency')) {
+                      return <IndigencyTemplate data={selectedPrintCert} />;
+                    } else if (typeStr.includes('residency') || typeStr.includes('resident')) {
+                      return <ResidencyCertificate data={selectedPrintCert} />;
+                    } else {
+                      return <BarangayClearance data={selectedPrintCert} />;
+                    }
+                  })()}
                 </div>
               </div>
+            </div>
 
-              {/* Dark Mode Responsive Action Buttons */}
-              <div className="no-print" style={{ 
-                display: 'flex', 
-                justify: 'flex-end', 
-                gap: '10px', 
-                marginTop: '16px', 
-                paddingTop: '12px', 
-                borderTop: '1px solid var(--border, #334155)' 
-              }}>
-                <button 
-                  type="button" 
-                  className="btn btn-g"
-                  style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }} 
-                  onClick={() => setShowPrintModal(false)}
-                >
-                  Close
-                </button>
-                <button 
-                  type="button" 
-                  className="btn btn-p" 
-                  onClick={handlePrintDocument} 
-                  style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
-                >
-                  🖨️ Print Document
-                </button>
-              </div>
+            <div className="no-print" style={{ 
+              display: 'flex', 
+              justifyContent: 'flex-end', 
+              gap: '10px', 
+              marginTop: '16px', 
+              paddingTop: '12px', 
+              borderTop: '1px solid var(--border, #334155)',
+              flexShrink: 0 
+            }}>
+              <button 
+                type="button" 
+                className="btn btn-g" 
+                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }} 
+                onClick={() => setShowPrintModal(false)}
+              >
+                Close
+              </button>
+              <button 
+                type="button" 
+                className="btn btn-p" 
+                onClick={handlePrintDocument} 
+                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              >
+                 Print Document
+              </button>
             </div>
           </div>
-        )}
+        </div>
+      )}
+
+        {/* ═══ BARANGAY CLEARANCE PRINT MODAL (MISSING!) ═══ */}
+       {showClearancePrintModal && selectedClearanceCert && (
+        <div className="clearance-print-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(6px)', padding: '20px' }}>
+          <div style={{ background: 'var(--surface)', borderRadius: '12px', width: '100%', maxWidth: '880px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: '20px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', border: '1px solid var(--border)' }}>
+
+            <div className="certificate-preview-wrapper" style={{ flex: 1, overflowY: 'auto', padding: '20px', background: 'var(--surface2)', borderRadius: '8px', display: 'flex', justifyContent: 'center' }}>
+              <div style={{ width: '210mm', minHeight: '297mm', transform: 'scale(0.55)', transformOrigin: 'top center', marginBottom: '-40%', boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)', background: '#ffffff', color: '#000000' }}>
+                <BarangayClearance data={selectedClearanceCert} />
+              </div>
+            </div>
+            
+            {/* Action Buttons */}
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
+              <button type="button" className="btn btn-g" onClick={() => setShowClearancePrintModal(false)}>
+                Close
+              </button>
+              <button type="button" className="btn btn-p" onClick={() => {
+                setTimeout(() => {
+                  window.print();
+                  setTimeout(() => setShowClearancePrintModal(false), 500);
+                }, 200);
+              }}>
+                🖨️ Print Certificate
+              </button>
+            </div>
+          </div>
+        </div>
+              )
+              }
+                 {/* ── BLOTTER ACTION MODAL / DIALOG ── */}
+                  {actionModalOpen && (
+                    <div
+                      style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                        backdropFilter: 'blur(4px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        zIndex: 9999,
+                        padding: '16px',
+                      }}
+                    >
+                      <div
+                        className="card"
+                        style={{
+                          width: '100%',
+                          maxWidth: '480px',
+                          background: 'var(--surface, #1a1d24)',
+                          border: '1px solid var(--border, #2a2f3d)',
+                          borderRadius: '16px',
+                          padding: '24px',
+                          boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.5)',
+                        }}
+                      >
+                        {/* Modal Header */}
+                        <div
+                          style={{
+                            display: 'flex',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            marginBottom: '20px',
+                            paddingBottom: '12px',
+                            borderBottom: '1px solid var(--border, #2a2f3d)',
+                          }}
+                        >
+                          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
+                            {actionType === '1st_summon' && ' Issue 1st Summon'}
+                            {actionType === '2nd_summon' && ' Issue 2nd Summon'}
+                            {actionType === '3rd_summon' && ' Issue 3rd Summon'}
+                            {actionType === 'settled' && '🤝 Mark Case as Settled'}
+                            {actionType === 'escalate_cfa' && '📄 Escalate / Issue CFA'}
+                          </h3>
+                          <button
+                            onClick={() => setActionModalOpen(false)}
+                            disabled={actionSaving}
+                            style={{
+                              background: 'transparent',
+                              border: 'none',
+                              color: 'var(--muted)',
+                              fontSize: '18px',
+                              cursor: 'pointer',
+                              padding: '4px 8px',
+                            }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        {/* Modal Body */}
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                          {/* Hearing Schedule Input (Iniaatas kapag Summon Action) */}
+                          {actionType.includes('summon') && (
+                            <div className="fg">
+                              <label
+                                style={{
+                                  display: 'block',
+                                  fontSize: '12px',
+                                  fontWeight: 700,
+                                  color: 'var(--text)',
+                                  marginBottom: '6px',
+                                }}
+                              >
+                                Hearing / Summon Date & Time <span style={{ color: 'var(--red, #ef4444)' }}>*</span>
+                              </label>
+                              <input
+                                type="datetime-local"
+                                className="fc"
+                                value={scheduleDate}
+                                onChange={(e) => setScheduleDate(e.target.value)}
+                                style={{
+                                  width: '100%',
+                                  padding: '10px 12px',
+                                  borderRadius: '8px',
+                                  border: '1px solid var(--border)',
+                                  background: 'var(--bg)',
+                                  color: 'var(--text)',
+                                  fontSize: '13px',
+                                }}
+                              />
+                            </div>
+                          )}
+
+                          {/* Action Remarks / Settlement Notes */}
+                          <div className="fg">
+                            <label
+                              style={{
+                                display: 'block',
+                                fontSize: '12px',
+                                fontWeight: 700,
+                                color: 'var(--text)',
+                                marginBottom: '6px',
+                              }}
+                            >
+                              {actionType === 'settled'
+                                ? 'Settlement / Resolution Agreement Details'
+                                : actionType === 'escalate_cfa'
+                                ? 'Reason for Escalation / Referral Notes'
+                                : 'Official Remarks / Hearing Instructions'}
+                            </label>
+                            <textarea
+                              className="fc"
+                              rows="4"
+                              placeholder={
+                                actionType === 'settled'
+                                  ? 'Isulat ang napagkasunduang kasunduan ng magkabilang panig...'
+                                  : 'Maglagay ng karagdagang paalala o detalye...'
+                              }
+                              value={actionNotes}
+                              onChange={(e) => setActionNotes(e.target.value)}
+                              style={{
+                                width: '100%',
+                                padding: '10px 12px',
+                                borderRadius: '8px',
+                                border: '1px solid var(--border)',
+                                background: 'var(--bg)',
+                                color: 'var(--text)',
+                                fontSize: '13px',
+                                resize: 'vertical',
+                              }}
+                            />
+                          </div>
+
+                          {/* Informational Warning Note */}
+                          <div
+                            style={{
+                              fontSize: '11px',
+                              color: 'var(--muted)',
+                              background: 'var(--surface2, #20242e)',
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              border: '1px solid var(--border)',
+                            }}
+                          >
+                            ⚡ <strong>Real-Time Sync:</strong> Ang aksyong ito ay awtomatikong magse-save sa PouchDB at mag-a-update sa status timeline ng Resident UI.
+                          </div>
+                        </div>
+
+                        {/* Modal Actions */}
+                        <div
+                          style={{
+                            display: 'grid',
+                            gridTemplateColumns: '1fr 1fr',
+                            gap: '12px',
+                            marginTop: '24px',
+                          }}
+                        >
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={() => setActionModalOpen(false)}
+                            disabled={actionSaving}
+                            style={{
+                              padding: '10px',
+                              borderRadius: '8px',
+                              background: 'var(--border)',
+                              color: 'var(--text)',
+                              border: 'none',
+                              fontWeight: 700,
+                              fontSize: '13px',
+                              cursor: 'pointer',
+                            }}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="btn"
+                            onClick={submitBlotterAction}
+                            disabled={actionSaving}
+                            style={{
+                              padding: '10px',
+                              borderRadius: '8px',
+                              background:
+                                actionType === 'escalate_cfa'
+                                  ? '#dc2626'
+                                  : actionType === 'settled'
+                                  ? '#059669'
+                                  : 'var(--primary, #3b82f6)',
+                              color: '#ffffff',
+                              border: 'none',
+                              fontWeight: 700,
+                              fontSize: '13px',
+                              cursor: 'pointer',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              gap: '6px',
+                            }}
+                          >
+                            {actionSaving ? 'Saving...' : 'Confirm & Save'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {/* INDIVIDUAL BARANGAY CLEARANCE PRINT MODAL & PORTAL */}
+                  {showClearancePrintModal && selectedClearanceCert && (
+                    <>
+                      {/* 1. SCREEN MODAL PREVIEW (Nakikita lang sa Monitor) */}
+                      <div className="modal-overlay">
+                        <div className="modal-card width-lg">
+                          <div className="modal-header">
+                            <h3>Barangay Clearance Preview</h3>
+                            <button className="btn-close" onClick={() => setShowClearancePrintModal(false)}>✕</button>
+                          </div>
+                          <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
+                            <BarangayClearance data={selectedClearanceCert} />
+                          </div>
+                          <div className="modal-footer">
+                            <button className="btn btn-g" onClick={() => setShowClearancePrintModal(false)}>Cancel</button>
+                            <button 
+                              className="btn btn-p" 
+                              onClick={() => {
+                                setTimeout(() => window.print(), 150);
+                              }}
+                            >
+                              Print Now
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* 2. DEDICATED PRINT PORTAL (Inilalabas sa Modal at idinidikit diretso sa Body) */}
+                      {createPortal(
+                        <div id="printable-clearance-container">
+                          <BarangayClearance data={selectedClearanceCert} />
+                        </div>,
+                        document.body
+                      )}
+                    </>
+                  )}
+                  {printingCert && createPortal(
+                    <div id="printable-certificate-card" className="direct-print-only">
+                      <BusinessPermit data={printingCert} />
+                    </div>,
+                    document.body
+                  )}
+                  {/* ── VIEW PROGRAM DETAILS MODAL ── */}
+                  {viewingProgram && (
+                    <div 
+                      className="modal-overlay" 
+                      style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        width: '100vw',
+                        height: '100vh',
+                        background: 'rgba(0, 0, 0, 0.75)',
+                        backdropFilter: 'blur(4px)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justify: 'center',
+                        zIndex: 99999
+                      }}
+                      onClick={() => setViewingProgram(null)}
+                    >
+                      <div 
+                        className="modal-card" 
+                        style={{
+                          background: '#1e293b',
+                          border: '1px solid rgba(79, 142, 247, 0.3)',
+                          borderRadius: '12px',
+                          width: '90%',
+                          maxWidth: '550px',
+                          padding: '24px',
+                          color: '#f8fafc',
+                          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
+                        }}
+                        onClick={(e) => e.stopPropagation()} // Pigilan ang pag-close kapag cliniclick ang loob ng modal
+                      >
+                        {/* Header */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+                          <div>
+                            <span className={`badge ${viewingProgram.status === 'Completed' ? 't' : 'r'}`} style={{ marginBottom: '6px', display: 'inline-block' }}>
+                              {viewingProgram.status}
+                            </span>
+                            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#f1f5f9' }}>
+                              {viewingProgram.title}
+                            </h3>
+                            <div style={{ fontSize: '12px', color: '#94a3b8', fontFamily: 'var(--mono)', marginTop: '2px' }}>
+                              ID: {viewingProgram.id}
+                            </div>
+                          </div>
+                          <button 
+                            className="btn btn-g btn-sm" 
+                            onClick={() => setViewingProgram(null)}
+                            style={{ padding: '4px 10px', fontSize: '14px', borderRadius: '50%' }}
+                          >
+                            ✕
+                          </button>
+                        </div>
+
+                        {/* Progress & Target Stats */}
+                        <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '8px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
+                            <span style={{ color: '#94a3b8' }}>Distribution Capacity:</span>
+                            <strong>{viewingProgram.current || 0} / {viewingProgram.target} Beneficiaries</strong>
+                          </div>
+                          <div style={{ margin: '8px 0', background: '#334155', borderRadius: '4px', height: '10px', overflow: 'hidden' }}>
+                            <div style={{ 
+                              width: `${Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}%`, 
+                              height: '100%', 
+                              background: viewingProgram.status === 'Completed' ? '#10b981' : '#3b82f6' 
+                            }} />
+                          </div>
+                          <div style={{ textAlign: 'right', fontSize: '12px', fontWeight: 'bold', color: '#10b981' }}>
+                            {Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}% Capacity Reached
+                          </div>
+                        </div>
+
+                        {/* Details & Info Grid */}
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px', marginBottom: '20px' }}>
+                          <div>
+                            <label style={{ color: '#94a3b8', display: 'block' }}>Date Created / Label</label>
+                            <div style={{ fontWeight: 600 }}>{viewingProgram.dateLabel || 'N/A'}</div>
+                          </div>
+                          <div>
+                            <label style={{ color: '#94a3b8', display: 'block' }}>Category / Type</label>
+                            <div style={{ fontWeight: 600 }}>{viewingProgram.category || 'Aid Distribution'}</div>
+                          </div>
+                        </div>
+
+                        {/* Action Footer */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px' }}>
+                          <button 
+                            className="btn btn-g" 
+                            onClick={() => {
+                              nav('aid-logs'); // Lilipat sa Logs kung kailangan tingnan ang records
+                              setViewingProgram(null);
+                            }}
+                          >
+                            View Distribution Logs
+                          </button>
+                          <button 
+                            className="btn btn-p" 
+                            onClick={() => setViewingProgram(null)}
+                          >
+                            Close
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {/* ═══ BUSINESS CLEARANCE EDIT MODAL ═══ */}
+{isBusinessModalOpen && (
+  <div 
+    className="modal-overlay" 
+    style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.75)',
+      display: 'flex',
+      alignItems: 'center',
+      justify: 'center',
+      zIndex: 99999,
+      backdropFilter: 'blur(4px)',
+      padding: '20px'
+    }}
+    onClick={() => setIsBusinessModalOpen(false)}
+  >
+    <div 
+      className="modal-card width-lg" 
+      style={{
+        background: 'var(--surface, #1e293b)',
+        color: 'var(--text, #f8fafc)',
+        borderRadius: '12px',
+        width: '100%',
+        maxWidth: '800px',
+        maxHeight: '90vh',
+        display: 'flex',
+        flexDirection: 'column',
+        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+        border: '1px solid var(--border, #334155)',
+        overflow: 'hidden'
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      {/* Modal Header */}
+      <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>
+            {businessModalMode === 'edit' ? 'Edit Business Clearance' : 'New Business Clearance'}
+          </h3>
+          <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
+            Update business details, owner information, and OR reference
+          </p>
+        </div>
+        <button type="button" className="btn-close" onClick={() => setIsBusinessModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '20px', cursor: 'pointer' }}>
+          ✕
+        </button>
+      </div>
+
+      {/* Modal Body - Scrollable Form */}
+      <div className="modal-body" style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+        <form onSubmit={handleSaveBusinessClearance} id="business-clearance-form">
+          {/* Section 1: Business Details */}
+          <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+            1. Business Information
+          </div>
+          <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+            <div className="fg">
+              <label className="fl">BC ID No.</label>
+              <input type="text" className="fc" value={businessForm.bcIdNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, bcIdNo: e.target.value }))} placeholder="e.g. BC-2026-001" />
+            </div>
+            <div className="fg">
+              <label className="fl">Business Name *</label>
+              <input type="text" className="fc" required value={businessForm.businessName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessName: e.target.value }))} placeholder="e.g. Macabangon General Store" />
+            </div>
+            <div className="fg">
+              <label className="fl">Nature / Type of Business</label>
+              <input type="text" className="fc" value={businessForm.natureOfBusiness || ''} onChange={(e) => setBusinessForm(p => ({ ...p, natureOfBusiness: e.target.value }))} placeholder="e.g. Retail / Sari-sari Store" />
+            </div>
+            <div className="fg">
+              <label className="fl">Business Address</label>
+              <input type="text" className="fc" value={businessForm.businessAddress || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessAddress: e.target.value }))} placeholder="Zone / Street Address" />
+            </div>
+          </div>
+
+          {/* Section 2: Owner / Applicant Details */}
+          <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+            2. Owner / Applicant Details
+          </div>
+          <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+            <div className="fg">
+              <label className="fl">First Name *</label>
+              <input type="text" className="fc" required value={businessForm.firstName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, firstName: e.target.value }))} />
+            </div>
+            <div className="fg">
+              <label className="fl">Middle Name</label>
+              <input type="text" className="fc" value={businessForm.middleName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, middleName: e.target.value }))} />
+            </div>
+            <div className="fg">
+              <label className="fl">Last Name *</label>
+              <input type="text" className="fc" required value={businessForm.lastName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, lastName: e.target.value }))} />
+            </div>
+          </div>
+
+          {/* Section 3: Payment & OR Reference */}
+          <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+            3. Official Receipt & Fee
+          </div>
+          <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+            <div className="fg">
+              <label className="fl">O.R. Number *</label>
+              <input type="text" className="fc" required value={businessForm.orNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orNo: e.target.value }))} placeholder="e.g. 1234567" />
+            </div>
+            <div className="fg">
+              <label className="fl">Clearance Fee (₱)</label>
+              <input type="number" className="fc" value={businessForm.clearanceFee || ''} onChange={(e) => setBusinessForm(p => ({ ...p, clearanceFee: e.target.value }))} placeholder="0.00" />
+            </div>
+            <div className="fg">
+              <label className="fl">OR Date Issued</label>
+              <input type="date" className="fc" value={businessForm.orDateIssued || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orDateIssued: e.target.value }))} />
+            </div>
+          </div>
+        </form>
+      </div>
+
+      {/* Modal Actions */}
+      <div className="modal-footer" style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+        <button type="button" className="btn btn-g" onClick={() => setIsBusinessModalOpen(false)}>
+          Cancel
+        </button>
+        <button type="submit" form="business-clearance-form" className="btn btn-p">
+          Save Record
+        </button>
+      </div>
+    </div>
+  </div>
+)}
                 </div>{/* /app */}
               </div>/* /dashboard-shell-container */
             );

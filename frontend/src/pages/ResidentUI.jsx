@@ -5,6 +5,7 @@ import logo from '../assets/logo.png';
 import './ResidentUI.css';
 import CertificatePrintWrapper from '../components/certificates/CertificatePrintWrapper';
 import { createPortal } from 'react-dom';
+import { localDb as db, setupPouchDBSync, forceSyncToRemote, createAuditLog } from '../services/db';
 import {
   FaHome,
   FaFileAlt,
@@ -56,13 +57,26 @@ const formatResidentDate = (rawTime) => {
   });
 };
 
-const getBlotterStep = (status) => {
-  const s = (status || '').toLowerCase();
-  if (s === 'resolved' || s === 'closed') return 4;
-  if (s === 'under mediation' || s === 'for mediation' || s === 'mediation') return 3;
-  if (s === 'under investigation' || s === 'investigating') return 2;
-  return 1;
+const getBlotterStepProgress = (status) => {
+  const normalizedStatus = String(status || '').toLowerCase();
+
+  if (normalizedStatus.includes('settled') || normalizedStatus.includes('resolved')) {
+    return 4; // Step 4: Resolved / Settled
+  }
+  if (
+    normalizedStatus.includes('summon') || 
+    normalizedStatus.includes('mediation') || 
+    normalizedStatus.includes('pnp') || 
+    normalizedStatus.includes('cfa')
+  ) {
+    return 3; // Step 3: Mediation / Summons
+  }
+  if (normalizedStatus.includes('investigation') || normalizedStatus.includes('open')) {
+    return 2; // Step 2: Investigation
+  }
+  return 1; // Step 1: Filed (Pending)
 };
+
 
 const getFeedbackStep = (status) => {
   const s = (status || '').toLowerCase();
@@ -80,14 +94,27 @@ const getStepFromStatus = (status, existingStep) => {
   if (s === 'approved') return 3;
   if (s === 'under review' || s === 'review') return 2;
   return 1; // Submitted / Default
-}; 
+};
+export const formatLocationDisplay = (item) => {
+  const loc = item.location || item.purok || '';
+  if (!loc) return 'Barangay Bustrac';
+
+  if (loc.toLowerCase().includes('bustrac')) {
+    return loc;
+  }
+
+  return `${loc}, Brgy. Bustrac`;
+};
 
 export default function ResidentUI() {
   const navigate = useNavigate();
   const location = useLocation();
+  const [residentProfile, setResidentProfile] = useState(null);
+  const [editProfileMode, setEditProfileMode] = useState(false);
 
-  const loggedInUser = useMemo(() => {
-    const rawUser = sessionStorage.getItem('bustrac_user');
+  // 1. Kunan ng initial user state mula sa sessionStorage o localStorage
+  const [loggedInUser, setLoggedInUser] = useState(() => {
+    const rawUser = sessionStorage.getItem('bustrac_user') || localStorage.getItem('bustrac_user');
     if (!rawUser) return { fullName: 'Resident', initials: 'RS' };
     try {
       const parsed = typeof rawUser === 'string' ? JSON.parse(rawUser) : rawUser;
@@ -95,10 +122,11 @@ export default function ResidentUI() {
       const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
       return { fullName: name, initials, ...parsed };
     } catch (e) {
-      const initials = rawUser.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
-      return { fullName: rawUser, initials };
+      const name = typeof rawUser === 'string' ? rawUser : 'Resident';
+      const initials = name.split(' ').map(n => n[0]).join('').slice(0, 2).toUpperCase();
+      return { fullName: name, initials };
     }
-  }, []);
+  });
 
   const greetingText = useMemo(() => {
     const h = new Date().getHours();
@@ -107,10 +135,7 @@ export default function ResidentUI() {
     return 'Good evening';
   }, []);
 
-  const db = useMemo(() => {
-    if (typeof window === 'undefined') return null;
-    return new PouchDB('bustrachub_db');
-  }, []);
+ 
 
   const [activeScreen, setActiveScreen] = useState('s-home');
   const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
@@ -144,6 +169,131 @@ export default function ResidentUI() {
   });
 
   const [lastSync, setLastSync] = useState(null);
+  
+  // --- 1. ADD NEW EDIT STATES HERE ---
+  const [editingReport, setEditingReport] = useState(null); // Holds the selected report to be edited
+  const [editForm, setEditForm] = useState({
+    subject: '',
+    details: '',
+    incidentDate: '',
+    location: '',
+    respondent: '',
+  });
+
+  // --- 2. ADD handleOpenEdit FUNCTION HERE ---
+  const handleOpenEdit = (report) => {
+  const editableStatuses = ['pending', 'needs revision', 'returned'];
+  const currentStatus = (report.status || '').toLowerCase();
+  
+  if (!editableStatuses.includes(currentStatus)) {
+    alert(`Editing is locked because this report is under status: "${report.status}".`);
+    return;
+  }
+
+  // Subukang ihiwalay ang Zone at Street mula sa lumang location string
+  const rawLoc = report.location || report.purok || '';
+  const zoneMatch = rawLoc.match(/(Zone\s*[1-5]|Purok\s*[1-5])/i);
+  const detectedZone = zoneMatch ? zoneMatch[0] : '';
+  const detectedStreet = rawLoc.replace(zoneMatch ? zoneMatch[0] : '', '').replace(/^[,\s-]+|[,\s-]+$/g, '');
+
+  setEditingReport(report);
+  setEditForm({
+    subject: report.subject || report.incidentType || '',
+    details: report.details || report.narrative || '',
+    incidentDate: report.incidentDate || '',
+    zone: detectedZone || 'Zone 1',
+    street: detectedStreet || '',
+    respondent: report.respondent || report.respondentName || ''
+  });
+};
+
+  // --- 3. ADD handleSaveEdit FUNCTION (For Saving the Edited Details) ---
+  const handleSaveEdit = async (e) => {
+  e.preventDefault();
+  if (!editingReport) return;
+
+  // 1. Validations
+  const validZonePattern = /^(Zone 1|Zone 2|Zone 3|Zone 4|Zone 5|Purok 1|Purok 2|Purok 3|Purok 4|Purok 5)$/i;
+  if (!editForm.zone || !validZonePattern.test(editForm.zone.trim())) {
+    alert('Invalid Location! Please select a valid Zone/Purok (Zone 1 to Zone 5).');
+    return;
+  }
+
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (!editForm.incidentDate || editForm.incidentDate > todayStr) {
+    alert('Invalid Date! Incident Date cannot be in the future.');
+    return;
+  }
+
+  const formattedLocation = editForm.street.trim() 
+    ? `${editForm.street.trim()}, ${editForm.zone.trim()}` 
+    : editForm.zone.trim();
+
+  const isOnline = typeof navigator !== 'undefined' && navigator.onLine;
+
+  try {
+    const existingDoc = await db.get(editingReport._id);
+    const timestamp = new Date().toISOString();
+
+    const updatedDoc = {
+      ...existingDoc,
+      subject: editForm.subject.trim(),
+      incidentType: editForm.subject.trim(),
+      details: editForm.details.trim(),
+      narrative: editForm.details.trim(),
+      incidentDate: editForm.incidentDate,
+      location: formattedLocation,
+      purok: editForm.zone.trim(),
+      respondent: editForm.respondent.trim() || 'Under Investigation',
+      respondentName: editForm.respondent.trim() || 'Under Investigation',
+      updatedAt: timestamp,
+      synced: isOnline,
+      isSynced: isOnline,
+      history: [
+        ...(existingDoc.history || []),
+        {
+          action: 'UPDATE_REPORT',
+          updatedBy: existingDoc.complainant || 'Resident',
+          timestamp: timestamp,
+          details: `Resident updated report details (Location: ${formattedLocation}).`
+        }
+      ]
+    };
+
+    // 1. Save directly to local PouchDB
+    await db.put(updatedDoc);
+    
+    try {
+    await createAuditLog({
+      action: 'UPDATE_BLOTTER_REPORT',
+      module: 'BLOTTER',
+      recordId: editingReport._id,
+      user: `${loggedInUser?.fullName || 'Resident'} (resident)`,
+      details: `Updated report details for ${editingReport._id} (Location: ${formattedLocation})`
+    });
+  } catch (auditErr) {
+    console.warn('Audit log entry failed:', auditErr);
+  }
+   
+    if (isOnline) {
+      console.log('🚀 Triggering instant forceSyncToRemote to CouchDB...');
+      await forceSyncToRemote();
+    }
+
+    alert('Report updated successfully! Changes will sync to the Barangay Admin.');
+    setEditingReport(null);
+
+    // 3. Refresh Resident Local UI State
+    if (typeof loadData === 'function') {
+      await loadData();
+    } else if (typeof fetchBlotters === 'function') {
+      await fetchBlotters();
+    }
+  } catch (err) {
+    console.error('Error updating report:', err);
+    alert('Failed to update the report. Please try again.');
+  }
+};
 
   /* ── Effects ── */
   useEffect(() => {
@@ -165,91 +315,225 @@ export default function ResidentUI() {
       window.removeEventListener('offline', onOffline);
     };
   }, []);
+  
+   // SINGLE CONSOLIDATED PROFILE SYNC EFFECT
+useEffect(() => {
+  if (!db || !loggedInUser) return;
 
-  useEffect(() => {
-    if (!db || !loggedInUser) return;
+  // 1. Function para mag-fetch at mag-match ng Profile
+  const syncResidentProfile = async () => {
+    try {
+      const res = await db.allDocs({ include_docs: true });
+      const allDocs = res.rows.map((row) => row.doc).filter(Boolean);
 
-    const matchesUser = (doc) => {
-      if (!doc) return false;
-      const isFeedback = ['feedback', 'feedback_report', 'feedback_submission'].includes(doc.type) ||
-        (doc._id && String(doc._id).startsWith('feedback_'));
-      if (!isFeedback) return false;
+      const currentId = String(
+        loggedInUser.residentId || loggedInUser.id || loggedInUser._id || ''
+      ).trim().toLowerCase();
 
-      const rid = String(loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || '').trim();
-      const uname = String(loggedInUser?.username || loggedInUser?.email || '').trim().toLowerCase();
-      const name = String(loggedInUser?.fullName || loggedInUser?.name || '').trim().toLowerCase();
+      const currentName = String(
+        loggedInUser.fullName || loggedInUser.name || 'Juan Reyes'
+      ).trim().toLowerCase();
 
-      const drid = String(doc.residentId || doc.userId || '').trim();
-      const duname = String(doc.username || doc.sender || '').trim().toLowerCase();
-      const dname = String(doc.residentName || doc.sender || doc.fullName || '').trim().toLowerCase();
+      const matchedResident = allDocs.find((doc) => {
+        const isResidentDoc =
+          doc.docType === 'resident' ||
+          doc.type === 'resident' ||
+          Boolean(doc.rbiNo || doc.householdId || doc.residentId);
 
-      if (!rid && !uname && !name) return true;
-      return (rid && drid === rid) || (uname && duname === uname) || (name && dname === name);
-    };
+        if (!isResidentDoc) return false;
 
-    const load = async () => {
-      try {
-        const res = await db.allDocs({ include_docs: true });
-        const docs = res.rows.map(r => r.doc).filter(Boolean);
+        const docId = String(
+          doc.residentId || doc.id || doc._id || ''
+        ).trim().toLowerCase();
 
-        const byType = (type) => docs.filter(d => d.type === type);
-        const forMe = (list) => list.filter((doc) => {
-  const residentId = String(
-    loggedInUser.residentId ||
-    loggedInUser.id ||
-    loggedInUser._id ||
-    ''
-  ).trim();
+        const docFullName = doc.fullName
+          ? doc.fullName.toLowerCase()
+          : `${doc.firstName || ''} ${doc.lastName || ''}`.trim().toLowerCase();
 
-  const username = String(
-    loggedInUser.username ||
-    loggedInUser.email ||
-    ''
-  ).trim().toLowerCase();
+        // Matching gamit ang ID o Name
+        if (currentId && docId === currentId) return true;
+        if (currentName && docFullName) {
+          const cleanCurrent = currentName.replace(/[^a-z0-9]/g, '');
+          const cleanDoc = docFullName.replace(/[^a-z0-9]/g, '');
+          if (cleanDoc.includes(cleanCurrent) || cleanCurrent.includes(cleanDoc)) {
+            return true;
+          }
+        }
+        return false;
+      });
 
-  const docResidentId = String(
-    doc.residentId || ''
-  ).trim();
-
-  const docUsername = String(
-    doc.username || ''
-  ).trim().toLowerCase();
-
-  return (
-    (residentId && docResidentId === residentId) ||
-    (username && docUsername === username)
-  );
-});
-        const sortTs = (a, b) =>
-          new Date(b.timestamp || b.createdAt || 0) - new Date(a.timestamp || a.createdAt || 0);
-
-        setMyRequests(forMe(byType('certificate_request')).sort(sortTs));
-        setMyBlotters(forMe(byType('blotter_report')).sort(sortTs));
-        setAnnouncements(byType('announcement').sort(sortTs));
-        setMyAssistance(forMe(byType('aid_distribution')).sort(sortTs));
-        setMyFeedbacks(docs.filter(matchesUser).map(mapDocToResidentFeedback));
-      } catch (e) {
-        console.error('Load error', e);
+      if (matchedResident) {
+        console.log('✅ Matched Official Resident Record:', matchedResident);
+        setResidentProfile({
+          id: matchedResident.residentId || matchedResident._id || 'RES-0002',
+          firstName: matchedResident.firstName || 'Juan',
+          lastName: matchedResident.lastName || 'Reyes',
+          fullName: matchedResident.fullName || `${matchedResident.firstName || 'Juan'} ${matchedResident.lastName || 'Reyes'}`,
+          civilStatus: matchedResident.civilStatus || 'Widowed',
+          purok: matchedResident.purok || matchedResident.zone || 'Purok 1',
+          householdId: matchedResident.householdId || matchedResident.householdNo || 'HH-0003',
+          voterStatus: matchedResident.isVoter ? 'Registered Voter' : 'Non-Voter',
+          gender: matchedResident.gender || 'Male',
+          age: matchedResident.age || 'N/A',
+          birthdate: matchedResident.birthdate || matchedResident.dob || 'N/A',
+          contact: matchedResident.contact || matchedResident.phone || 'N/A',
+          email: matchedResident.email || loggedInUser?.email || 'N/A',
+          address: matchedResident.address || 'Purok 1, Barangay Bustrac',
+          emergencyContactPerson: matchedResident.emergencyContactPerson || 'N/A',
+          emergencyContactNo: matchedResident.emergencyContactNo || 'N/A',
+          rawDoc: matchedResident,
+        });
       }
-    };
+    } catch (err) {
+      console.error('❌ Error syncing Resident Profile with Admin Registry:', err);
+    }
+  };
 
-    load();
+  // Unang pag-load
+  syncResidentProfile();
 
-    const changes = db.changes({ live: true, since: 'now', include_docs: true });
-    changes.on('change', load);
-    changes.on('error', err => console.error('Changes error', err));
+  // 2. Real-Time Listener para sa mga pagbabago mula sa Admin (e.g. kapag pinalitan ang civil status o purok)
+  const changes = db.changes({
+    live: true,
+    since: 'now',
+    include_docs: true,
+  });
 
-    const remoteDb = new PouchDB(REMOTE_DB_URL);
-    const sync = db.sync(remoteDb, { live: true, retry: true });
-    sync.on('change', () => setLastSync(new Date()));
-    sync.on('paused', () => setLastSync(new Date()));
-    sync.on('error', err => console.error('Sync error', err));
+  changes.on('change', (changeInfo) => {
+    const doc = changeInfo.doc;
+    if (doc && (doc.docType === 'resident' || doc.type === 'resident' || doc.residentId)) {
+      console.log('⚡ Resident Profile change detected in database, refreshing...');
+      syncResidentProfile();
+    }
+  });
 
-    return () => {
-      changes.cancel();
-      sync.cancel();
-    };
-  }, [db, loggedInUser]);
+  changes.on('error', (err) => {
+    console.error('❌ Profile sync listener error:', err);
+  });
+
+  return () => {
+    changes.cancel();
+  };
+}, [db, loggedInUser]);
+
+  // Single Unified Effect for All Resident Data & Real-Time Sync
+useEffect(() => {
+  if (!db || !loggedInUser) return;
+
+  // Flexible and Robust User Matching Helper
+  const matchesUser = (doc) => {
+    if (!doc) return false;
+
+    // Get the possible names and ID of the logged-in resident
+    const rawFullName = loggedInUser.fullName || loggedInUser.name || loggedInUser.displayName || '';
+    const rawUsername = loggedInUser.username || '';
+    const rawUserId = loggedInUser._id || loggedInUser.residentId || loggedInUser.id || '';
+
+    const userFullName = rawFullName.toLowerCase().trim();
+    const userName = rawUsername.toLowerCase().trim();
+    const userId = rawUserId.toLowerCase().trim();
+
+    // 1. Direct ID Matching (userId, residentId, submittedBy)
+    const docUserId = String(doc.userId || doc.residentId || doc.submittedBy || '').toLowerCase().trim();
+    if (userId && docUserId && (docUserId === userId || userId.includes(docUserId) || docUserId.includes(userId))) {
+      return true;
+    }
+
+    // 2. Extract the Complainant name (whether String or Object)
+    const comp = typeof doc.complainant === 'object'
+      ? (doc.complainant?.name || doc.complainant?.displayName || '')
+      : (doc.complainant || doc.complainantName || doc.compName || '');
+
+    // 3. Extract the Respondent name (whether String or Object)
+    const resp = typeof doc.respondent === 'object'
+      ? (doc.respondent?.name || doc.respondent?.displayName || '')
+      : (doc.respondent || doc.respondentName || doc.respName || '');
+
+    const compLower = String(comp).toLowerCase().trim();
+    const respLower = String(resp).toLowerCase().trim();
+
+    // 4. Fuzzy / Partial Matching for Name and Username
+    const matchesComplainant = Boolean(
+      (userFullName && compLower.includes(userFullName)) ||
+      (userFullName && userFullName.includes(compLower) && compLower.length > 2) ||
+      (userName && compLower.includes(userName))
+    );
+
+    const matchesRespondent = Boolean(
+      (userFullName && respLower.includes(userFullName)) ||
+      (userFullName && userFullName.includes(respLower) && respLower.length > 2) ||
+      (userName && respLower.includes(userName))
+    );
+
+    return matchesComplainant || matchesRespondent;
+  };
+
+  // Helper Function for Blotter Stepper Level
+  window.getBlotterStep = (status) => {
+    if (!status) return 1;
+    const s = status.toLowerCase();
+    if (s.includes('resolved') || s.includes('closed') || s.includes('settled')) return 4;
+    if (s.includes('summon') || s.includes('mediation') || s.includes('hearing') || s.includes('pangkat')) return 3;
+    if (s.includes('investigation') || s.includes('review') || s.includes('ongoing')) return 2;
+    return 1; // Default to 'Filed'
+  };
+
+  // Main Data Loading Function
+  const loadData = async () => {
+    try {
+      const res = await db.allDocs({ include_docs: true });
+      const docs = res.rows.map(r => r.doc).filter(Boolean);
+
+      const byType = (type) => docs.filter(d => d.type === type || d.docType === type);
+      const sortTs = (a, b) => new Date(b.updatedAt || b.timestamp || b.createdAt || b.dateFiled || 0) - new Date(a.updatedAt || a.timestamp || a.createdAt || a.dateFiled || 0);
+
+      // Filter Blotters
+      const userBlotters = docs.filter(doc => {
+        const isBlotterDoc = doc.docType === 'blotter' || 
+                            doc.type === 'blotter' || 
+                            doc.type === 'blotter_report' || 
+                            Boolean(doc.trackingNo || doc.caseNo || doc.caseNum || doc.refNumber);
+        return isBlotterDoc && matchesUser(doc);
+      }).sort(sortTs);
+
+      console.log('📌 Matched Resident Blotters:', userBlotters);
+
+      setMyBlotters(userBlotters);
+      if (typeof setBlotterReports === 'function') {
+        setBlotterReports(userBlotters);
+      }
+
+      // Filter Requests, Announcements, Assistance, and Feedbacks
+      setMyRequests(docs.filter(d => (d.type === 'certificate_request' || d.type === 'request') && matchesUser(d)).sort(sortTs));
+      setAnnouncements(byType('announcement').sort(sortTs));
+      setMyAssistance(docs.filter(d => d.type === 'aid_distribution' && matchesUser(d)).sort(sortTs));
+
+      if (typeof mapDocToResidentFeedback === 'function') {
+        setMyFeedbacks(docs.filter(d => d.type === 'feedback' && matchesUser(d)).map(mapDocToResidentFeedback));
+      }
+    } catch (e) {
+      console.error('⚠️ Load error in ResidentUI:', e);
+    }
+  };
+
+  // Initial load
+  loadData();
+
+  // PouchDB Real-Time Listener
+  const changes = db.changes({ live: true, since: 'now', include_docs: true });
+  changes.on('change', (changeInfo) => {
+    console.log('⚡ Real-time update received in Resident UI:', changeInfo.id);
+    loadData();
+  });
+
+  changes.on('error', (err) => {
+    console.error('❌ Local changes listener error:', err);
+  });
+
+  return () => {
+    changes.cancel();
+  };
+}, [db, loggedInUser]);
 
   useEffect(() => {
     if (!selectedAnnouncement) return;
@@ -350,14 +634,27 @@ export default function ResidentUI() {
     updatedAt: now,
   };
 
+ try {
+  await db.put(payload);
+
   try {
-    await db.put(payload);
-    sessionStorage.setItem('lastCertRequest', JSON.stringify(payload));
-    setShowCertForm(false);
-    setCertSuccess({ firstName, lastName, certType, refNumber });
-    setCertForm(CERT_FORM_INITIAL);
-    setTimeout(() => setCertSuccess(null), 5000);
-  } catch (err) {
+    await createAuditLog({
+      action: 'CREATE_CERTIFICATE_REQUEST',
+      module: 'CERTIFICATES',
+      recordId: refNumber,
+      user: `${fullName} (resident)`,
+      details: `Requested ${certType} for purpose: "${trimmedPurpose}"`
+    });
+  } catch (auditErr) {
+    console.warn('Audit log entry failed:', auditErr);
+  }
+
+  sessionStorage.setItem('lastCertRequest', JSON.stringify(payload));
+  setShowCertForm(false);
+  setCertSuccess({ firstName, lastName, certType, refNumber });
+  setCertForm(CERT_FORM_INITIAL);
+  setTimeout(() => setCertSuccess(null), 5000);
+} catch (err) {
     console.error('Cert save error', err);
     alert('Unable to save your request offline right now.');
   }
@@ -394,6 +691,18 @@ export default function ResidentUI() {
 
     try {
       await db.put(doc);
+      try {
+    await createAuditLog({
+      action: 'SUBMIT_FEEDBACK',
+      module: 'FEEDBACK',
+      recordId: refNumber,
+      user: `${loggedInUser?.fullName || 'Resident'} (resident)`,
+      details: `Submitted ${feedbackType} feedback: "${feedbackSubject.trim()}"`
+    });
+  } catch (auditErr) {
+    console.warn('Audit log entry failed:', auditErr);
+  }
+
       alert(`Thank you! Your ${feedbackType.toLowerCase()} report (${refNumber}) has been submitted successfully.`);
       setFeedbackSubject('');
       setFeedbackMessage('');
@@ -405,41 +714,108 @@ export default function ResidentUI() {
   }, [feedbackSubject, feedbackMessage, feedbackType, db, loggedInUser]);
 
   const submitBlotter = useCallback(async (e) => {
-    e.preventDefault();
-    const { subject, details, incidentDate, location, respondent } = blotterForm;
-    if (!subject.trim() || !details.trim()) {
-      alert('Please fill in all required fields.'); return;
-    }
-    if (!db) { alert('Local database is unavailable.'); return; }
+  e.preventDefault();
+  const { subject, details, incidentDate, location, respondent } = blotterForm;
 
-    const refNumber = 'BLTR-' + Math.floor(100000 + Math.random() * 900000);
-    const currentResName = loggedInUser?.fullName || loggedInUser?.name || 'Resident';
+  if (!subject.trim() || !details.trim()) {
+    alert('Please fill in all required fields.');
+    return;
+  }
 
-    const payload = {
-      _id: `blotter_${Date.now()}`,
-      type: 'blotter_report',
-      refNumber,
-      caseNo: refNumber,
-      incidentType: subject.trim(),
-      complainant: currentResName,
-      respondent: respondent.trim() || 'Under Investigation',
-      location: location.trim() || 'Barangay Bustrac',
-      incidentDate: incidentDate || new Date().toISOString().split('T')[0],
-      details: details.trim(),
-      status: 'Pending',
-      timestamp: new Date().toISOString(),
-      residentId: loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || '',
-    };
+  if (!db) {
+    alert('Local database is unavailable.');
+    return;
+  }
 
+  const randomNum = Math.floor(100000 + Math.random() * 900000);
+  const refNumber = `BLT-2026-${randomNum}`;
+  const currentResName = loggedInUser?.fullName || loggedInUser?.name || 'Resident';
+
+  const payload = {
+    _id: refNumber,
+    type: 'blotter_record',
+    docType: 'blotter',
+    refNumber: refNumber,
+    trackingNo: refNumber,
+    caseNo: refNumber,
+    id: refNumber,
+    subject: subject.trim(),
+    incidentType: subject.trim(),
+    complainant: currentResName,
+    complainantName: currentResName,
+    respondent: respondent.trim() || 'Under Investigation',
+    respondentName: respondent.trim() || 'Under Investigation',
+    location: location.trim() || 'Barangay Bustrac',
+    incidentDate: incidentDate || new Date().toISOString().split('T')[0],
+    details: details.trim(),
+    narrative: details.trim(),
+    status: 'Pending',
+    history: [],
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    timestamp: new Date().toISOString(),
+    residentId: loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || '',
+    userId: loggedInUser?._id || loggedInUser?.id || '',
+    synced: false,
+    isSynced: false,
+  };
+
+  try {
+    // 1. Save Incident Report to PouchDB
+    const putRes = await db.put(payload);
+    console.log('✅ Blotter record saved successfully:', putRes);
+
+    // 2. SAVE TO AUDIT LOG (Direct call without failing silently)
     try {
-      await db.put(payload);
-      alert(`Incident report submitted successfully! Reference No: ${refNumber}`);
-      setBlotterForm({ subject: '', details: '', incidentDate: '', location: '', respondent: '' });
-    } catch (err) {
-      console.error('Blotter save error', err);
-      alert('Unable to save blotter report offline right now.');
+      const auditResult = await createAuditLog({
+        action: 'CREATE_BLOTTER_REPORT',
+        module: 'BLOTTER',
+        recordId: refNumber,
+        user: `${currentResName} (resident)`,
+        details: `Filed incident report (${subject.trim()}) at ${location.trim() || 'Brgy. Bustrac'}`
+      });
+      console.log('✅ Audit log created successfully:', auditResult);
+    } catch (auditErr) {
+      console.error('❌ Audit log creation failed:', auditErr);
     }
-  }, [db, loggedInUser, blotterForm]);
+
+    // 3. Sync to Remote CouchDB
+    let isOnlineSynced = false;
+    if (typeof navigator !== 'undefined' && navigator.onLine) {
+      try {
+        await forceSyncToRemote();
+        isOnlineSynced = true;
+        console.log('⚡ Immediate sync to CouchDB successful via forceSyncToRemote!');
+      } catch (syncErr) {
+        console.warn('⚠️ Force sync warning:', syncErr);
+      }
+    }
+
+    // 4. Prompt User
+    if (isOnlineSynced) {
+      alert(`Incident report submitted & synced online! Reference No: ${refNumber}`);
+    } else {
+      alert(`Incident report saved locally! It will automatically sync once online. Reference No: ${refNumber}`);
+    }
+
+    // 5. Reset Form
+    setBlotterForm({ subject: '', details: '', incidentDate: '', location: '', respondent: '' });
+
+    // 6. Reload local list
+    const res = await db.allDocs({ include_docs: true });
+    const docs = res.rows.map(r => r.doc).filter(Boolean);
+    const updatedBlotters = docs.filter(d => 
+      (d.docType === 'blotter' || d.type === 'blotter_record' || d.type === 'blotter') &&
+      (d.residentId === (loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id) || d.complainant === currentResName)
+    );
+    setMyBlotters(updatedBlotters);
+
+  } catch (err) {
+    console.error('Critical local storage error:', err);
+    alert('Unable to save incident report. Please try again.');
+  }
+  // ➔ TANGGALIN ANG createAuditLog AT forceSyncToRemote SA DEPENDENCY ARRAY
+}, [db, loggedInUser, blotterForm]);
 
   const handleCancelRequest = useCallback(async (certId) => {
     if (!db) { alert('Database unavailable.'); return; }
@@ -507,16 +883,209 @@ export default function ResidentUI() {
   const blotterSteps = ['Filed', 'Investigation', 'Mediation', 'Resolved'];
 
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+  
+  // Key additions for profile editing:
+  const [editableProfile, setEditableProfile] = useState({
+    contact: '',
+    email: '',
+    purok: '',
+    address: '',
+    emergencyContactName: '',
+    emergencyContactNumber: '',
+  });
+  const [profileError, setProfileError] = useState('');
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     document.body.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
+  
+  // Initialize editable profile from loggedInUser
+  useEffect(() => {
+    if (loggedInUser) {
+      setEditableProfile({
+        contact: loggedInUser.contact || '',
+        email: loggedInUser.email || '',
+        purok: loggedInUser.purok || '',
+        address: loggedInUser.address || '',
+        emergencyContactName: loggedInUser.emergencyContactName || '',
+        emergencyContactNumber: loggedInUser.emergencyContactNumber || '',
+      });
+    }
+  }, [loggedInUser]);
 
   const toggleTheme = () => {
     setTheme((prevTheme) => (prevTheme === 'dark' ? 'light' : 'dark'));
   };
+  
+  const handleEditProfile = useCallback(() => {
+  setEditProfileMode(true);
+  setProfileError('');
+}, []);
+
+const handleCancelEditProfile = useCallback(() => {
+  setEditProfileMode(false);
+  setProfileError('');
+  setEditableProfile({
+    contact: loggedInUser.contact || '',
+    email: loggedInUser.email || '',
+    purok: loggedInUser.purok || '',
+    address: loggedInUser.address || '',
+    emergencyContactName: loggedInUser.emergencyContactName || '',
+    emergencyContactNumber: loggedInUser.emergencyContactNumber || '',
+  });
+}, [loggedInUser]);
+
+const handleProfileFieldChange = (field) => (e) => {
+  setEditableProfile(prev => ({ ...prev, [field]: e.target.value }));
+  setProfileError('');
+};
+
+const validatePhoneNumber = (phone) => {
+  if (!phone) return false;
+  const cleaned = phone.replace(/\D/g, '');
+  return /^09\d{9}$/.test(cleaned);
+};
+
+const handleSaveProfileEdit = async () => {
+  setProfileError('');
+
+  // Basic Validation (11-digit Contact Number if provided)
+  if (editableProfile.contact && !/^09\d{9}$/.test(editableProfile.contact.trim())) {
+    setProfileError('Please enter a valid 11-digit mobile number (e.g. 09123456789).');
+    return;
+  }
+
+  try {
+    if (!db) {
+      throw new Error('Local database is not connected.');
+    }
+
+    // 1. Find the Target Document ID
+    const targetDocId =
+      residentProfile?.rawDoc?._id ||
+      residentProfile?._id ||
+      residentProfile?.id ||
+      loggedInUser?._id ||
+      loggedInUser?.residentId;
+
+    let existingDoc = null;
+
+    // Try to fetch the latest version of the document from PouchDB
+    if (targetDocId) {
+      try {
+        existingDoc = await db.get(targetDocId);
+      } catch (err) {
+        console.warn('⚠️ Direct db.get failed, searching via allDocs...', err);
+      }
+    }
+
+    // If not found by ID, search allDocs using ID or Name
+    if (!existingDoc) {
+      const res = await db.allDocs({ include_docs: true });
+      const currentId = String(loggedInUser?.residentId || loggedInUser?.id || '').toLowerCase().trim();
+      const currentName = String(loggedInUser?.fullName || loggedInUser?.name || '').toLowerCase().trim();
+
+      existingDoc = res.rows
+        .map((row) => row.doc)
+        .find((doc) => {
+          if (!doc) return false;
+          const isRes = doc.docType === 'resident' || doc.type === 'resident' || doc.residentId;
+          if (!isRes) return false;
+
+          const docId = String(doc.residentId || doc._id || doc.id || '').toLowerCase().trim();
+          const docName = String(doc.fullName || doc.name || `${doc.firstName || ''} ${doc.lastName || ''}`).toLowerCase().trim();
+
+          return (currentId && docId === currentId) || (currentName && docName.includes(currentName));
+        });
+    }
+
+    // 2. Prepare the updated document payload
+    const updatedDoc = existingDoc
+      ? {
+          ...existingDoc,
+          contact: editableProfile.contact.trim(),
+          phone: editableProfile.contact.trim(),
+          email: editableProfile.email.trim(),
+          purok: editableProfile.purok || existingDoc.purok,
+          zone: editableProfile.purok || existingDoc.zone,
+          address: editableProfile.address.trim(),
+          emergencyContactPerson: editableProfile.emergencyContactName.trim(),
+          emergencyContactNo: editableProfile.emergencyContactNumber.trim(),
+          updatedAt: new Date().toISOString(),
+        }
+      : {
+          _id: targetDocId || `RES-${Date.now()}`,
+          docType: 'resident',
+          type: 'resident',
+          residentId: loggedInUser?.residentId || 'RES-0002',
+          fullName: loggedInUser?.fullName || 'Juan Reyes',
+          contact: editableProfile.contact.trim(),
+          email: editableProfile.email.trim(),
+          purok: editableProfile.purok || 'Purok 1',
+          address: editableProfile.address.trim(),
+          emergencyContactPerson: editableProfile.emergencyContactName.trim(),
+          emergencyContactNo: editableProfile.emergencyContactNumber.trim(),
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+
+    // 3. Save to PouchDB (Automatically triggers Live Replication / Sync to Admin)
+    const result = await db.put(updatedDoc);
+    console.log('✅ Resident profile successfully updated in PouchDB:', result);
+    
+    try {
+      await createAuditLog({
+        action: 'UPDATE_PROFILE',
+        module: 'RESIDENTS',
+        recordId: updatedDoc._id || updatedDoc.residentId || 'RES-PROFILE',
+        user: `${loggedInUser?.fullName || 'Resident'} (resident)`,
+        details: `Updated profile details (Contact: ${editableProfile.contact.trim()}, Address: ${editableProfile.address.trim()})`
+      });
+    } catch (auditErr) {
+      console.warn('Audit log entry failed for profile edit:', auditErr);
+    }
+
+    // 4. Update the Local React States
+    const updatedProfileState = {
+      ...residentProfile,
+      contact: updatedDoc.contact,
+      email: updatedDoc.email,
+      purok: updatedDoc.purok,
+      address: updatedDoc.address,
+      emergencyContactPerson: updatedDoc.emergencyContactPerson,
+      emergencyContactNo: updatedDoc.emergencyContactNo,
+      rawDoc: { ...updatedDoc, _rev: result.rev },
+    };
+
+    setResidentProfile(updatedProfileState);
+
+    // Update loggedInUser in localStorage & state so the session stays updated as well
+    if (loggedInUser) {
+      const newUserData = {
+        ...loggedInUser,
+        contact: updatedDoc.contact,
+        email: updatedDoc.email,
+        purok: updatedDoc.purok,
+        address: updatedDoc.address,
+      };
+      localStorage.setItem('loggedInUser', JSON.stringify(newUserData));
+      if (typeof setLoggedInUser === 'function') {
+        setLoggedInUser(newUserData);
+      }
+    }
+
+    // Close Edit Mode
+    setEditProfileMode(false);
+    alert(' Your information has been successfully updated!');
+  } catch (err) {
+    console.error(' Error saving resident profile edit:', err);
+    setProfileError(`Save failed: ${err.message || 'Please try again.'}`);
+  }
+};
+
+
   return (
   <div className="resident-root-container">
     <div id="app">
@@ -1316,7 +1885,10 @@ export default function ResidentUI() {
         </div>
 
           {/* ==================== BLOTTER ==================== */}
-          <div className={`screen${activeScreen === 's-blotter' ? ' active' : ''}`} style={{ background: 'transparent', border: 'none', boxShadow: 'none', padding: 0 }}>
+          <div 
+  className={`screen ${(screen === 'blotter' || screen === 's-blotter' || activeScreen === 'blotter' || activeScreen === 's-blotter') ? 'active' : ''}`} 
+  style={{ background: 'transparent', border: 'none', boxShadow: 'none', padding: 0 }}
+>
           {/* Page Header */}
           <div className="page-hdr" style={{ marginBottom: 16 }}>
             <div className="page-title">Blotter Reports</div>
@@ -1325,7 +1897,6 @@ export default function ResidentUI() {
 
           {/* ─── NEW COMPLAINT FORM ─── */}
           <div className="card" style={{ padding: 18, marginBottom: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14 }}>
-            {/* Clean Modern Header Section */}
             <div style={{ marginBottom: 16 }}>
               <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary, #3b82f6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1340,49 +1911,86 @@ export default function ResidentUI() {
             </div>
 
             <form onSubmit={submitBlotter}>
-              {/* Subject Field */}
               <div className="fg" style={{ marginBottom: 12 }}>
                 <label className="fl" htmlFor="blotter-subject">Incident Subject / Title *</label>
-                <input id="blotter-subject" type="text" className="fc" placeholder="e.g. Property Dispute, Noise Complaint" required value={blotterForm.subject} onChange={e => setBlotterForm(p => ({ ...p, subject: e.target.value }))} style={{ width: '100%' }} />
+                <input 
+                  id="blotter-subject" 
+                  type="text" 
+                  className="fc" 
+                  placeholder="e.g. Property Dispute, Noise Complaint" 
+                  required 
+                  value={blotterForm.subject || ''} 
+                  onChange={(e) => setBlotterForm((p) => ({ ...p, subject: e.target.value }))} 
+                  style={{ width: '100%' }} 
+                />
               </div>
 
-              {/* Date & Location Row */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
                 <div className="fg" style={{ margin: 0, minWidth: 0 }}>
                   <label className="fl" htmlFor="blotter-date">Incident Date</label>
-                  <input id="blotter-date" type="date" className="fc" style={{ width: '100%', colorScheme: theme === 'dark' ? 'dark' : 'light' }}value={blotterForm.incidentDate} onChange={e => setBlotterForm(p => ({ ...p, incidentDate: e.target.value }))} />
+                  <input 
+                    id="blotter-date" 
+                    type="date" 
+                    className="fc" 
+                    style={{ width: '100%', colorScheme: theme === 'dark' ? 'dark' : 'light' }} 
+                    value={blotterForm.incidentDate || ''} 
+                    onChange={(e) => setBlotterForm((p) => ({ ...p, incidentDate: e.target.value }))} 
+                  />
                 </div>
                 <div className="fg" style={{ margin: 0, minWidth: 0 }}>
                   <label className="fl" htmlFor="blotter-location">Location / Zone</label>
-                  <input id="blotter-location" type="text" className="fc" placeholder="e.g. Purok 3" style={{ width: '100%' }} value={blotterForm.location} onChange={e => setBlotterForm(p => ({ ...p, location: e.target.value }))} />
+                  <input 
+                    id="blotter-location" 
+                    type="text" 
+                    className="fc" 
+                    placeholder="e.g. Purok 3" 
+                    style={{ width: '100%' }} 
+                    value={blotterForm.location || ''} 
+                    onChange={(e) => setBlotterForm((p) => ({ ...p, location: e.target.value }))} 
+                  />
                 </div>
               </div>
 
-              {/* Respondent Field */}
               <div className="fg" style={{ marginBottom: 12 }}>
                 <label className="fl" htmlFor="blotter-respondent">Respondent (if known)</label>
-                <input id="blotter-respondent" type="text" className="fc" placeholder="Name of person involved" style={{ width: '100%' }} value={blotterForm.respondent} onChange={e => setBlotterForm(p => ({ ...p, respondent: e.target.value }))} />
+                <input 
+                  id="blotter-respondent" 
+                  type="text" 
+                  className="fc" 
+                  placeholder="Name of person involved" 
+                  style={{ width: '100%' }} 
+                  value={blotterForm.respondent || ''} 
+                  onChange={(e) => setBlotterForm((p) => ({ ...p, respondent: e.target.value }))} 
+                />
               </div>
 
-              {/* Details Field */}
               <div className="fg" style={{ marginBottom: 6 }}>
                 <label className="fl" htmlFor="blotter-details">Incident Details *</label>
-                <textarea id="blotter-details" className="fc" rows="4" placeholder="State details, persons involved, or immediate context..." required maxLength={500} value={blotterForm.details} onChange={e => setBlotterForm(p => ({ ...p, details: e.target.value }))} style={{ width: '100%', resize: 'none' }} />
+                <textarea 
+                  id="blotter-details" 
+                  className="fc" 
+                  rows="4" 
+                  placeholder="State details, persons involved, or immediate context..." 
+                  required 
+                  maxLength={500} 
+                  value={blotterForm.details || ''} 
+                  onChange={(e) => setBlotterForm((p) => ({ ...p, details: e.target.value }))} 
+                  style={{ width: '100%', resize: 'none' }} 
+                />
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
                   <span style={{ fontSize: 10, color: 'var(--muted)' }}>
-                    {blotterForm.details ? blotterForm.details.length : 0}/500
+                    {(blotterForm.details || '').length}/500
                   </span>
                 </div>
               </div>
 
-              {/* Submit Button */}
               <button type="submit" className="btn btn-primary btn-full" style={{ width: '100%', marginTop: 8, padding: '12px', borderRadius: 10, fontWeight: 700 }}>
                 Submit Incident Report
               </button>
             </form>
           </div>
 
-          {/* ─── MY SUBMITTED REPORTS ─── */}
+          {/* ─── MY SUBMITTED REPORTS SECTION ─── */}
           <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: 10, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span>My Submitted Reports</span>
             <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
@@ -1399,68 +2007,57 @@ export default function ResidentUI() {
                 <line x1="16" y1="17" x2="8" y2="17" />
                 <polyline points="10 9 9 9 8 9" />
               </svg>
-              <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 4 }}>
-                No blotter records on file
-              </div>
-              <div style={{ fontSize: 12, color: 'var(--muted)' }}>
-                Your filed complaint histories will display here.
-              </div>
+              <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 4 }}>No blotter records on file</div>
+              <div style={{ fontSize: 12, color: 'var(--muted)' }}>Your filed complaint histories will display here.</div>
             </div>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              {myBlotters.map(item => {
-                const blotterStep = typeof getBlotterStep === 'function' ? getBlotterStep(item.status) : 1;
-                const blotterSteps = ['Filed', 'Investigation', 'Mediation', 'Resolved'];
-                const isResolved = item.status === 'Resolved' || item.status === 'Closed';
-                const isMediation = item.status === 'Under Mediation' || item.status === 'For Mediation';
-                const isInvestigation = item.status === 'Under Investigation';
+              {myBlotters.map((item) => {
+                const blotterStep = typeof getBlotterStepProgress === 'function' ? getBlotterStepProgress(item.status) : 1;
+                const isMyReport = String(item.complainant || item.complainantName || '').toLowerCase().trim() === String(loggedInUser?.fullName || '').toLowerCase().trim();
+                const canEdit = isMyReport && ['pending', 'needs revision', 'returned'].includes((item.status || '').toLowerCase());
+                const blotterSteps = ['Filed', 'Investigation', 'Mediation / Summons', 'Resolved'];
+                const displayRefNumber = item.trackingNo || item.caseNo || item.caseNum || item.refNumber || item._id || 'N/A';
+                const displayTitle = item.subject || item.type || item.incidentType || item.title || 'Incident Complaint';
+                const historyList = Array.isArray(item.rawDoc?.history) ? item.rawDoc.history : Array.isArray(item.history) ? item.history : [];
+                const latestHistory = historyList.length > 0 ? historyList[historyList.length - 1] : null;
+                const isResolved = item.status?.toLowerCase().includes('settled') || item.status?.toLowerCase().includes('resolved');
+                const isMediation = item.status?.toLowerCase().includes('summon') || item.status?.toLowerCase().includes('mediation') || item.status?.toLowerCase().includes('pnp') || item.status?.toLowerCase().includes('cfa');
+                const isInvestigation = item.status?.toLowerCase().includes('investigation');
 
                 return (
-                  <div key={item._id || item.refNumber} style={{ padding: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14 }}>
-                    {/* Header Row */}
+                  <div key={item._id || displayRefNumber} style={{ padding: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14 }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
                       <div>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 2 }}>
-                          {item.incidentType || item.subject || 'Incident Complaint'}
-                        </div>
+                        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 2 }}>{displayTitle}</div>
                         <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                          Ref: <code style={{ color: 'var(--text)', fontWeight: 600, fontFamily: 'var(--mono)' }}>{item.refNumber}</code>
+                          Ref: <code style={{ color: 'var(--text)', fontWeight: 600, fontFamily: 'var(--mono)' }}>{displayRefNumber}</code>
                         </div>
                       </div>
-
-                      {/* Clean Status Badge */}
                       <span style={{
-                        fontSize: 10,
-                        fontWeight: 700,
-                        textTransform: 'uppercase',
-                        letterSpacing: '0.4px',
-                        padding: '2px 8px',
-                        borderRadius: 6,
-                        color: isResolved ? 'var(--green)' : isMediation ? 'var(--purple)' : isInvestigation ? 'var(--primary)' : 'var(--muted)',
-                        background: isResolved ? 'var(--green-bg)' : isMediation ? 'var(--purple-bg)' : isInvestigation ? 'var(--primary-light)' : 'var(--surface2)',
-                        border: `1px solid ${isResolved ? 'var(--green-border)' : isMediation ? 'var(--purple-border)' : isInvestigation ? 'var(--primary-light)' : 'var(--border)'}`
+                        fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.4px', padding: '3px 8px', borderRadius: 6,
+                        color: isResolved ? '#10b981' : isMediation ? '#a855f7' : isInvestigation ? '#3b82f6' : 'var(--muted)',
+                        background: isResolved ? 'rgba(16, 185, 129, 0.15)' : isMediation ? 'rgba(168, 85, 247, 0.15)' : isInvestigation ? 'rgba(59, 130, 246, 0.15)' : 'var(--surface2, rgba(255,255,255,0.05))',
+                        border: `1px solid ${isResolved ? 'rgba(16, 185, 129, 0.3)' : isMediation ? 'rgba(168, 85, 247, 0.3)' : isInvestigation ? 'rgba(59, 130, 246, 0.3)' : 'var(--border)'}`
                       }}>
                         {item.status || 'Pending'}
                       </span>
                     </div>
 
-                    {/* Location Info */}
-                    {item.location && (
+                    {(item.location || item.purok) && (
                       <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                           <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
                           <circle cx="12" cy="10" r="3" />
                         </svg>
-                        Location: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{item.location}</strong>
+                        Location: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{typeof formatLocationDisplay === 'function' ? formatLocationDisplay(item) : (item.location || item.purok)}</strong>
                       </div>
                     )}
 
-                    {/* Details Box */}
                     <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.4, marginBottom: 12, background: 'var(--surface2, rgba(255,255,255,0.02))', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }}>
-                      {item.details}
+                      {item.details || item.narrative || item.description || 'No additional details provided.'}
                     </div>
 
-                    {/* Progress Stepper */}
                     <div className="steps" style={{ marginBottom: 12 }}>
                       {blotterSteps.map((label, idx) => {
                         const value = idx + 1;
@@ -1476,24 +2073,36 @@ export default function ResidentUI() {
                       })}
                     </div>
 
-                    {/* Mediation Schedule */}
-                    {item.mediationDate && (
-                      <div style={{ marginBottom: 10, padding: '8px 10px', background: 'var(--purple-bg)', border: '1px solid var(--purple-border)', borderRadius: 8, fontSize: 11, color: 'var(--purple)', display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                          <line x1="16" y1="2" x2="16" y2="6" />
-                          <line x1="8" y1="2" x2="8" y2="6" />
-                          <line x1="3" y1="10" x2="21" y2="10" />
-                        </svg>
-                        <strong>Mediation Schedule:</strong> {item.mediationDate}
+                    {(item.nextHearingDate || item.rawDoc?.nextHearingDate) && (
+                      <div style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid var(--primary, #3b82f6)', padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: 12 }}>
+                        📅 <strong>Patawag / Hearing Schedule:</strong>{' '}
+                        <span style={{ color: 'var(--primary, #3b82f6)', fontWeight: 700 }}>
+                          {new Date(item.nextHearingDate || item.rawDoc?.nextHearingDate).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                        </span>
                       </div>
                     )}
 
-                    {/* Footer */}
+                    {latestHistory && latestHistory.notes && (
+                      <div style={{ background: 'var(--surface2, rgba(255,255,255,0.03))', border: '1px solid var(--border)', padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: 11, color: 'var(--text)' }}>
+                        💬 <strong>Barangay Remarks:</strong> "{latestHistory.notes}"
+                      </div>
+                    )}
+
+                    {canEdit && (
+                      <button type="button" onClick={() => handleOpenEdit(item)} className="btn btn-outline btn-sm" style={{ width: '100%', marginBottom: 10 }}>
+                        Edit Report Details
+                      </button>
+                    )}
+
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: 'var(--muted)', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-                      <span>Incident Date: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{item.incidentDate || 'N/A'}</strong></span>
-                      <span style={{ fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4, background: 'var(--surface2, rgba(255,255,255,0.05))', color: item._rev?.startsWith('1-') ? 'var(--muted)' : '#10b981', border: '1px solid var(--border)' }}>
-                        {item._rev?.startsWith('1-') ? 'Local Log' : 'Synced'}
+                      <span>Incident Date: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{item.incidentDate || item.dateFiled || 'N/A'}</strong></span>
+                      <span style={{
+                        fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
+                        background: 'var(--surface2, rgba(255,255,255,0.05))',
+                        color: (item.synced === true || item.isSynced === true) ? '#10b981' : '#f59e0b',
+                        border: `1px solid ${(item.synced === true || item.isSynced === true) ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`
+                      }}>
+                        {(item.synced === true || item.isSynced === true) ? 'Synced' : 'Local Log'}
                       </span>
                     </div>
                   </div>
@@ -1501,7 +2110,8 @@ export default function ResidentUI() {
               })}
             </div>
           )}
-        </div>
+          </div>
+
 
           {/* ==================== ASSISTANCE ==================== */}
           <div 
@@ -1624,124 +2234,483 @@ export default function ResidentUI() {
           </div>
 
           {/* ==================== PROFILE ==================== */}
-          <div 
-          className={`screen${activeScreen === 's-profile' ? ' active' : ''}`}
-          style={{ 
-            background: 'transparent', 
-            border: 'none', 
-            boxShadow: 'none', 
-            padding: 0 
-          }}
-        >
-          {/* Page Header */}
-          <div className="page-hdr" style={{ marginBottom: 16 }}>
-            <div className="page-title">My Profile</div>
-            <div className="page-sub">Resident information and account status</div>
-          </div>
-
-          {/* Clean Profile Header Card */}
-          <div className="card" style={{ padding: 16, marginBottom: 14, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-              <div style={{
-                width: 52,
-                height: 52,
-                borderRadius: '50%',
-                background: 'var(--primary, #3b82f6)',
-                color: '#ffffff',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 18,
-                fontWeight: 800,
-                flexShrink: 0
-              }}>
-                {loggedInUser?.initials || 'RS'}
+          <div
+            className={`screen${activeScreen === 's-profile' ? ' active' : ''}`}
+            style={{ background: 'transparent', border: 'none', boxShadow: 'none', padding: 0 }}
+          >
+            {/* Page Header */}        
+            <div className="page-hdr" style={{ marginBottom: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <div>
+                <h2 className="page-title" style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>
+                  My Profile
+                </h2>
               </div>
 
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>
-                  {loggedInUser?.fullName || 'Resident Member'}
-                </div>
-                <div style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--mono)', marginBottom: 6 }}>
-                  ID: <span style={{ color: 'var(--text)', fontWeight: 600 }}>{loggedInUser?.residentId || 'RES-0000'}</span>
-                </div>
-                
-                <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6, background: 'var(--green-bg)', padding: '2px 8px', borderRadius: 12, border: '1px solid var(--green-border)',color: 'var(--green)' }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: '#22c55e' }} />
-                  <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--green)' }}>
-                    {loggedInUser?.voterStatus || 'Registered Voter'}
-                  </span>
-                </div>
-              </div>
+              {/* Edit / Cancel Toggle Button */}
+              {!editProfileMode ? (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleEditProfile}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    background: 'var(--primary, #3b82f6)',
+                    color: '#ffffff',
+                    border: 'none',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                    boxShadow: '0 2px 6px rgba(59, 130, 246, 0.25)',
+                  }}
+                >
+                   Edit Profile
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleCancelEditProfile}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: 6,
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    background: 'var(--surface)',
+                    color: 'var(--muted)',
+                    border: '1px solid var(--border)',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    cursor: 'pointer',
+                  }}
+                >
+                  ✕ Cancel
+                </button>
+              )}
             </div>
-          </div>
 
-          {/* Details List Card */}
-          <div className="card" style={{ padding: '4px 16px', marginBottom: 14, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)' }}>
-            {[
-              { label: 'Birthdate', value: loggedInUser?.birthdate ? new Date(loggedInUser.birthdate).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' }) : 'N/A' },
-              { label: 'Age', value: loggedInUser?.age ? `${loggedInUser.age} years old` : 'N/A' },
-              { label: 'Gender', value: loggedInUser?.gender || 'N/A' },
-              { label: 'Civil Status', value: loggedInUser?.civilStatus || 'N/A' },
-              { label: 'Contact', value: loggedInUser?.contact || 'N/A' },
-              { label: 'Purok', value: loggedInUser?.purok ? String(loggedInUser.purok).toLowerCase().startsWith('purok') ? loggedInUser.purok : `Purok ${loggedInUser.purok}` : 'N/A' },
-              { label: 'Household', value: loggedInUser?.household || 'Not Available' }
-            ].map((item, idx, arr) => (
-              <div 
-                key={item.label} 
-                style={{ 
-                  display: 'flex', 
-                  justify: 'space-between', 
-                  alignItems: 'center', 
-                  padding: '12px 0', 
-                  borderBottom: idx < arr.length - 1 ? '1px solid var(--border)' : 'none',
-                  gap: 16
+            {/* Error Alert Box */}
+            {profileError && (
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  padding: '10px 14px',
+                  marginBottom: 14,
+                  borderRadius: 10,
+                  background: 'var(--red-bg, rgba(239, 68, 68, 0.1))',
+                  border: '1px solid var(--red-border, rgba(239, 68, 68, 0.3))',
+                  color: 'var(--red, #ef4444)',
+                  fontSize: 12,
+                  fontWeight: 600,
                 }}
               >
-                <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 600, flexShrink: 0 }}>
-                  {item.label}
-                </span>
-                <span style={{ fontSize: 13, color: 'var(--text)', fontWeight: 700, textAlign: 'right', wordBreak: 'break-word', flex: 1 }}>
-                  {item.value}
-                </span>
+                <svg
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ flexShrink: 0 }}
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span>{profileError}</span>
               </div>
-            ))}
-          </div>
+            )}
 
-          {/* Sync Status Card */}
-          <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', marginBottom: 14, borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)' }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-             <span style={{ width: 8, height: 8, borderRadius: '50%', background: isOffline ? 'var(--amber)' : 'var(--green)' }} />
-              <div>
-                <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
-                  {isOffline ? 'Working Offline' : 'Online & Synced'}
+            {/* VIEW MODE: Single Dynamic Consolidated Details Card */}
+            {!editProfileMode ? (
+              <div
+                className="card profile-card"
+                style={{
+                  padding: 20,
+                  marginBottom: 14,
+                  borderRadius: 14,
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                {/* Single Unified Header */}
+                <div
+                  className="profile-header"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 14,
+                    marginBottom: 20,
+                    paddingBottom: 16,
+                    borderBottom: '1px solid var(--border)',
+                  }}
+                >
+                  <div
+                    className="avatar"
+                    style={{
+                      width: 52,
+                      height: 52,
+                      borderRadius: '50%',
+                      background: 'var(--primary, #3b82f6)',
+                      color: '#fff',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      fontSize: 18,
+                      fontWeight: 800,
+                      flexShrink: 0,
+                      textTransform: 'uppercase',
+                    }}
+                  >
+                    {residentProfile?.firstName?.[0] || loggedInUser?.fullName?.[0] || 'J'}
+                    {residentProfile?.lastName?.[0] || loggedInUser?.fullName?.split(' ').slice(-1)[0]?.[0] || 'R'}
+                  </div>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <h3
+                      style={{
+                        margin: '0 0 4px',
+                        fontSize: 16,
+                        fontWeight: 700,
+                        color: 'var(--text)',
+                        whiteSpace: 'nowrap',
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                      }}
+                    >
+                      {residentProfile?.fullName || loggedInUser?.fullName || 'Juan Reyes'}
+                    </h3>
+                    <p
+                      className="badge-id"
+                      style={{ margin: '0 0 6px', fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--mono)' }}
+                    >
+                      ID: <strong style={{ color: 'var(--text)' }}>{residentProfile?.id || loggedInUser?.residentId || 'RES-0002'}</strong>
+                    </p>
+                    <span
+                      className="badge-voter"
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        padding: '2px 8px',
+                        borderRadius: 12,
+                        background: 'var(--green-bg)',
+                        color: 'var(--green)',
+                        border: '1px solid var(--green-border)',
+                      }}
+                    >
+                      {residentProfile?.voterStatus || 'Registered Voter'}
+                    </span>
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>
-                  {lastSync ? `Updated ${lastSync.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}` : 'Waiting for sync...'}
+
+                {/* Grid Details */}
+                <div
+                  className="profile-details-grid"
+                  style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px 16px' }}
+                >
+                  {[
+                    { label: 'Civil Status', value: residentProfile?.civilStatus || 'Widowed' },
+                    { label: 'Purok / Zone', value: residentProfile?.purok || 'Purok 1' },
+                    { label: 'Household ID', value: residentProfile?.householdId || 'HH-0003' },
+                    { label: 'Gender', value: residentProfile?.gender || 'Male' },
+                    { label: 'Birthdate', value: residentProfile?.birthdate || 'N/A' },
+                    { label: 'Contact No.', value: residentProfile?.contact || 'N/A' },
+                    { label: 'Email', value: residentProfile?.email || loggedInUser?.email || 'N/A' },
+                    { label: 'Address', value: residentProfile?.address || 'Purok 1, Barangay Bustrac' },
+                    { label: 'Emergency Contact', value: residentProfile?.emergencyContactPerson || 'N/A' },
+                    { label: 'Emergency No.', value: residentProfile?.emergencyContactNo || 'N/A' },
+                  ].map((item) => (
+                    <div key={item.label} className="detail-item" style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <span
+                        className="label"
+                        style={{
+                          fontSize: 11,
+                          fontWeight: 700,
+                          color: 'var(--muted)',
+                          textTransform: 'uppercase',
+                          letterSpacing: '0.3px',
+                        }}
+                      >
+                        {item.label}
+                      </span>
+                      <span className="value" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>
+                        {item.value}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ) : (
+              /* EDIT MODE: Input Form for Self-Service Editable Fields */
+              <div
+                className="card"
+                style={{
+                  padding: 16,
+                  marginBottom: 14,
+                  borderRadius: 14,
+                  background: 'var(--surface)',
+                  border: '1px solid var(--border)',
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--primary, #3b82f6)', marginBottom: 12 }}>
+                   Edit Contact & Address Details
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                  {/* Contact Number */}
+                  <div className="fg">
+                    <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
+                      Contact Number (11-digit)
+                    </label>
+                    <input
+                      className="fc"
+                      type="text"
+                      placeholder="09123456789"
+                      value={editableProfile.contact}
+                      onChange={handleProfileFieldChange('contact')}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg)',
+                        color: 'var(--text)',
+                        fontSize: 13,
+                      }}
+                    />
+                  </div>
+
+                  {/* Email Address */}
+                  <div className="fg">
+                    <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
+                      Email Address
+                    </label>
+                    <input
+                      className="fc"
+                      type="email"
+                      placeholder="resident@email.com"
+                      value={editableProfile.email}
+                      onChange={handleProfileFieldChange('email')}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg)',
+                        color: 'var(--text)',
+                        fontSize: 13,
+                      }}
+                    />
+                  </div>
+
+                  {/* Purok / Zone Dropdown */}
+                  <div className="fg">
+                    <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
+                      Purok / Zone
+                    </label>
+                    <select
+                      className="fc"
+                      value={editableProfile.purok}
+                      onChange={handleProfileFieldChange('purok')}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg)',
+                        color: 'var(--text)',
+                        fontSize: 13,
+                      }}
+                    >
+                      <option value="">Select Purok</option>
+                      <option value="Purok 1">Purok 1</option>
+                      <option value="Purok 2">Purok 2</option>
+                      <option value="Purok 3">Purok 3</option>
+                      <option value="Purok 4">Purok 4</option>
+                      <option value="Purok 5">Purok 5</option>
+                    </select>
+                  </div>
+
+                  {/* Current Address / Street */}
+                  <div className="fg">
+                    <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
+                      Street Address / House No.
+                    </label>
+                    <input
+                      className="fc"
+                      type="text"
+                      placeholder="House # / Street Name, Brgy. Bustrac"
+                      value={editableProfile.address}
+                      onChange={handleProfileFieldChange('address')}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg)',
+                        color: 'var(--text)',
+                        fontSize: 13,
+                      }}
+                    />
+                  </div>
+
+                  {/* Emergency Contact Name */}
+                  <div className="fg">
+                    <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
+                      Emergency Contact Person
+                    </label>
+                    <input
+                      className="fc"
+                      type="text"
+                      placeholder="Full name of contact person"
+                      value={editableProfile.emergencyContactName}
+                      onChange={handleProfileFieldChange('emergencyContactName')}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg)',
+                        color: 'var(--text)',
+                        fontSize: 13,
+                      }}
+                    />
+                  </div>
+
+                  {/* Emergency Contact Number */}
+                  <div className="fg">
+                    <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
+                      Emergency Contact Number
+                    </label>
+                    <input
+                      className="fc"
+                      type="text"
+                      placeholder="09123456789"
+                      value={editableProfile.emergencyContactNumber}
+                      onChange={handleProfileFieldChange('emergencyContactNumber')}
+                      style={{
+                        width: '100%',
+                        padding: '9px 12px',
+                        borderRadius: 8,
+                        border: '1px solid var(--border)',
+                        background: 'var(--bg)',
+                        color: 'var(--text)',
+                        fontSize: 13,
+                      }}
+                    />
+                  </div>
+
+                  {/* Notice for Read-Only Fields */}
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--muted)',
+                      background: 'var(--bg)',
+                      padding: '10px 12px',
+                      borderRadius: 8,
+                      border: '1px solid var(--border)',
+                      marginTop: 4,
+                    }}
+                  >
+                    🔒 <strong>Identity Protection:</strong> Name, Birthdate, Gender, Civil Status, and Resident ID are official barangay records and can only be updated directly at the Barangay Hall.
+                  </div>
+
+                  {/* Save & Cancel Actions */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginTop: 8 }}>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleCancelEditProfile}
+                      style={{
+                        padding: '10px',
+                        borderRadius: 8,
+                        background: 'var(--border)',
+                        color: 'var(--text)',
+                        border: 'none',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="btn"
+                      onClick={handleSaveProfileEdit}
+                      style={{
+                        padding: '10px',
+                        borderRadius: 8,
+                        background: 'var(--primary, #3b82f6)',
+                        color: '#ffffff',
+                        border: 'none',
+                        fontWeight: 700,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Save Changes
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* Sync Status Card */}
+            <div
+              className="card"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '12px 16px',
+                marginBottom: 14,
+                borderRadius: 12,
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: isOffline ? 'var(--amber)' : 'var(--green)' }} />
+                <div>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)' }}>
+                    {isOffline ? 'Working Offline' : 'Online & Synced'}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 1 }}>
+                    {lastSync
+                      ? `Updated ${lastSync.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}`
+                      : 'Waiting for sync...'}
+                  </div>
                 </div>
               </div>
             </div>
-          </div>
 
-          {/* Sign Out Button */}
-          <button 
-            className="btn" 
-            onClick={handleLogout} 
-            style={{ 
-              width: '100%', 
-              padding: '12px', 
-              borderRadius: 12, 
-              background: 'var(--red-bg)', 
-              color: 'var(--red)', 
-              border: '1px solid var(--red-border)', 
-              fontSize: 13, 
-              fontWeight: 700, 
-              cursor: 'pointer' 
-            }}
-          >
-            Sign Out
-          </button>
-        </div>
+            {/* Sign Out Button */}
+            <button
+              className="btn"
+              onClick={handleLogout}
+              style={{
+                width: '100%',
+                padding: '12px',
+                borderRadius: 12,
+                background: 'var(--red-bg)',
+                color: 'var(--red)',
+                border: '1px solid var(--red-border)',
+                fontSize: 13,
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              Sign Out
+            </button>
+          </div>
         </div>
         
         <div className="bottom-nav">
@@ -1840,6 +2809,128 @@ export default function ResidentUI() {
           </div>,
           document.body
         )}
+        {editingReport && (
+          <div
+            style={{
+              position: 'fixed',
+              inset: 0,
+              background: 'rgba(0,0,0,0.7)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 9999,
+              padding: 16,
+            }}
+            onClick={() => setEditingReport(null)}
+          >
+            <div
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: 16,
+                width: '100%',
+                maxWidth: 480,
+                maxHeight: '85vh',
+                overflowY: 'auto',
+                padding: 20,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>
+                Edit Report — {editingReport.refNumber || editingReport._id}
+              </div>
+
+              <form onSubmit={handleSaveEdit}>
+                {/* Incident Subject */}
+                <div className="fg" style={{ marginBottom: 12 }}>
+                  <label className="fl">Incident Subject *</label>
+                  <input
+                    className="fc"
+                    required
+                    value={editForm.subject}
+                    onChange={(e) => setEditForm((p) => ({ ...p, subject: e.target.value }))}
+                  />
+                </div>
+
+                {/* Date, Zone/Purok, at Specific Location */}
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
+                  <div className="fg" style={{ margin: 0 }}>
+                    <label className="fl">Incident Date *</label>
+                    <input 
+                      type="date" 
+                      className="fc" 
+                      required 
+                      max={new Date().toISOString().split('T')[0]} 
+                      value={editForm.incidentDate} 
+                      onChange={(e) => setEditForm((p) => ({ ...p, incidentDate: e.target.value }))} 
+                    />
+                  </div>
+
+                  <div className="fg" style={{ margin: 0 }}>
+                    <label className="fl">Zone / Purok *</label>
+                    <select 
+                      className="fc" 
+                      required 
+                      value={editForm.zone || ''} 
+                      onChange={(e) => setEditForm((p) => ({ ...p, zone: e.target.value }))}
+                    >
+                      <option value="">Select Zone</option>
+                      <option value="Zone 1">Zone 1</option> <option value="Zone 2">Zone 2</option>
+                      <option value="Zone 3">Zone 3</option>
+                      <option value="Zone 4">Zone 4</option>
+                      <option value="Zone 5">Zone 5</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div className="fg" style={{ marginBottom: 12 }}>
+                  <label className="fl">Street / Landmark / Specific Location</label>
+                  <input 
+                    className="fc" 
+                    placeholder="e.g. Near Chapel, Main Street, Riverside" 
+                    value={editForm.street || ''} 
+                    onChange={(e) => setEditForm((p) => ({ ...p, street: e.target.value }))} 
+                  />
+                </div>
+
+                {/* Respondent */}
+                <div className="fg" style={{ marginBottom: 12 }}>
+                  <label className="fl">Respondent (if known)</label>
+                  <input
+                    className="fc"
+                    value={editForm.respondent}
+                    onChange={(e) => setEditForm((p) => ({ ...p, respondent: e.target.value }))}
+                  />
+                </div>
+
+                {/* Details */}
+                <div className="fg" style={{ marginBottom: 14 }}>
+                  <label className="fl">Incident Details *</label>
+                  <textarea
+                    className="fc"
+                    rows="4"
+                    required
+                    maxLength={500}
+                    value={editForm.details}
+                    onChange={(e) => setEditForm((p) => ({ ...p, details: e.target.value }))}
+                    style={{ resize: 'none' }}
+                  />
+                </div>
+
+                {/* Action Buttons */}
+                <div style={{ display: 'flex', gap: 8 }}>
+                  <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
+                    Save Changes
+                  </button>
+                  <button type="button" className="btn btn-ghost" onClick={() => setEditingReport(null)}>
+                    Cancel
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        )}
+
         {/* Announcement Details Modal */}
         {selectedAnnouncement && (
           <div 

@@ -3,6 +3,8 @@ import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
 
 export interface IndigencyData {
+  _id?: string;
+  requestId?: string;
   fullName?: string;
   applicantName?: string;
   firstName?: string;
@@ -10,11 +12,13 @@ export interface IndigencyData {
   age?: number | string;
   civilStatus?: string;
   gender?: string;
+  sex?: string;
   patientName?: string;
   relationToPatient?: string;
   address?: string;
   purok?: string;
   purpose?: string;
+  remarks?: string;
   issuedAt?: string;
   dateIssued?: string;
   createdAt?: string;
@@ -22,17 +26,33 @@ export interface IndigencyData {
   dayIssued?: string;
   monthYearIssued?: string;
   punongBarangay?: string;
+  status?: string;
+
+  // Direct Financial/CTC Props
+  orNumber?: string;
+  orNo?: string;
   ctcNo?: string;
   ctcNumber?: string;
   ctcDateIssued?: string;
   ctcPlaceIssued?: string;
   amountPaid?: number | string;
-  ctc?: {
-    number?: string;
-    dateIssued?: string;
-    placeIssued?: string;
+
+  // Nested Issuance Metadata mula sa CouchDB
+  issuanceMeta?: {
+    orNumber?: string;
     amountPaid?: number | string;
+    dateIssued?: string;
+    remarks?: string;
+    purpose?: string;
+    noDerogatoryRecord?: boolean;
+    ctcNumber?: string;
+    ctcAmountPaid?: number | string;
+    ctcDateIssued?: string;
   };
+
+  // Print Mode indicators
+  printMode?: string;
+  isDuplicate?: boolean;
 }
 
 interface IndigencyProps {
@@ -42,52 +62,51 @@ interface IndigencyProps {
 export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data }) => {
   if (!data) return null;
 
-  // 1. Dynamic Full Name
+  // 1. Safe Extraction ng Nested Issuance Metadata
+  const meta = data.issuanceMeta || {};
+
+  // 2. Dynamic Full Name & Resident Details
   const fullName = (
     data.fullName ||
     data.applicantName ||
     `${data.firstName || ''} ${data.lastName || ''}`.trim() ||
     'MARI VILMA ARROYO OJANO'
   ).toUpperCase();
+  const age = data.age !== undefined ? String(data.age) : '47';
+  const civilStatus = (data.civilStatus || 'married').toLowerCase();
+  const address = data.address || (data.purok ? `${data.purok} Bustrac, Nabua, Camarines Sur` : 'Zone 2 Bustrac, Nabua, Camarines Sur');
+  const purpose = meta.purpose || data.purpose || 'applying for PHILHEALTH for indigent';
 
-  const age = data.age || '47';
-  const civilStatus = data.civilStatus || 'married';
-  const address =
-    data.address ||
-    (data.purok ? `${data.purok} Bustrac, Nabua, Camarines Sur` : 'Zone 2 Bustrac, Nabua, Camarines Sur');
-  const purpose = data.purpose || 'applying for PHILHEALTH for indigent';
-
-  // 2. Gender & Spouse Pronouns Logic
-  const isMale = String(data.gender).toLowerCase() === 'male';
+  // 3. Gender & Spouse Pronouns Logic
+  const sexProp = data.gender || data.sex || '';
+  const isMale = String(sexProp).toLowerCase() === 'male' || String(sexProp).toLowerCase() === 'm';
   const pronounHeShe = isMale ? 'he' : 'she';
-  const spouseText =
-    civilStatus.toLowerCase() === 'single'
-      ? 'family'
-      : isMale
-      ? 'his wife'
-      : 'her husband';
+  const spouseText = civilStatus === 'single' ? 'family' : isMale ? 'his wife' : 'her husband';
 
-  // 3. Date Formatting with Ordinal Suffix
-  const certDate = data.issuedAt || data.dateIssued || data.issueDate || data.createdAt || new Date();
+  // 4. Date Formatting with Ordinal Suffix
+  const certDate = meta.dateIssued || data.issuedAt || data.dateIssued || data.issueDate || data.createdAt || new Date();
   const dateObj = new Date(certDate);
-  const dayNum = dateObj.getDate() || new Date().getDate();
-
+  const dayNum = !isNaN(dateObj.getTime()) ? dateObj.getDate() : new Date().getDate();
+  
   const getOrdinalSuffix = (n: number) => {
     const s = ['th', 'st', 'nd', 'rd'];
     const v = n % 100;
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
   };
-
+  
   const dayOrdinal = data.dayIssued || getOrdinalSuffix(dayNum);
-  const monthName = dateObj.toLocaleDateString('en-US', { month: 'long' });
-  const currentYear = dateObj.getFullYear();
+  const monthName = !isNaN(dateObj.getTime()) ? dateObj.toLocaleDateString('en-US', { month: 'long' }) : 'September';
+  const currentYear = !isNaN(dateObj.getTime()) ? dateObj.getFullYear() : 2026;
 
-  // 4. CTC Details Extractions
-  const ctcNo = data.ctcNo || data.ctcNumber || data.ctc?.number || '07545833';
-  const ctcDateIssued = data.ctcDateIssued || data.ctc?.dateIssued || 'August 24, 2026';
-  const ctcPlaceIssued = data.ctcPlaceIssued || data.ctc?.placeIssued || 'Nabua, Cam. Sur';
-  const rawAmt = data.amountPaid || data.ctc?.amountPaid || '34.80';
-  const amountPaid = typeof rawAmt === 'number' ? rawAmt.toFixed(2) : rawAmt;
+  // 5. CTC Details Extractions (Fallback sa issuanceMeta / Root)
+  const ctcNo = meta.ctcNumber || data.ctcNumber || data.ctcNo || '07545833';
+  const ctcDateIssued = meta.ctcDateIssued || data.ctcDateIssued || 'August 24, 2026';
+  const ctcPlaceIssued = data.ctcPlaceIssued || 'Nabua, Cam. Sur';
+  const rawAmt = meta.ctcAmountPaid !== undefined ? meta.ctcAmountPaid : (meta.amountPaid !== undefined ? meta.amountPaid : (data.amountPaid || '34.80'));
+  const amountPaid = typeof rawAmt === 'number' ? rawAmt.toFixed(2) : String(rawAmt);
+
+  // 6. Watermark Condition Check
+  const isDuplicateMode = data.printMode === 'copy' || data.isDuplicate || data.status === 'Released';
 
   return (
     <div
@@ -98,14 +117,41 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data }) => {
         minHeight: '270mm',
         display: 'flex',
         flexDirection: 'column',
-        justifyContent: 'space-between',
+        justifyContent: 'space-between', // Inayos mula 'justify' papuntang 'justifyContent'
         boxSizing: 'border-box',
         fontFamily: '"Times New Roman", Times, serif',
         color: '#000000',
         fontSize: '13px',
         lineHeight: '1.6',
+        position: 'relative',
+        overflow: 'hidden',
       }}
     >
+      {/* ═══ REPRINT / DUPLICATE WATERMARK OVERLAY ═══ */}
+      {isDuplicateMode && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '40%',
+            left: '50%',
+            transform: 'translate(-50%, -50%) rotate(-35deg)',
+            fontSize: '52px',
+            fontWeight: 'bold',
+            color: 'rgba(220, 38, 38, 0.18)',
+            border: '8px dashed rgba(220, 38, 38, 0.25)',
+            padding: '10px 30px',
+            borderRadius: '12px',
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+            zIndex: 10,
+            textTransform: 'uppercase',
+            letterSpacing: '4px',
+          }}
+        >
+          DUPLICATE COPY
+        </div>
+      )}
+
       <div>
         {/* Header Section with Logos */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '28px' }}>
@@ -143,8 +189,13 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data }) => {
         {/* Certificate Body Paragraphs */}
         <div style={{ textIndent: '40px', textAlign: 'justify', lineHeight: '1.85', fontSize: '13px' }}>
           <p style={{ margin: '0 0 18px 0' }}>
-            This is to certify that <strong>{fullName}</strong>, {age} yrs. old, {civilStatus}
-            {data.patientName ? <>, mother of patient <strong>{data.patientName.toUpperCase()}</strong></> : null}, a bona fide resident of and with postal address at {address}.
+            This is to certify that <strong>{fullName}</strong>, {age} yrs. old, {civilStatus}{' '}
+            {data.patientName ? (
+              <>
+                , mother of patient <strong>{data.patientName.toUpperCase()}</strong>
+              </>
+            ) : null}
+            , a bona fide resident of and with postal address at {address}.
           </p>
           <p style={{ margin: '0 0 18px 0' }}>
             This is to further certify that {pronounHeShe} belongs to an indigent family in our barangay, considering that {pronounHeShe} together with {spouseText} has no permanent source of income.
@@ -175,7 +226,10 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data }) => {
           <div><strong>CTC No.:</strong> {ctcNo}</div>
           <div><strong>Date Issued:</strong> {ctcDateIssued}</div>
           <div><strong>Place Issued:</strong> {ctcPlaceIssued}</div>
-          <div><strong>Amt. Paid:</strong> <strong>{String(amountPaid).startsWith('Php') ? amountPaid : `Php${amountPaid}`}</strong></div>
+          <div>
+            <strong>Amt. Paid:</strong>{' '}
+            <strong>{amountPaid.startsWith('Php') || amountPaid.startsWith('₱') ? amountPaid : `Php ${amountPaid}`}</strong>
+          </div>
         </div>
       </div>
     </div>

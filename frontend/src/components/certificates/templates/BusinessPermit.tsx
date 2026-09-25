@@ -37,6 +37,20 @@ export interface BusinessPermitData {
   ctcNumber?: string;
   ctcDateIssued?: string;
   ctcPlaceIssued?: string;
+  status?: string;
+  issuanceMeta?: {
+    orNumber?: string;
+    amountPaid?: number | string;
+    dateIssued?: string;
+    remarks?: string;
+    purpose?: string;
+    noDerogatoryRecord?: boolean;
+    ctcNumber?: string;
+    ctcAmountPaid?: number | string;
+    ctcDateIssued?: string;
+  };
+  printMode?: string;
+  isDuplicate?: boolean;
 }
 
 interface BusinessPermitProps {
@@ -46,7 +60,8 @@ interface BusinessPermitProps {
 export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
   if (!data) return null;
 
-  // 1. Data Normalization & Extractions
+  const meta = data.issuanceMeta || {};
+
   const bcIdNo = data.bcIdNo || '0156';
   const ownerName = (
     data.ownerName ||
@@ -55,31 +70,32 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
     `${data.lastName || ''}, ${data.firstName || ''}`.replace(/^,\s*/, '').trim() ||
     'DELA CRUZ, JUAN'
   ).toUpperCase();
-
   const businessName = (data.businessName || 'BUSTRAC SARI-SARI STORE').toUpperCase();
   const address = (
     data.address ||
     (data.purok ? `${data.purok.toUpperCase()}, BUSTRAC, NABUA, CAMARINES SUR` : 'ZONE 5, BUSTRAC, NABUA, CAMARINES SUR')
   ).toUpperCase();
-
   const nationality = (data.nationality || 'FILIPINO').toUpperCase();
   const contactNo = data.contactNo || data.contactNos || 'N/A';
   const civilStatus = (data.civilStatus || 'SINGLE').toUpperCase();
   const occupation = (data.occupation || 'BUSINESS OWNER').toUpperCase();
 
-  const certDate = data.issuedAt || data.dateIssued || data.issueDate || data.regDate || data.createdAt || new Date();
-  const dateObj = new Date(certDate);
-  const formattedDate = dateObj.toISOString().split('T')[0] || '2026-09-09';
+  // Financial & OR Details
+  const orNo = meta.orNumber || data.orNumber || data.orNo || 'N/A';
+  const rawAmt = meta.amountPaid !== undefined ? meta.amountPaid : (data.amountPaid || '0.00');
+  const amountPaid = typeof rawAmt === 'number' ? rawAmt.toFixed(2) : Number(rawAmt || 0).toFixed(2);
 
-  const clearanceYear = data.clearanceYear || dateObj.getFullYear() || '2026';
+  // Dates Formatting
+  const certDate = meta.dateIssued || data.issuedAt || data.dateIssued || data.issueDate || data.regDate || data.createdAt || new Date();
+  const dateObj = new Date(certDate);
+  const formattedDate = !isNaN(dateObj.getTime()) ? dateObj.toISOString().split('T')[0] : String(certDate);
+  const clearanceYear = data.clearanceYear || (!isNaN(dateObj.getTime()) ? dateObj.getFullYear() : '2026');
   const clearanceExpires = data.clearanceExpires || 'DECEMBER 31';
   const kindOfTransaction = data.kindOfTransaction || 'Renewal';
-
-  const orNo = data.orNumber || data.orNo || 'xfdghxdfsdfgds';
-  const rawAmt = data.amountPaid || '23423435456801771520.00';
-  const amountPaid = typeof rawAmt === 'number' ? rawAmt.toFixed(2) : rawAmt;
-
   const printedDate = new Date().toLocaleDateString('en-US');
+
+  // Watermark Condition Check
+  const isDuplicateMode = data.printMode === 'copy' || data.isDuplicate || data.status === 'Released';
 
   return (
     <div
@@ -96,8 +112,35 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
         color: '#000000',
         fontSize: '11px',
         lineHeight: '1.4',
+        position: 'relative',
+        overflow: 'hidden',
       }}
     >
+      {/* ═══ REPRINT / DUPLICATE WATERMARK OVERLAY ═══ */}
+      {isDuplicateMode && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '40%',
+            left: '50%',
+            transform: 'translate(-50%, -50%) rotate(-35deg)',
+            fontSize: '52px',
+            fontWeight: 'bold',
+            color: 'rgba(220, 38, 38, 0.18)',
+            border: '8px dashed rgba(220, 38, 38, 0.25)',
+            padding: '10px 30px',
+            borderRadius: '12px',
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+            zIndex: 10,
+            textTransform: 'uppercase',
+            letterSpacing: '4px',
+          }}
+        >
+          DUPLICATE COPY
+        </div>
+      )}
+
       <div>
         {/* Header Section with Logos */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
@@ -145,7 +188,7 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
               border: '1px solid #000',
               display: 'flex',
               alignItems: 'center',
-              justifyContent: 'center',
+              justifyContent: 'center', // Inayos mula 'justify' papuntang 'justifyContent'
               textAlign: 'center',
               padding: '8px',
               fontSize: '10px',
@@ -165,7 +208,6 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
           <div style={{ flex: 1, fontSize: '11px', lineHeight: '1.5' }}>
             <div style={{ fontWeight: 'bold', fontSize: '13px' }}>{ownerName}</div>
             <div style={{ fontSize: '9px', fontStyle: 'italic', marginBottom: '6px' }}>(Owner/Proprietor)</div>
-
             <div><strong>{address}</strong></div>
             <div><strong>Nationality:</strong> {nationality}</div>
             <div><strong>Contact:</strong> {contactNo}</div>
@@ -177,13 +219,10 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
           <div style={{ width: '160px', textAlign: 'right', fontSize: '11px', lineHeight: '1.4' }}>
             <div style={{ fontWeight: 900, fontSize: '14px' }}>{bcIdNo}</div>
             <div style={{ fontSize: '9px', fontWeight: 'bold', marginBottom: '6px' }}>BUSINESS ID NO.:</div>
-
             <div style={{ fontWeight: 'bold' }}>{clearanceYear}</div>
             <div style={{ fontSize: '9px', fontWeight: 'bold', marginBottom: '6px' }}>CLEARANCE YEAR</div>
-
             <div style={{ fontWeight: 'bold' }}>{clearanceExpires}</div>
             <div style={{ fontSize: '9px', fontWeight: 'bold', marginBottom: '6px' }}>CLEARANCE EXPIRES</div>
-
             <div style={{ fontWeight: 'bold' }}>{kindOfTransaction}</div>
             <div style={{ fontSize: '9px', fontWeight: 'bold' }}>KIND OF TRANSACTION</div>
           </div>
@@ -192,7 +231,6 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
         {/* Salutation & Body Terms */}
         <div style={{ fontSize: '11px', lineHeight: '1.5', textAlign: 'justify' }}>
           <p style={{ fontWeight: 'bold', margin: '0 0 10px 0' }}>TO WHOM IT MAY CONCERN:</p>
-          
           <p style={{ margin: '0 0 8px 0' }}>
             This is to certify that the BUSINESS OWNER/OPERATOR/PROPRIETOR has been cleared of any liabilities and obligations. And granted/permitted to operate business in this barangay:
           </p>
@@ -238,14 +276,11 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
             <div style={{ fontSize: '10px', fontWeight: 'bold', marginBottom: '8px' }}>
               Paid under the following<br />O.R. Details:
             </div>
-
             <div style={{ fontWeight: 'bold', fontSize: '12px' }}>{orNo}</div>
-            <div style={{ fontSize: '9px', marginBottom: '8px' }}>OR. No.</div>
-
+            <div style={{ fontSize: '9px', marginBottom: '8px' }}>O.R. No.</div>
             <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{formattedDate}</div>
-            <div style={{ fontSize: '9px', marginBottom: '8px' }}>OR. Date Issued</div>
-
-            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{amountPaid}</div>
+            <div style={{ fontSize: '9px', marginBottom: '8px' }}>O.R. Date Issued</div>
+            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>₱{amountPaid}</div>
             <div style={{ fontSize: '9px', marginBottom: '15px' }}>Amount Paid</div>
 
             {/* Seal / QR Placeholder Box */}
@@ -255,7 +290,7 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
                 height: '110px',
                 display: 'flex',
                 alignItems: 'center',
-                justifyContent: 'center',
+                justifyContent: 'center', // Inayos mula 'justify' papuntang 'justifyContent'
                 padding: '10px',
                 fontSize: '9px',
                 fontWeight: 'bold',
@@ -277,7 +312,6 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
         <p style={{ fontWeight: 'bold', margin: '0 0 6px 0' }}>
           ERASURE AND/OR ALTERATION WILL INVALIDATE THIS CLEARANCE.
         </p>
-        
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
           <span style={{ fontWeight: 'bold', fontStyle: 'italic', margin: '0 auto' }}>
             — NOT VALID WITHOUT OFFICIAL SEAL —

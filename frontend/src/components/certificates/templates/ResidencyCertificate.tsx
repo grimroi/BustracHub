@@ -3,7 +3,12 @@ import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
 
 export interface ResidencyData {
+  _id?: string;
+  requestId?: string;
   fullName?: string;
+  applicantName?: string;
+  firstName?: string;
+  lastName?: string;
   zone?: string;
   purok?: string;
   barangay?: string;
@@ -12,28 +17,55 @@ export interface ResidencyData {
   maritalStatus?: string;
   civilStatus?: string;
   sex?: 'M' | 'F' | string;
+  gender?: string;
   birthdate?: string;
   citizenship?: string;
   age?: number | string;
   yearsOfResidency?: number | string;
   purpose?: string;
+  remarks?: string;
+  issuedAt?: string;
   dateIssued?: string;
   issueDate?: string;
+  createdAt?: string;
+  dayIssued?: string;
   issuedDayOrdinal?: string;
   issuedMonthYear?: string;
   secretaryName?: string;
   punongBarangayName?: string;
   punongBarangay?: string;
+  status?: string;
+
+  // Direct Financial/CTC Props
   orNumber?: string;
+  orNo?: string;
   orDate?: string;
   orAmount?: string;
   amountPaid?: number | string;
   ctcNumber?: string;
+  ctcNo?: string;
   ctcDateIssued?: string;
   ctcAmount?: string;
   ctcPlaceIssued?: string;
   datePrinted?: string;
   trackingCode?: string;
+
+  // Nested Issuance Metadata mula sa CouchDB
+  issuanceMeta?: {
+    orNumber?: string;
+    amountPaid?: number | string;
+    dateIssued?: string;
+    remarks?: string;
+    purpose?: string;
+    noDerogatoryRecord?: boolean;
+    ctcNumber?: string;
+    ctcAmountPaid?: number | string;
+    ctcDateIssued?: string;
+  };
+
+  // Print Mode indicators
+  printMode?: string;
+  isDuplicate?: boolean;
   [key: string]: any;
 }
 
@@ -42,35 +74,73 @@ export interface BarangayCertificationProps {
 }
 
 export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ data = {} }) => {
-  const {
-    fullName = 'JAYSON VILLAFLOR AZON',
-    zone = data.purok || 'ZONE 1',
-    barangay = 'BUSTRAC',
-    municipality = 'NABUA',
-    province = 'CAMARINES SUR',
-    maritalStatus = data.civilStatus || 'Married',
-    sex = 'M',
-    birthdate = '09/28/1987',
-    citizenship = 'Filipino',
-    age = 38,
-    yearsOfResidency = 3,
-    purpose = data.purpose || 'Residency',
-    dateIssued = data.issueDate || '9/1/2026',
-    issuedDayOrdinal = '18th',
-    issuedMonthYear = 'August, 2026',
-    secretaryName = 'MRS. MELY M. PRESADO',
-    punongBarangayName = data.punongBarangay || 'HON. ANNABELLE E. RULL',
-    orNumber = data.orNumber || '65452371',
-    orDate = '08/18/2026',
-    orAmount = data.amountPaid ? String(data.amountPaid) : '100.00',
-    ctcNumber = data.ctcNumber || '26414445',
-    ctcDateIssued = '03/02/2026',
-    ctcAmount = '35.00',
-    ctcPlaceIssued = 'NABUA, CAMARINES SUR',
-    datePrinted = '9/1/2026',
-  } = data;
+  if (!data) return null;
 
-  const fullAddress = `${zone.toUpperCase()}, ${barangay.toUpperCase()}, ${municipality.toUpperCase()}, ${province.toUpperCase()}`;
+  // 1. Safe Extraction ng Nested Issuance Metadata
+  const meta = data.issuanceMeta || {};
+
+  // 2. Data Normalization & Fallbacks
+  const fullName = (
+    data.fullName ||
+    data.applicantName ||
+    `${data.firstName || ''} ${data.lastName || ''}`.trim() ||
+    'JAYSON VILLAFLOR AZON'
+  ).toUpperCase();
+
+  const zone = (data.zone || data.purok || 'ZONE 1').toUpperCase();
+  const barangay = (data.barangay || 'BUSTRAC').toUpperCase();
+  const municipality = (data.municipality || 'NABUA').toUpperCase();
+  const province = (data.province || 'CAMARINES SUR').toUpperCase();
+  const fullAddress = `${zone}, ${barangay}, ${municipality}, ${province}`;
+
+  const maritalStatus = data.maritalStatus || data.civilStatus || 'Married';
+  const sexProp = data.sex || data.gender || 'M';
+  const sex = String(sexProp).toUpperCase().startsWith('M') ? 'M' : 'F';
+  const pronounHeShe = sex === 'M' ? 'He' : 'She';
+
+  const birthdate = data.birthdate || '09/28/1987';
+  const citizenship = data.citizenship || 'Filipino';
+  const age = data.age !== undefined ? String(data.age) : '38';
+  const yearsOfResidency = data.yearsOfResidency || '3';
+  const purpose = meta.purpose || data.purpose || 'Residency';
+
+  // 3. Date Extractions & Formatting
+  const certDate = meta.dateIssued || data.issuedAt || data.dateIssued || data.issueDate || data.createdAt || new Date();
+  const dateObj = new Date(certDate);
+  const isValidDate = !isNaN(dateObj.getTime());
+
+  const formattedDateIssued = isValidDate ? dateObj.toLocaleDateString('en-US') : '9/1/2026';
+
+  const dayNum = isValidDate ? dateObj.getDate() : 18;
+  const getOrdinalSuffix = (n: number) => {
+    const s = ['th', 'st', 'nd', 'rd'];
+    const v = n % 100;
+    return n + (s[(v - 20) % 10] || s[v] || s[0]);
+  };
+  const issuedDayOrdinal = data.issuedDayOrdinal || data.dayIssued || getOrdinalSuffix(dayNum);
+  const issuedMonthYear = data.issuedMonthYear || (isValidDate ? `${dateObj.toLocaleDateString('en-US', { month: 'long' })}, ${dateObj.getFullYear()}` : 'August, 2026');
+
+  // Signatories
+  const secretaryName = data.secretaryName || 'MRS. MELY M. PRESADO';
+  const punongBarangayName = data.punongBarangayName || data.punongBarangay || 'HON. ANNABELLE E. RULL';
+
+  // O.R. Details
+  const orNumber = meta.orNumber || data.orNumber || data.orNo || '65452371';
+  const orDate = meta.dateIssued ? new Date(meta.dateIssued).toLocaleDateString('en-US') : (data.orDate || formattedDateIssued);
+  const rawOrAmt = meta.amountPaid !== undefined ? meta.amountPaid : (data.orAmount || data.amountPaid || '100.00');
+  const orAmount = typeof rawOrAmt === 'number' ? rawOrAmt.toFixed(2) : String(rawOrAmt);
+
+  // CTC Details
+  const ctcNumber = meta.ctcNumber || data.ctcNumber || data.ctcNo || '26414445';
+  const ctcDateIssued = meta.ctcDateIssued || data.ctcDateIssued || '03/02/2026';
+  const rawCtcAmt = meta.ctcAmountPaid !== undefined ? meta.ctcAmountPaid : (data.ctcAmount || '35.00');
+  const ctcAmount = typeof rawCtcAmt === 'number' ? rawCtcAmt.toFixed(2) : String(rawCtcAmt);
+  const ctcPlaceIssued = data.ctcPlaceIssued || 'NABUA, CAMARINES SUR';
+
+  const datePrinted = data.datePrinted || new Date().toLocaleDateString('en-US');
+
+  // 4. Watermark Condition Check
+  const isDuplicateMode = data.printMode === 'copy' || data.isDuplicate || data.status === 'Released';
 
   return (
     <div
@@ -86,8 +156,34 @@ export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ dat
         position: 'relative',
         fontSize: '13px',
         lineHeight: '1.4',
+        overflow: 'hidden',
       }}
     >
+      {/* ═══ REPRINT / DUPLICATE WATERMARK OVERLAY ═══ */}
+      {isDuplicateMode && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '40%',
+            left: '50%',
+            transform: 'translate(-50%, -50%) rotate(-35deg)',
+            fontSize: '52px',
+            fontWeight: 'bold',
+            color: 'rgba(220, 38, 38, 0.18)',
+            border: '8px dashed rgba(220, 38, 38, 0.25)',
+            padding: '10px 30px',
+            borderRadius: '12px',
+            pointerEvents: 'none',
+            whiteSpace: 'nowrap',
+            zIndex: 10,
+            textTransform: 'uppercase',
+            letterSpacing: '4px',
+          }}
+        >
+          DUPLICATE COPY
+        </div>
+      )}
+
       {/* 1. HEADER SECTION */}
       <div
         style={{
@@ -118,9 +214,11 @@ export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ dat
 
       {/* 3. APPLICANT PHOTO & DETAILS BLOCK */}
       <div style={{ display: 'flex', gap: '20px', marginBottom: '24px' }}>
-        <div style={{ width: '110px', height: '110px', border: '1px solid #000000', flexShrink: 0 }} />
+        <div style={{ width: '110px', height: '110px', border: '1px solid #000000', flexShrink: 0, backgroundColor: '#fafafa', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px' }}>
+          [ PHOTO ]
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
-          <div style={{ fontWeight: 800, fontSize: '14px' }}>{fullName.toUpperCase()}</div>
+          <div style={{ fontWeight: 800, fontSize: '14px' }}>{fullName}</div>
           <div style={{ fontWeight: 800, fontSize: '13px' }}>{fullAddress}</div>
           <div>Marital Status: {maritalStatus}</div>
           <div>
@@ -136,7 +234,7 @@ export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ dat
       {/* 4. DATE & SUBJECT */}
       <div style={{ marginBottom: '28px' }}>
         <div>
-          Date <span style={{ textDecoration: 'underline' }}>issued :</span> {dateIssued}
+          Date <span style={{ textDecoration: 'underline' }}>issued :</span> {formattedDateIssued}
         </div>
         <div>
           <span style={{ textDecoration: 'underline' }}>Subject :</span> {purpose}
@@ -147,10 +245,10 @@ export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ dat
       <div style={{ marginBottom: '20px', fontWeight: 800 }}>TO WHOM IT MAY CONCERN:</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '14px', textAlign: 'justify' }}>
         <p style={{ textIndent: '40px', margin: 0 }}>
-          This is to Certify that <strong>{fullName.toUpperCase()}</strong>, {age} yrs. old, {maritalStatus.toLowerCase()}, a bona fide resident of and with postal address at {zone} {barangay}, {municipality}, {province}.
+          This is to Certify that <strong>{fullName}</strong>, {age} yrs. old, {maritalStatus.toLowerCase()}, a bona fide resident of and with postal address at {zone} {barangay}, {municipality}, {province}.
         </p>
         <p style={{ textIndent: '40px', margin: 0 }}>
-          He reside in this barangay for more or less {yearsOfResidency} years.
+          {pronounHeShe} reside in this barangay for more or less {yearsOfResidency} years.
         </p>
         <p style={{ textIndent: '40px', margin: 0 }}>
           This Barangay Certification is issued upon the request of the above-named person for information record and reference purpose.
@@ -167,7 +265,7 @@ export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ dat
       {/* 6. CLAIMANT SIGNATURE */}
       <div style={{ textAlign: 'center', marginBottom: '40px' }}>
         <div style={{ fontWeight: 800, textDecoration: 'underline', fontSize: '14px' }}>
-          {fullName.toUpperCase()}
+          {fullName}
         </div>
         <div style={{ fontSize: '11px', marginTop: '2px' }}>Signature Over Printed Name of Claimant</div>
       </div>
@@ -194,17 +292,19 @@ export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ dat
           <div style={{ marginTop: '10px' }}><strong>Paid Document</strong></div>
           <div><strong>NOT VALID WITHOUT OFFICIAL SEAL</strong></div>
         </div>
+
         <div style={{ width: '38%', display: 'flex', flexDirection: 'column', gap: '2px' }}>
           <div>Paid under the following:</div>
           <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>OR Date:</span><span>{orDate}</span></div>
           <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>OR No.:</span><span>{orNumber}</span></div>
-          <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>Amt. Paid:</span><span>{orAmount}</span></div>
+          <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>Amt. Paid:</span><span>{orAmount.startsWith('₱') || orAmount.startsWith('Php') ? orAmount : `Php ${orAmount}`}</span></div>
           <div style={{ marginTop: '8px' }}>CTC Details:</div>
           <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>CTC Date Issued:</span><span>{ctcDateIssued}</span></div>
           <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>CTC No.:</span><span>{ctcNumber}</span></div>
-          <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>CTC Amt.:</span><span>{ctcAmount}</span></div>
+          <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>CTC Amt.:</span><span>{ctcAmount.startsWith('₱') || ctcAmount.startsWith('Php') ? ctcAmount : `Php ${ctcAmount}`}</span></div>
           <div style={{ display: 'flex' }}><span style={{ width: '100px' }}>Place Issued:</span><span>{ctcPlaceIssued}</span></div>
         </div>
+
         <div style={{ width: '28%', textAlign: 'center' }}>
           <div style={{ marginBottom: '6px' }}>Applicant's Thumb Mark</div>
           <div style={{ display: 'flex', justifyContent: 'center', gap: '12px' }}>

@@ -1,6 +1,50 @@
 @import "tailwindcss";
 
 /* ==========================================
+   GLOBAL FONT FAMILY & BASE SETTINGS
+   ========================================== */
+html, body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+/* ==========================================
+   DARK MODE (Default)
+   ========================================== */
+:root, html[data-theme="dark"], body[data-theme="dark"] {
+  --bg: #111318;
+  --surface: #1a1d24;
+  --surface2: #20242e;
+  --card-bg: #1e293b;
+  --input-bg: #1e293b;
+  --border: #2a2f3d;
+  --border2: #323849;
+  --text: #e8ecf4;
+  --muted: #7b83a0;
+  --hint: #4a5168;
+  --primary: #4f8ef7;
+  --primary-dark: #3a7ae8;
+  --primary-light: rgba(79, 142, 247, 0.1);
+  --green: #34d399;
+  --green-bg: rgba(52, 211, 153, 0.1);
+  --green-border: rgba(52, 211, 153, 0.3);
+  --amber: #fbbf24;
+  --amber-bg: rgba(251, 191, 36, 0.1);
+  --amber-border: rgba(251, 191, 36, 0.3);
+  --red: #f87171;
+  --red-bg: rgba(248, 113, 113, 0.1);
+  --red-border: rgba(248, 113, 113, 0.3);
+  --purple: #a78bfa;
+  --purple-bg: rgba(167, 139, 250, 0.1);
+  --purple-border: rgba(167, 139, 250, 0.3);
+  --teal: #2dd4bf;
+  --teal-bg: rgba(45, 212, 191, 0.1);
+  --teal-border: rgba(45, 212, 191, 0.3);
+  color-scheme: dark;
+}
+
+/* ==========================================
    DARK MODE (Default)
    ========================================== */
 :root,

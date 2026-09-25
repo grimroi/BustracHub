@@ -62,7 +62,6 @@ export async function createAuditLog({ action, module, recordId = null, details 
   }
 }
 
-// Wrapper function para sa logActivity
 export async function logActivity({ action, module, details, performedBy }) {
   return createAuditLog({
     action,
