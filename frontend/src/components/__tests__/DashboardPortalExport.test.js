@@ -82,16 +82,7 @@ jest.mock('pouchdb-browser', () => {
 jest.mock('pouchdb', () => jest.requireMock('pouchdb-browser'));
 
 describe('DashboardPortal - handleGenerateExcelReport Safety Integration', () => {
-  let alertSpy;
-
-  beforeEach(() => {
-    alertSpy = jest.spyOn(window, 'alert').mockImplementation(() => {});
-    jest.clearAllMocks();
-  });
-
-  afterEach(() => {
-    alertSpy.mockRestore();
-  });
+  // ✅ LOCAL ALERTSPY SETUP REMOVED - GUMAGAMIT NA NG GLOBAL.ALERTSPY MULA SA SETUPTESTS.JS
 
   test('dapat ligtas at WALANG CRASH kapag pinindot ang Excel export habang null/undefined ang data lists', async () => {
     await act(async () => {
@@ -130,7 +121,8 @@ describe('DashboardPortal - handleGenerateExcelReport Safety Integration', () =>
       fireEvent.click(exportButtons[0]);
     });
 
-    expect(alertSpy).toHaveBeenCalledWith(
+    // ✅ GUMAGAMIT NA NG GLOBAL.ALERTSPY
+    expect(global.alertSpy).toHaveBeenCalledWith(
       'Walang available data para i-export sa piniling report category.'
     );
     expect(excelExporter.exportToExcel).not.toHaveBeenCalled();
@@ -180,29 +172,21 @@ describe('DashboardPortal - handleGenerateExcelReport Safety Integration', () =>
       });
     }
 
-    // 1. Siguraduhing na-render ang "Resident Registry" section
     const residentHeading = await screen.findByText(/Resident Registry/i);
-
-    // 2. Hanapin ang mismong card ng Resident Registry (Gamit ang `.fp` class)
     const residentCard = residentHeading.closest('.fp');
     expect(residentCard).toBeTruthy();
 
-    // 3. Hanapin at i-click ang Export Excel button sa LOOB ng card
     const exportButton = within(residentCard).getByRole('button', { name: /Export Excel/i });
 
     await act(async () => {
       fireEvent.click(exportButton);
     });
 
-    // 4. OPTION A ASSERTIONS: Suriin ang aktuwal na nareceive na parameters
     expect(excelExporter.exportToExcel).toHaveBeenCalledTimes(1);
     const [exportedData, exportedFilename, exportedCategory] = excelExporter.exportToExcel.mock.calls[0];
 
-    // Verify ang category at filename format
     expect(exportedCategory).toBe('residents');
     expect(exportedFilename).toMatch(/^Barangay_Bustrac_residents_\d{4}-\d{2}-\d{2}\.xlsx$/);
-
-    // Verify ang schema at laman ng na-export na data list
     expect(Array.isArray(exportedData)).toBe(true);
     expect(exportedData.length).toBeGreaterThan(0);
     expect(exportedData[0]).toHaveProperty('Resident ID');

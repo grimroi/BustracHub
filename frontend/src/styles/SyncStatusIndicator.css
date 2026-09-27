@@ -1,0 +1,109 @@
+/* --- SYNC STATUS INDICATOR COMPONENT --- */
+
+/* Main Badge Container */
+.sync-status-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 14px;
+  border-radius: 20px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  transition: all 0.3s ease-in-out;
+  border: 1px solid transparent;
+  user-select: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* Status Text Style */
+.sync-status-text {
+  display: inline-block;
+  line-height: 1;
+}
+
+/* Pulsing Status Dot Indicator */
+.sync-status-container::before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  transition: background-color 0.3s ease;
+}
+
+
+/* --- STATE SPECIFIC STYLES --- */
+
+/* 1. Synced State (Success) */
+.sync-status-container.sync-success {
+  background-color: #e6f4ea;
+  color: #137333;
+  border-color: #ceead6;
+}
+.sync-status-container.sync-success::before {
+  background-color: #1e8e3e;
+  box-shadow: 0 0 0 2px rgba(30, 142, 62, 0.2);
+}
+
+/* 2. Syncing State (Active - Rotating/Pulsing Animation) */
+.sync-status-container.sync-active {
+  background-color: #e8f0fe;
+  color: #1a73e8;
+  border-color: #d2e3fc;
+}
+.sync-status-container.sync-active::before {
+  background-color: #1a73e8;
+  animation: pulse-active 1.2s infinite ease-in-out;
+}
+
+/* 3. Sync Error State (Error/Danger) */
+.sync-status-container.sync-error {
+  background-color: #fce8e6;
+  color: #c5221f;
+  border-color: #fad2cf;
+}
+.sync-status-container.sync-error::before {
+  background-color: #d93025;
+  animation: pulse-error 1.5s infinite;
+}
+
+/* 4. Checking Status / Offline State (Neutral/Warning) */
+.sync-status-container.sync-checking,
+.sync-status-container.sync-offline {
+  background-color: #f1f3f4;
+  color: #5f6368;
+  border-color: #dadce0;
+}
+.sync-status-container.sync-checking::before,
+.sync-status-container.sync-offline::before {
+  background-color: #80868b;
+}
+
+
+/* --- ANIMATIONS --- */
+
+@keyframes pulse-active {
+  0% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+  50% {
+    transform: scale(1.2);
+    opacity: 1;
+    box-shadow: 0 0 6px rgba(26, 115, 232, 0.6);
+  }
+  100% {
+    transform: scale(0.8);
+    opacity: 0.6;
+  }
+}
+
+@keyframes pulse-error {
+  0%, 100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.3;
+  }
+}

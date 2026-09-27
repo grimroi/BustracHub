@@ -1,3 +1,4 @@
+// src/components/ResidentCombobox.jsx
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 
 export const formatPurok = (purok) => {
@@ -8,31 +9,34 @@ export const formatPurok = (purok) => {
 
 export default function ResidentCombobox({
   residents = [],
-  value,            
-  onChange,          
+  value,
+  onChange,
   placeholder = 'Search by name, resident ID, or purok...',
-  maxVisible = 30,     
+  maxVisible = 30,
 }) {
   const [query, setQuery] = useState('');
   const [open, setOpen] = useState(false);
   const [highlight, setHighlight] = useState(0);
   const wrapRef = useRef(null);
 
+  // Ligtas na pag-check kung array ang residents
+  const safeResidents = Array.isArray(residents) ? residents : [];
+
   const selected = useMemo(
-    () => residents.find((r) => r.id === value) || null,
-    [residents, value]
+    () => safeResidents.find((r) => r.id === value) || null,
+    [safeResidents, value]
   );
 
   const matches = useMemo(() => {
     const q = query.toLowerCase().trim();
-    if (!q) return residents;
-    return residents.filter(
+    if (!q) return safeResidents;
+    return safeResidents.filter(
       (r) =>
         (r.name || '').toLowerCase().includes(q) ||
         (r.id || '').toLowerCase().includes(q) ||
-        (String(r.purok || '').toLowerCase().includes(q))
+        String(r.purok || '').toLowerCase().includes(q)
     );
-  }, [residents, query]);
+  }, [safeResidents, query]);
 
   const filtered = useMemo(() => matches.slice(0, maxVisible), [matches, maxVisible]);
 
@@ -52,10 +56,17 @@ export default function ResidentCombobox({
   };
 
   const onKeyDown = (e) => {
-    if (e.key === 'ArrowDown') { e.preventDefault(); setOpen(true); setHighlight((h) => Math.min(h + 1, filtered.length - 1)); }
-    else if (e.key === 'ArrowUp') { e.preventDefault(); setHighlight((h) => Math.max(h - 1, 0)); }
-    else if (e.key === 'Enter' && open) { e.preventDefault(); if (filtered[highlight]) pick(filtered[highlight]); }
-    else if (e.key === 'Escape') setOpen(false);
+    if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setOpen(true);
+      setHighlight((h) => Math.min(h + 1, filtered.length - 1));
+    } else if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setHighlight((h) => Math.max(h - 1, 0));
+    } else if (e.key === 'Enter' && open) {
+      e.preventDefault();
+      if (filtered[highlight]) pick(filtered[highlight]);
+    } else if (e.key === 'Escape') setOpen(false);
   };
 
   if (selected) {
@@ -68,7 +79,12 @@ export default function ResidentCombobox({
               {selected.id} • {formatPurok(selected.purok)}
             </span>
           </div>
-          <button type="button" className="res-combo-clear" onClick={() => onChange(null)} aria-label="Clear selected resident">
+          <button
+            type="button"
+            className="res-combo-clear"
+            onClick={() => onChange(null)}
+            aria-label="Clear selected resident"
+          >
             ✕
           </button>
         </div>
@@ -85,24 +101,31 @@ export default function ResidentCombobox({
         </svg>
         <input
           type="text"
+          role="combobox"
+          aria-autocomplete="list"
+          aria-expanded={open}
           className="fc"
           value={query}
           placeholder={placeholder}
-          onChange={(e) => { setQuery(e.target.value); setOpen(true); setHighlight(0); }}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            setOpen(true);
+            setHighlight(0);
+          }}
           onFocus={() => setOpen(true)}
           onKeyDown={onKeyDown}
         />
       </div>
 
       {open && (
-        <div className="res-combo-panel">
+        <div className="res-combo-panel" role="listbox">
           {filtered.length === 0 ? (
             <div className="res-combo-empty">No matching resident found.</div>
           ) : (
             <>
               <ul>
                 {filtered.map((res, i) => (
-                  <li key={res.id}>
+                  <li key={res.id} role="option" aria-selected={i === highlight}>
                     <button
                       type="button"
                       className={`res-combo-option${i === highlight ? ' active' : ''}`}
@@ -110,7 +133,9 @@ export default function ResidentCombobox({
                       onClick={() => pick(res)}
                     >
                       <span className="res-combo-name">{res.name}</span>
-                      <span className="res-combo-sub">{res.id} • {formatPurok(res.purok)}</span>
+                      <span className="res-combo-sub">
+                        {res.id} • {formatPurok(res.purok)}
+                      </span>
                     </button>
                   </li>
                 ))}

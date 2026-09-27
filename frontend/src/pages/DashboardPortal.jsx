@@ -18,6 +18,8 @@ import AuditLogView from '../components/AuditLogView';
 import { localDb as db, forceSyncToRemote, createAuditLog } from '../services/db';
 import BlotterCertificatePrintModal from "../components/BlotterCertificatePrintModal";
 import { exportToExcel } from '../utils/excelExporter'
+import SyncStatusIndicator from '../components/SyncStatusIndicator';
+import BlotterForm from '../components/BlotterForm';
 
 
 const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
@@ -2404,15 +2406,18 @@ const [blotterForm, setBlotterForm] = useState({
   location: '',
   isComplainantNonResident: false,
   complainant: '',
+  complainantId: '',
   isRespondentNonResident: false,
   respondent: '',
+  respondentId: '',
   witnesses: '',
   priority: 'Medium',
   actionTaken: 'Summoned Parties',
   narrative: '',
   status: 'Open',
   nextHearingDate: '',
-  attachments: []
+  attachments: [],
+  isVawc: false
 });
 
 // Master Effect para sa Admin Blotter Management sa DashboardPortal.jsx
@@ -4742,7 +4747,8 @@ const handleSaveBlotter = async (e) => {
       priority: blotterForm.priority || 'Medium Priority',
       incidentType: blotterForm.incidentType || blotterForm.type || 'Physical Altercation',
       location: blotterForm.location || 'Zone 4, near Barangay Hall Plaza, Brgy. Bustrac, Nabua',
-      isVAWC: !!blotterForm.isVAWC,
+      isVAWC: !!blotterForm.isVawc,
+      isVawc: !!blotterForm.isVawc,
       
       // Parties Data (Dual-key mapping)
       complainant: compName,
@@ -4829,6 +4835,7 @@ useEffect(() => {
 }, []);
 const [isBusinessModalOpen, setIsBusinessModalOpen] = useState(false);
 const [businessModalMode, setBusinessModalMode] = useState('edit');
+const [showBlotterModal, setShowBlotterModal] = useState(false);
   // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
@@ -5245,22 +5252,19 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
               <div className="tb-title">{getPageTitle()}</div>
               <div className="tb-sub">{getPageSubtitle()}</div>
             </div>
+
             {role === 'admin' && (
               <div className="role-admin">🔑 Admin</div>
             )}
 
-            {/* Dynamic Sync Status Indicator */}
-            <div className="sync-status-container" style={{ display: 'flex', alignItems: 'center', gap: '8px', padding: '6px 12px', borderRadius: '20px', background: syncState === 'offline' ? 'rgba(239, 68, 68, 0.15)' : syncState === 'syncing' ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)', border: `1px solid ${ syncState === 'offline' ? '#ef4444' : syncState === 'syncing' ? '#f59e0b' : '#10b981' }`, transition: 'all 0.3s ease' }}>
-              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: syncState === 'offline' ? '#ef4444' : syncState === 'syncing' ? '#f59e0b' : '#10b981', display: 'inline-block', animation: syncState === 'syncing' ? 'dp-sync-pulse 1s infinite alternate' : 'none' }} />
-              <span style={{ fontSize: '12px', fontWeight: '600', color: syncState === 'offline' ? '#f87171' : syncState === 'syncing' ? '#fbbf24' : '#34d399' }}>
-                {syncState === 'offline' && "☁️ Working Offline (Saved to Local Device)"}
-                {syncState === 'syncing' && "🔄 Connecting & Syncing changes to Central Cloud..."}
-                {syncState === 'synced' && "🗲 All changes synced to Cloud"}
-              </span>
-            </div>
+            {/* Real-time Dynamic Sync Status Indicator */}
+            <SyncStatusIndicator />
 
             <ThemeToggle />
-            <button className="btn btn-g btn-sm" onClick={logout}> Sign Out </button>
+            
+            <button className="btn btn-g btn-sm" onClick={logout}>
+              Sign Out
+            </button>
           </header>
 
           <div className="content">
@@ -8677,14 +8681,19 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                 ════════════════════════════════════════ */}
               {screen === 'blotter-new' && (
               <div className="screen active" style={{ position: 'relative' }}>
-                <form onSubmit={handleCreateBlotterEntry}>
+                <form onSubmit={(e) => e.preventDefault()}>
                   {/* System Metadata - Header Panel */}
                   <div className="fp" style={{ marginBottom: '16px' }}>
                     <div className="fp-t">System Metadata (Read-Only)</div>
                     <div className="fg3" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '12px', marginTop: '8px' }}>
                       <div className="fg">
                         <label className="fl">Blotter Tracking No.</label>
-                        <input className="fc" readOnly value={`BLT-2026-${String(blotterList.length + 125).padStart(5, '0')}`} style={{ fontFamily: 'var(--mono)', fontWeight: 'bold', color: 'var(--accent)' }} />
+                        <input 
+                          className="fc" 
+                          readOnly 
+                          value={`BLT-2026-${String((blotterList?.length || 0) + 125).padStart(5, '0')}`} 
+                          style={{ fontFamily: 'var(--mono)', fontWeight: 'bold', color: 'var(--accent)' }} 
+                        />
                       </div>
                       <div className="fg">
                         <label className="fl">Officer Handling Case</label>
@@ -8699,21 +8708,33 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
 
                   {/* 2-Column Main Form Grid */}
                   <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                    
                     {/* LEFT COLUMN: Incident Parameters & Parties */}
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
                       
                       {/* Incident Parameters */}
                       <div className="fp" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px', margin: 0 }}>
                         <div className="fp-t">Incident Parameters & Priority</div>
+                        
                         <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '8px' }}>
                           <div className="fg">
                             <label className="fl">Date of Incident <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <input className="fc" type="date" required value={blotterForm.date} onChange={(e) => setBlotterForm({ ...blotterForm, date: e.target.value })} />
+                            <input 
+                              className="fc" 
+                              type="date" 
+                              required 
+                              value={blotterForm.date} 
+                              onChange={(e) => setBlotterForm({ ...blotterForm, date: e.target.value })} 
+                            />
                           </div>
                           <div className="fg">
                             <label className="fl">Time Matrix <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <input className="fc" type="time" required value={blotterForm.time} onChange={(e) => setBlotterForm({ ...blotterForm, time: e.target.value })} />
+                            <input 
+                              className="fc" 
+                              type="time" 
+                              required 
+                              value={blotterForm.time} 
+                              onChange={(e) => setBlotterForm({ ...blotterForm, time: e.target.value })} 
+                            />
                           </div>
                         </div>
 
@@ -8722,8 +8743,7 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                             <label className="fl">Case Priority Rank</label>
                             <select className="fc" value={blotterForm.priority} onChange={(e) => setBlotterForm({ ...blotterForm, priority: e.target.value })}>
                               <option value="Low">Low Priority</option>
-                              <option value="Medium">Medium Priority</option>
-                              <option value="High">High Priority</option>
+                              <option value="Medium">Medium Priority</option> <option value="High">High Priority</option>
                             </select>
                           </div>
                           <div className="fg">
@@ -8733,10 +8753,9 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                               value={blotterForm.type} 
                               onChange={(e) => {
                                 const selectedType = e.target.value;
-                                // Auto-check VAWC flag if "Domestic Violence" is selected
                                 setBlotterForm({ 
                                   ...blotterForm, 
-                                  type: selectedType,
+                                  type: selectedType, 
                                   isVawc: selectedType === 'Domestic Violence' ? true : blotterForm.isVawc 
                                 });
                               }}
@@ -8757,20 +8776,16 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
 
                         <div className="fg" style={{ marginTop: '12px' }}>
                           <label className="fl">Exact Location Address <span style={{ color: 'var(--red)' }}>*</span></label>
-                          <input className="fc" required placeholder="e.g. Purok 5, near the public plaza" value={blotterForm.location} onChange={(e) => setBlotterForm({ ...blotterForm, location: e.target.value })} />
+                          <input 
+                            className="fc" 
+                            required 
+                            placeholder="e.g. Purok 5, near the public plaza" 
+                            value={blotterForm.location} 
+                            onChange={(e) => setBlotterForm({ ...blotterForm, location: e.target.value })} 
+                          />
                         </div>
 
-                        <div style={{ 
-                          display: 'flex', 
-                          alignItems: 'center', 
-                          justifyContent: 'space-between', 
-                          background: blotterForm.isVawc ? 'rgba(239, 68, 68, 0.15)' : 'var(--surface2)', 
-                          border: blotterForm.isVawc ? '1px solid #ef4444' : '1px solid var(--border)', 
-                          padding: '10px 12px', 
-                          borderRadius: '6px', 
-                          marginTop: '16px', 
-                          transition: 'all 0.2s ease' 
-                        }}>
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: blotterForm.isVawc ? 'rgba(239, 68, 68, 0.15)' : 'var(--surface2)', border: blotterForm.isVawc ? '1px solid #ef4444' : '1px solid var(--border)', padding: '10px 12px', borderRadius: '6px', marginTop: '16px', transition: 'all 0.2s ease' }}>
                           <div>
                             <strong style={{ fontSize: '13px', display: 'block', color: blotterForm.isVawc ? '#fca5a5' : 'var(--text)' }}>
                               RA 9262 / VAWC Incident Flag
@@ -8790,157 +8805,95 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                             </span>
                           </label>
                         </div>
-
                       </div>
 
                       {/* Legal Parties Involved */}
                       <div className="fp" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px', margin: 0 }}>
                         <div className="fp-t">Legal Parties Involved</div>
-                        
-                        {/* Complainant */}
-                        <div className="fg" style={{ position: 'relative', marginTop: '8px' }}>
+
+                        {/* Complainant sa Tulong ni ResidentCombobox */}
+                        <div className="fg" style={{ marginTop: '8px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                             <label className="fl" style={{ margin: 0 }}>Complainant (Nagrereklamo) <span style={{ color: 'var(--red)' }}>*</span></label>
                             <label style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                              <input type="checkbox" checked={blotterForm.isComplainantNonResident} onChange={(e) => {
-                                const checked = e.target.checked;
-                                setBlotterForm({ ...blotterForm, isComplainantNonResident: checked, complainant: '' });
-                                setComplainantQuery('');
-                              }} /> Non-resident
+                              <input 
+                                type="checkbox" 
+                                checked={blotterForm.isComplainantNonResident} 
+                                onChange={(e) => setBlotterForm({ ...blotterForm, isComplainantNonResident: e.target.checked, complainant: '' })} 
+                              /> Non-resident
                             </label>
                           </div>
+
                           {blotterForm.isComplainantNonResident ? (
-                            <input className="fc" required placeholder="Enter full name of non-resident complainant" value={blotterForm.complainant} onChange={(e) => setBlotterForm({ ...blotterForm, complainant: e.target.value })} />
+                            <input 
+                              className="fc" 
+                              required 
+                              placeholder="Enter full name of non-resident complainant" 
+                              value={blotterForm.complainant} 
+                              onChange={(e) => setBlotterForm({ ...blotterForm, complainant: e.target.value })} 
+                            />
                           ) : (
-                            <>
-                              <div style={{ position: 'relative' }}>
-                                <div className="sb-box">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
-                                  <input className="fc" placeholder="Search resident name..." value={complainantQuery} required={!blotterForm.isComplainantNonResident} onChange={(e) => {
-                                    const val = e.target.value;
-                                    setComplainantQuery(val);
-                                    setShowComplainantDropdown(true);
-                                    if (blotterForm.complainant && val !== blotterForm.complainant) {
-                                      setBlotterForm(prev => ({ ...prev, complainant: '' }));
-                                    }
-                                  }} onFocus={() => setShowComplainantDropdown(true)} style={{ width: '100%' }} />
-                                </div>
-                                {blotterForm.complainant && (
-                                  <div style={{ fontSize: '11px', color: '#10b981', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg> Linked Profile: <strong>{blotterForm.complainant}</strong>
-                                  </div>
-                                )}
-                              </div>
-                              {/* COMPLAINANT DROPDOWN */}
-                              {showComplainantDropdown && complainantQuery && (
-                                <div style={{ position: 'absolute', top: '64px', left: 0, width: '100%', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '4px', zIndex: 10, maxHeight: '140px', overflowY: 'auto' }}>
-                                  {handleSearchResident(complainantQuery).length > 0 ? (
-                                    handleSearchResident(complainantQuery).map((res) => {
-                                      const displayName = res.name || `${res.firstName || ''} ${res.middleName || ''} ${res.lastName || ''}`.trim();
-                                      return (
-                                        <div
-                                          key={res.id || res._id}
-                                          style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #334155', fontSize: '12px' }}
-                                          onClick={() => {
-                                            setBlotterForm({ ...blotterForm, complainant: displayName, complainantId: res.id || res._id });
-                                            setComplainantQuery(displayName);
-                                            setShowComplainantDropdown(false);
-                                          }}
-                                        >
-                                          {displayName} ({res.purok || 'No Purok'})
-                                        </div>
-                                      );
-                                    })
-                                  ) : (
-                                    <div style={{ padding: '8px 12px', fontSize: '12px', color: '#94a3b8' }}>Walang nahanap na residente</div>
-                                  )}
-                                </div>
-                              )}
-                            </>
+                            <ResidentCombobox
+                              residents={residentsList}
+                              value={blotterForm.complainantId}
+                              placeholder="Search resident name, ID, or purok..."
+                              onChange={(selected) => {
+                                setBlotterForm({
+                                  ...blotterForm,
+                                  complainant: selected ? selected.name : '',
+                                  complainantId: selected ? selected.id : '',
+                                });
+                              }}
+                            />
                           )}
                         </div>
 
-                        {/* Respondent */}
-                        <div className="fg" style={{ position: 'relative', marginTop: '12px' }}>
+                        {/* Respondent sa Tulong ni ResidentCombobox */}
+                        <div className="fg" style={{ marginTop: '12px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
                             <label className="fl" style={{ margin: 0 }}>Respondent (Inirereklamo) <span style={{ color: 'var(--red)' }}>*</span></label>
                             <label style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                              <input type="checkbox" checked={blotterForm.isRespondentNonResident} onChange={(e) => {
-                                const checked = e.target.checked;
-                                setBlotterForm({ ...blotterForm, isRespondentNonResident: checked, respondent: '' });
-                                setRespondentQuery('');
-                              }} /> Non-resident
+                              <input 
+                                type="checkbox" 
+                                checked={blotterForm.isRespondentNonResident} 
+                                onChange={(e) => setBlotterForm({ ...blotterForm, isRespondentNonResident: e.target.checked, respondent: '' })} 
+                              /> Non-resident
                             </label>
                           </div>
+
                           {blotterForm.isRespondentNonResident ? (
-                            <input className="fc" required placeholder="Enter full name of non-resident respondent" value={blotterForm.respondent} onChange={(e) => setBlotterForm({ ...blotterForm, respondent: e.target.value })} />
+                            <input 
+                              className="fc" 
+                              required 
+                              placeholder="Enter full name of non-resident respondent" 
+                              value={blotterForm.respondent} 
+                              onChange={(e) => setBlotterForm({ ...blotterForm, respondent: e.target.value })} 
+                            />
                           ) : (
-                            <>
-                              <div style={{ position: 'relative' }}>
-                                <div className="sb-box">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" /></svg>
-                                  <input className="fc" placeholder="Search resident name..." value={respondentQuery} required={!blotterForm.isRespondentNonResident} onChange={(e) => {
-                                    const val = e.target.value;
-                                    setRespondentQuery(val);
-                                    setShowRespondentDropdown(true);
-                                    if (blotterForm.respondent && val !== blotterForm.respondent) {
-                                      setBlotterForm(prev => ({ ...prev, respondent: '' }));
-                                    }
-                                  }} onFocus={() => setShowRespondentDropdown(true)} style={{ width: '100%' }} />
-                                </div>
-                                {blotterForm.respondent && (
-                                  <div style={{ fontSize: '11px', color: '#10b981', marginTop: '2px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg> Linked Profile: <strong>{blotterForm.respondent}</strong>
-                                  </div>
-                                )}
-                              </div>
-                              {/* RESPONDENT DROPDOWN FILTER */}
-                              {showRespondentDropdown && respondentQuery && (
-                                <div 
-                                  style={{ 
-                                    position: 'absolute', 
-                                    top: '64px', 
-                                    left: 0, 
-                                    width: '100%', 
-                                    background: 'var(--surface)', 
-                                    border: '1px solid var(--border)', 
-                                    borderRadius: '4px', 
-                                    zIndex: 10, 
-                                    maxHeight: '140px', 
-                                    overflowY: 'auto' 
-                                  }}
-                                >
-                                  {handleSearchResident(respondentQuery).map((res) => {
-                                    const displayName = res.name || `${res.firstName || ''} ${res.lastName || ''}`.trim();
-                                    return (
-                                      <div 
-                                        key={res.id || res._id} 
-                                        style={{ 
-                                          padding: '8px 12px', 
-                                          cursor: 'pointer', 
-                                          borderBottom: '1px solid #334155', 
-                                          fontSize: '12px' 
-                                        }} 
-                                        onClick={() => {
-                                          setBlotterForm({ ...blotterForm, respondent: displayName, respondentId: res.id || res._id });
-                                          setRespondentQuery(displayName);
-                                          setShowRespondentDropdown(false);
-                                        }}
-                                      >
-                                        {displayName} ({res.purok || 'No Purok'})
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-                            </>
+                            <ResidentCombobox
+                              residents={residentsList}
+                              value={blotterForm.respondentId}
+                              placeholder="Search resident name, ID, or purok..."
+                              onChange={(selected) => {
+                                setBlotterForm({
+                                  ...blotterForm,
+                                  respondent: selected ? selected.name : '',
+                                  respondentId: selected ? selected.id : '',
+                                });
+                              }}
+                            />
                           )}
                         </div>
 
                         {/* Witnesses */}
                         <div className="fg" style={{ marginTop: '12px' }}>
                           <label className="fl">Witnesses Block (Optional)</label>
-                          <input className="fc" placeholder="Comma-separated names" value={blotterForm.witnesses} onChange={(e) => setBlotterForm({ ...blotterForm, witnesses: e.target.value })} />
+                          <input 
+                            className="fc" 
+                            placeholder="Comma-separated names" 
+                            value={blotterForm.witnesses} 
+                            onChange={(e) => setBlotterForm({ ...blotterForm, witnesses: e.target.value })} 
+                          />
                         </div>
                       </div>
                     </div>
@@ -8953,7 +8906,14 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                           
                           <div className="fg" style={{ marginTop: '8px' }}>
                             <label className="fl">Incident Narrative Report Statement <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <textarea className="fc" required style={{ minHeight: '140px' }} placeholder="Provide a detailed chronological presentation statement of the incident..." value={blotterForm.narrative} onChange={(e) => setBlotterForm({ ...blotterForm, narrative: e.target.value })} />
+                            <textarea 
+                              className="fc" 
+                              required 
+                              style={{ minHeight: '140px' }} 
+                              placeholder="Provide a detailed chronological presentation statement of the incident..." 
+                              value={blotterForm.narrative} 
+                              onChange={(e) => setBlotterForm({ ...blotterForm, narrative: e.target.value })} 
+                            />
                           </div>
 
                           <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
@@ -8982,11 +8942,16 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                           {(blotterForm.status === 'Open' || blotterForm.status === 'Under Mediation') && (
                             <div className="fg" style={{ marginTop: '12px' }}>
                               <label className="fl">Next Mediation Hearing Date</label>
-                              <input className="fc" type="date" value={blotterForm.nextHearingDate} onChange={(e) => setBlotterForm({ ...blotterForm, nextHearingDate: e.target.value })} />
+                              <input 
+                                className="fc" 
+                                type="date" 
+                                value={blotterForm.nextHearingDate} 
+                                onChange={(e) => setBlotterForm({ ...blotterForm, nextHearingDate: e.target.value })} 
+                              />
                             </div>
                           )}
 
-                          {/* Attachments Section (Working Upload with Base64 & Memory Cleanup) */}
+                          {/* Attachments Section */}
                           <div className="fg" style={{ marginTop: '12px' }}>
                             <label className="fl" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                               <span>Evidence Attachments</span>
@@ -8994,59 +8959,31 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                                 {blotterForm.attachments?.length || 0} file(s) attached
                               </span>
                             </label>
-
-                            {/* Hidden File Input */}
-                            <input
-                              type="file"
-                              id="blotter-file-input"
-                              multiple
-                              accept="image/*,.pdf,video/*"
-                              style={{ display: 'none' }}
-                              onChange={handleFileUpload}
-                            />
-
-                            {/* Action Buttons */}
+                            <input type="file" id="blotter-file-input" multiple accept="image/*,.pdf,video/*" style={{ display: 'none' }} onChange={handleFileUpload} />
+                            
                             <div style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-                              <button
-                                type="button"
-                                className="btn btn-g btn-sm"
+                              <button 
+                                type="button" 
+                                className="btn btn-g btn-sm" 
                                 onClick={() => document.getElementById('blotter-file-input').click()}
                                 style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
                               >
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                  <polyline points="17 8 12 3 7 8" />
-                                  <line x1="12" y1="3" x2="12" y2="15" />
-                                </svg>
-                                Upload Media / Document
+                                📎 Upload Media / Document
                               </button>
                             </div>
 
-                            {/* List of Attached Files */}
                             {blotterForm.attachments && blotterForm.attachments.length > 0 && (
                               <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' }}>
                                 {blotterForm.attachments.map((att) => (
-                                  <div
-                                    key={att.id}
-                                    style={{
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justify: 'space-between',
-                                      background: 'var(--surface2)',
-                                      padding: '6px 10px',
-                                      borderRadius: '6px',
-                                      border: '1px solid var(--border)',
-                                      fontSize: '12px',
-                                    }}
-                                  >
+                                  <div key={att.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface2)', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '12px' }}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden' }}>
                                       <span style={{ fontWeight: 600, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap', maxWidth: '180px' }}>
                                         {att.name}
                                       </span>
                                       <span style={{ fontSize: '10px', color: 'var(--muted)' }}>({att.size})</span>
                                     </div>
-                                    <button
-                                      type="button"
+                                    <button 
+                                      type="button" 
                                       style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 4px', fontSize: '14px' }}
                                       onClick={() => {
                                         if (att.previewUrl && att.previewUrl.startsWith('blob:')) {
@@ -9071,24 +9008,33 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                         {/* Integrated Action Buttons */}
                         <div className="fa" style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid #334155', paddingTop: '16px' }}>
                           <button 
-                            type="button"
+                            type="button" 
                             className="btn btn-p" 
                             disabled={!isBlotterFormValid} 
-                            onClick={handleSaveBlotter}
+                            onClick={handleSaveBlotter} 
                             style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center', opacity: !isBlotterFormValid ? 0.5 : 1, cursor: !isBlotterFormValid ? 'not-allowed' : 'pointer' }}
                           >
                             Save Blotter Case Record
                           </button>
-                          <button type="button" className="btn" onClick={handleClearBlotterForm} style={{ flex: 1, background: 'rgba(71, 85, 105, 0.6)', color: '#e2e8f0', borderRadius: '6px' }}>
+                          <button 
+                            type="button" 
+                            className="btn" 
+                            onClick={handleClearBlotterForm} 
+                            style={{ flex: 1, background: 'rgba(71, 85, 105, 0.6)', color: '#e2e8f0', borderRadius: '6px' }}
+                          >
                             Clear
-                          </button> <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => nav('blotter-manage')}>
+                          </button>
+                          <button 
+                            type="button" 
+                            className="btn btn-g" 
+                            style={{ flex: 1 }} 
+                            onClick={() => nav('blotter-manage')}
+                          >
                             Cancel
                           </button>
                         </div>
-
                       </div>
                     </div>
-
                   </div>
                 </form>
               </div>
@@ -10674,6 +10620,67 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
         </div>
       )}
          
+         {/* ═══ BAGONG BLOTTER FORM MODAL ═══ */}
+{showBlotterModal && (
+  <div
+    style={{
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      right: 0,
+      bottom: 0,
+      backgroundColor: 'rgba(0, 0, 0, 0.65)',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      zIndex: 9999,
+      backdropFilter: 'blur(4px)',
+      padding: '20px'
+    }}
+    onClick={() => setShowBlotterModal(false)}
+  >
+    <div
+      style={{
+        background: 'var(--surface, #1e293b)',
+        color: 'var(--text, #f8fafc)',
+        borderRadius: '12px',
+        width: '100%',
+        maxWidth: '520px',
+        padding: '24px',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+        border: '1px solid var(--border, #334155)',
+        position: 'relative'
+      }}
+      onClick={(e) => e.stopPropagation()} // Pigilan ang pag-close kapag cliniclick ang loob
+    >
+      {/* Modal Header */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+        <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
+          📑 Mag-encode ng Bagong Blotter Record
+        </h3>
+        <button
+          type="button"
+          onClick={() => setShowBlotterModal(false)}
+          style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '20px' }}
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Blotter Form Component */}
+      <BlotterForm
+        onSuccess={(newDoc) => {
+          setShowBlotterModal(false);
+          // Opsyonal: magpakita ng alert o i-reload ang blotter list
+          if (typeof fetchBlotterRecords === 'function') {
+            fetchBlotterRecords(); // Tawagin kung may refresh function ka
+          }
+        }}
+      />
+    </div>
+  </div>
+)}
+
         {showPrintModal && selectedPrintCert && (
         <div style={{ 
           position: 'fixed', 
