@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import bustracLogo from '../assets/logo.png';
 import './LandingPage.css';
@@ -21,6 +21,220 @@ export default function LandingPage() {
   const [visibleActivitiesCount, setVisibleActivitiesCount] = useState(6);
   const [visibleAdvisoriesCount, setVisibleAdvisoriesCount] = useState(6);
 
+  // 1. Normalize helper
+  const normalizeAnnouncements = useCallback((rawList) => {
+    if (!Array.isArray(rawList)) return [];
+    return rawList
+      .filter((item) => item && (item.type === 'announcement' || String(item._id || '').startsWith('announcement_')))
+      .map((item) => ({
+        id: item._id || item.id || Math.random().toString(36).slice(2),
+        title: item.title || 'Untitled',
+        description: item.description || item.content || item.body || '',
+        date: item.date || item.timestamp || item.createdAt || new Date().toISOString(),
+        category: item.category || 'General',
+        pinned: !!item.pinned,
+        author: item.author || 'Barangay Office',
+        status: item.status || 'Published',
+      }))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, []);
+
+  // 2. LocalStorage loader
+  const loadAnnouncementsFromLocalStorage = useCallback(() => {
+    try {
+      const raw = localStorage.getItem('bustrac_announcements');
+      if (raw) {
+        return normalizeAnnouncements(JSON.parse(raw));
+      }
+    } catch (e) {
+      console.warn('Failed to read localStorage announcements:', e);
+    }
+    return [];
+  }, [normalizeAnnouncements]);
+  
+    // ── 3. Activities helpers ──
+  const normalizeActivities = useCallback((rawList) => {
+    if (!Array.isArray(rawList)) return [];
+    return rawList
+      .filter((item) => item && (item.type === 'activity' || item.id || item._id))
+      .map((item) => ({
+        id: item._id || item.id || Math.random().toString(36).slice(2),
+        title: item.title || 'Untitled Activity',
+        description: item.description || item.content || item.body || item.details || '',
+        date: item.date || item.activityDate || item.timestamp || item.createdAt || new Date().toISOString(),
+        category: item.category || 'Events',
+        location: item.location || '',
+      }))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, []);
+
+  const loadActivitiesFromLocalStorage = useCallback(() => {
+    try {
+      const raw = localStorage.getItem('bustrac_activities');
+      if (raw) {
+        return normalizeActivities(JSON.parse(raw));
+      }
+    } catch (e) {
+      console.warn('Failed to read localStorage activities:', e);
+    }
+    return [];
+  }, [normalizeActivities]);
+
+  // ── 4. Advisories helpers ──
+  const normalizeAdvisories = useCallback((rawList) => {
+    if (!Array.isArray(rawList)) return [];
+    return rawList
+      .filter((item) => item && (item.type === 'advisory' || String(item._id || '').startsWith('advisory_')))
+      .map((item) => ({
+        id: item._id || item.id || Math.random().toString(36).slice(2),
+        title: item.title || 'Untitled Advisory',
+        description: item.description || item.content || item.body || '',
+        date: item.date || item.timestamp || item.createdAt || new Date().toISOString(),
+        category: item.category || 'Relief',
+        priority: item.priority || 'Medium',
+        status: item.status || 'Active',
+      }))
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, []);
+
+  const loadAdvisoriesFromLocalStorage = useCallback(() => {
+    try {
+      const raw = localStorage.getItem('bustrac_advisories');
+      if (raw) {
+        return normalizeAdvisories(JSON.parse(raw));
+      }
+    } catch (e) {
+      console.warn('Failed to read localStorage advisories:', e);
+    }
+    return [];
+  }, [normalizeAdvisories]);
+
+  // 3. SINGLE MERGED useEffect (dapat nasa ibaba ng callbacks na ginagamit nito)
+    // ── 5. SINGLE MERGED useEffect: LocalStorage + API ──
+  useEffect(() => {
+    let cancelled = false;
+    const hadLight = document.documentElement.classList.contains('light');
+
+    document.documentElement.classList.add('dark');
+    document.body.classList.add('dark');
+    document.documentElement.classList.remove('light');
+    document.body.classList.remove('light');
+
+    // A. Immediate load from admin localStorage: ANNOUNCEMENTS
+    const localAnnouncements = loadAnnouncementsFromLocalStorage();
+    if (localAnnouncements.length > 0) {
+      setData((prev) => ({ ...prev, announcements: localAnnouncements }));
+    }
+
+    // B. Immediate load from admin localStorage: ACTIVITIES
+    const localActivities = loadActivitiesFromLocalStorage();
+    if (localActivities.length > 0) {
+      setData((prev) => ({ ...prev, activities: localActivities }));
+    }
+
+    // C. Immediate load from admin localStorage: ADVISORIES
+    const localAdvisories = loadAdvisoriesFromLocalStorage();
+    if (localAdvisories.length > 0) {
+      setData((prev) => ({ ...prev, advisories: localAdvisories }));
+    }
+
+    // D. Fetch from public API then merge
+    const fetchPublicData = async () => {
+      try {
+        const response = await fetch(PUBLIC_API);
+        if (!response.ok) {
+          throw new Error('Failed to fetch public portal announcements and details.');
+        }
+        const result = await response.json();
+
+        if (!cancelled) {
+          // Merge announcements (API takes precedence)
+          const apiAnnouncements = normalizeAnnouncements(result.announcements || []);
+          const annMap = new Map();
+          apiAnnouncements.forEach((a) => annMap.set(a.id, a));
+          localAnnouncements.forEach((a) => {
+            if (!annMap.has(a.id)) annMap.set(a.id, a);
+          });
+          const mergedAnnouncements = Array.from(annMap.values()).sort(
+            (a, b) => new Date(b.date) - new Date(a.date)
+          );
+
+          // Merge activities (API takes precedence)
+          const apiActivities = normalizeActivities(result.activities || []);
+          const actMap = new Map();
+          apiActivities.forEach((a) => actMap.set(a.id, a));
+          localActivities.forEach((a) => {
+            if (!actMap.has(a.id)) actMap.set(a.id, a);
+          });
+          const mergedActivities = Array.from(actMap.values()).sort(
+            (a, b) => new Date(b.date) - new Date(a.date)
+          );
+
+          // Merge advisories (API takes precedence)
+          const apiAdvisories = normalizeAdvisories(result.advisories || []);
+          const advMap = new Map();
+          apiAdvisories.forEach((a) => advMap.set(a.id, a));
+          localAdvisories.forEach((a) => {
+            if (!advMap.has(a.id)) advMap.set(a.id, a);
+          });
+          const mergedAdvisories = Array.from(advMap.values()).sort(
+            (a, b) => new Date(b.date) - new Date(a.date)
+          );
+
+          setData({
+            announcements: mergedAnnouncements,
+            advisories: mergedAdvisories,
+            activities: mergedActivities,
+            hotlines: result.hotlines || [],
+            office: result.office || null,
+          });
+          setError('');
+        }
+      } catch (err) {
+        console.error('Error fetching public portal data:', err);
+        if (!cancelled) {
+          if (
+            localAnnouncements.length === 0 &&
+            localActivities.length === 0 &&
+            localAdvisories.length === 0
+          ) {
+            setError(
+              'Hindi maikonekta sa server o ma-load ang mga anunsyo. Pakisubukan ulit mamaya.'
+            );
+          }
+        }
+      } finally {
+        if (!cancelled) {
+          setLoading(false);
+        }
+      }
+    };
+
+    fetchPublicData();
+
+    const intervalId = setInterval(() => {
+      fetchPublicData();
+    }, 30000);
+
+    return () => {
+      cancelled = true;
+      clearInterval(intervalId);
+      document.documentElement.classList.remove('dark');
+      document.body.classList.remove('dark');
+      if (hadLight) {
+        document.documentElement.classList.add('light');
+        document.body.classList.add('light');
+      }
+    };
+  }, [
+    loadAnnouncementsFromLocalStorage,
+    normalizeAnnouncements,
+    loadActivitiesFromLocalStorage,
+    normalizeActivities,
+    loadAdvisoriesFromLocalStorage,
+    normalizeAdvisories,
+  ]);
+
   const goToLogin = (activeTab = null) => {
     navigate('/login', {
       state: {
@@ -40,65 +254,10 @@ export default function LandingPage() {
 
       window.scrollTo({
         top: offsetPosition,
-        behavior: 'smooth'
+        behavior: 'smooth',
       });
     }
   };
-
-  useEffect(() => {
-    let cancelled = false;
-    const hadLight = document.documentElement.classList.contains('light');
-    document.documentElement.classList.add('dark');
-    document.body.classList.add('dark');
-    document.documentElement.classList.remove('light');
-    document.body.classList.remove('light');
-
-    const fetchPublicData = async () => {
-      try {
-        const response = await fetch(PUBLIC_API);
-        if (!response.ok) {
-          throw new Error('Failed to fetch public portal announcements and details.');
-        }
-        const result = await response.json();
-        if (!cancelled) {
-          setData({
-            announcements: result.announcements || [],
-            advisories: result.advisories || [],
-            activities: result.activities || [],
-            hotlines: result.hotlines || [],
-            office: result.office || null,
-          });
-          setError('');
-        }
-      } catch (err) {
-        console.error('Error fetching public portal data:', err);
-        if (!cancelled) {
-          setError('Hindi maikonekta sa server o ma-load ang mga anunsyo. Pakisubukan ulit mamaya.');
-        }
-      } finally {
-        if (!cancelled) {
-          setLoading(false);
-        }
-      }
-    };
-
-    fetchPublicData();
-
-    const intervalId = setInterval(() => {
-      fetchPublicData();
-    }, 30000);
-
-    return () => {
-      cancelled = true;
-      clearInterval(intervalId); 
-      document.documentElement.classList.remove('dark');
-      document.body.classList.remove('dark');
-      if (hadLight) {
-        document.documentElement.classList.add('light');
-        document.body.classList.add('light');
-      }
-    };
-  }, []);
 
   return (
     <div className="landing-page-root min-h-screen bg-slate-950 text-slate-300 font-sans selection:bg-emerald-500 selection:text-white relative overflow-clip">

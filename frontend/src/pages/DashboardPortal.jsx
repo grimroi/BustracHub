@@ -56,6 +56,8 @@ const SCREEN_META = {
   'view-household':  ['Household Profile',    'Resident Registry'],
   'view-resident':   ['Resident Profile',     'Resident Registry'],
   'edit-resident':   ['Edit Resident',        'Resident Registry'],
+  'aid-advisories': ['Relief & Aid Advisories', 'Community Module'],
+    'activities-manage': ['Manage Activities', 'Community Module'],
 };
 
 export const EMPTY_RESIDENT = {
@@ -4836,6 +4838,176 @@ useEffect(() => {
 const [isBusinessModalOpen, setIsBusinessModalOpen] = useState(false);
 const [businessModalMode, setBusinessModalMode] = useState('edit');
 const [showBlotterModal, setShowBlotterModal] = useState(false);
+  // ── ADVISORIES STATE ──
+  const [advisoriesList, setAdvisoriesList] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bustrac_advisories');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+  const [advisoryForm, setAdvisoryForm] = useState({
+    title: '',
+    category: 'Relief',
+    description: '',
+    date: new Date().toISOString().split('T')[0],
+    priority: 'Medium',
+    status: 'Active',
+  });
+
+  const [advisorySubScreen, setAdvisorySubScreen] = useState('list'); // 'list' | 'new' | 'edit'
+  const [editingAdvisoryId, setEditingAdvisoryId] = useState(null);
+
+  // Auto-save advisories to localStorage
+  useEffect(() => {
+    localStorage.setItem('bustrac_advisories', JSON.stringify(advisoriesList));
+  }, [advisoriesList]);
+    const handleSaveAdvisory = (e) => {
+    e.preventDefault();
+    if (!advisoryForm.title.trim() || !advisoryForm.description.trim()) {
+      alert('Please fill in the Title and Description.');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const payload = editingAdvisoryId
+      ? {
+          ...advisoriesList.find((a) => (a._id || a.id) === editingAdvisoryId),
+          ...advisoryForm,
+          updatedAt: now,
+        }
+      : {
+          _id: `advisory_${Date.now()}`,
+          type: 'advisory',
+          ...advisoryForm,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+    if (editingAdvisoryId) {
+      setAdvisoriesList((prev) =>
+        prev.map((a) => ((a._id || a.id) === editingAdvisoryId ? payload : a))
+      );
+    } else {
+      setAdvisoriesList((prev) => [payload, ...prev]);
+    }
+
+    // Reset
+    setAdvisoryForm({
+      title: '',
+      category: 'Relief',
+      description: '',
+      date: new Date().toISOString().split('T')[0],
+      priority: 'Medium',
+      status: 'Active',
+    });
+    setEditingAdvisoryId(null);
+    setAdvisorySubScreen('list');
+  };
+
+  const handleEditAdvisory = (adv) => {
+    setEditingAdvisoryId(adv._id || adv.id);
+    setAdvisoryForm({
+      title: adv.title || '',
+      category: adv.category || 'Relief',
+      description: adv.description || adv.content || adv.body || '',
+      date: adv.date ? adv.date.split('T')[0] : new Date().toISOString().split('T')[0],
+      priority: adv.priority || 'Medium',
+      status: adv.status || 'Active',
+    });
+    setAdvisorySubScreen('edit');
+  };
+
+  const handleDeleteAdvisory = (id) => {
+    if (window.confirm('Are you sure you want to delete this advisory?')) {
+      setAdvisoriesList((prev) => prev.filter((a) => (a._id || a.id) !== id));
+    }
+  };
+  
+    const [activitiesList, setActivitiesList] = useState(() => {
+    try {
+      const saved = localStorage.getItem('bustrac_activities');
+      return saved ? JSON.parse(saved) : [];
+    } catch (e) {
+      return [];
+    }
+  });
+
+    const handleSaveActivity = (e) => {
+    e.preventDefault();
+    if (!activityForm.title.trim() || !activityForm.description.trim()) {
+      alert('Please fill in the Title and Description.');
+      return;
+    }
+
+    const now = new Date().toISOString();
+    const payload = editingActivityId
+      ? {
+          ...activitiesList.find((a) => (a._id || a.id) === editingActivityId),
+          ...activityForm,
+          updatedAt: now,
+        }
+      : {
+          _id: `activity_${Date.now()}`,
+          type: 'activity',
+          ...activityForm,
+          createdAt: now,
+          updatedAt: now,
+        };
+
+    if (editingActivityId) {
+      setActivitiesList((prev) =>
+        prev.map((a) => ((a._id || a.id) === editingActivityId ? payload : a))
+      );
+    } else {
+      setActivitiesList((prev) => [payload, ...prev]);
+    }
+
+    setActivityForm({
+      title: '',
+      category: 'Events',
+      description: '',
+      date: new Date().toISOString().split('T')[0],
+      location: '',
+    });
+    setEditingActivityId(null);
+    setActivitySubScreen('list');
+  };
+
+  const handleEditActivity = (act) => {
+    setEditingActivityId(act._id || act.id);
+    setActivityForm({
+      title: act.title || '',
+      category: act.category || 'Events',
+      description: act.description || act.content || act.body || '',
+      date: act.date ? act.date.split('T')[0] : new Date().toISOString().split('T')[0],
+      location: act.location || '',
+    });
+    setActivitySubScreen('edit');
+  };
+
+  const handleDeleteActivity = (id) => {
+    if (window.confirm('Are you sure you want to delete this activity?')) {
+      setActivitiesList((prev) => prev.filter((a) => (a._id || a.id) !== id));
+    }
+  };
+  
+    const [activityForm, setActivityForm] = useState({
+    title: '',
+    category: 'Events',
+    description: '',
+    date: new Date().toISOString().split('T')[0],
+    location: '',
+  });
+  const [activitySubScreen, setActivitySubScreen] = useState('list');
+  const [editingActivityId, setEditingActivityId] = useState(null);
+
+  useEffect(() => {
+    localStorage.setItem('bustrac_activities', JSON.stringify(activitiesList));
+  }, [activitiesList]);
+
   // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
@@ -5144,6 +5316,24 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
             {activeFeedbackCount > 0 && (
               <span className="nb nb-red">{activeFeedbackCount}</span>
             )}
+          </button>
+          
+          <button className={`nav-btn${screen === 'activities-manage' ? ' active' : ''}`} onClick={() => nav('activities-manage')}>
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+              </svg>
+            </span>
+            <span className="nav-label">Manage Activities</span>
+          </button>
+          
+                    <button className={`nav-btn${screen === 'aid-advisories' ? ' active' : ''}`} onClick={() => nav('aid-advisories')}>
+            <span className="nav-ico">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </span>
+            <span className="nav-label">Relief & Aid Advisories</span>
           </button>
 
           {/* ADMIN-ONLY SECTION */}
@@ -10098,7 +10288,396 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
 
                   </div>
                 )}
+            
+                        {/* ════════════════════════════════════════
+                SCREEN: MANAGE ACTIVITIES
+                ════════════════════════════════════════ */}
+            {screen === 'activities-manage' && (
+              <div className="screen active">
+                {/* Header Toolbar */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div>
+                    <div style={{ fontSize: '12px', color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px' }}>
+                      Community Calendar
+                    </div>
+                    <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>
+                      {activitySubScreen === 'list' ? 'Barangay Activities' : editingActivityId ? 'Edit Activity' : 'New Activity'}
+                    </div>
+                  </div>
+                  {activitySubScreen === 'list' ? (
+                    <button 
+                      className="btn btn-p" 
+                      onClick={() => {
+                        setEditingActivityId(null);
+                        setActivityForm({
+                          title: '',
+                          category: 'Events',
+                          description: '',
+                          date: new Date().toISOString().split('T')[0],
+                          location: '',
+                        });
+                        setActivitySubScreen('new');
+                      }}
+                    >
+                      + Add Activity
+                    </button>
+                  ) : (
+                    <button 
+                      className="btn btn-g" 
+                      onClick={() => setActivitySubScreen('list')}
+                    >
+                      ← Back to List
+                    </button>
+                  )}
+                </div>
 
+                {/* LIST VIEW */}
+                {activitySubScreen === 'list' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {activitiesList.length === 0 ? (
+                      <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
+                        <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>No activities found</div>
+                        <div style={{ fontSize: '12px' }}>Click "+ Add Activity" to publish a new community event or program.</div>
+                      </div>
+                    ) : (
+                      activitiesList
+                        .slice()
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+                        .map((act) => (
+                          <div 
+                            key={act._id || act.id} 
+                            className="card"
+                            style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'flex-start',
+                              gap: '16px',
+                              padding: '16px 20px'
+                            }}
+                          >
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                                <span className="badge b" style={{ fontSize: '10px' }}>
+                                  {act.category || 'Events'}
+                                </span>
+                                <span style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                                  {act.date}
+                                </span>
+                                {act.location && (
+                                  <span style={{ fontSize: '11px', color: 'var(--accent)' }}>
+                                    📍 {act.location}
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>
+                                {act.title}
+                              </div>
+                              <div style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5 }}>
+                                {act.description}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                              <button className="btn btn-g btn-sm" onClick={() => handleEditActivity(act)}>
+                                Edit
+                              </button>
+                              <button 
+                                className="btn btn-d btn-sm" 
+                                onClick={() => handleDeleteActivity(act._id || act.id)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                )}
+
+                {/* NEW / EDIT FORM */}
+                {(activitySubScreen === 'new' || activitySubScreen === 'edit') && (
+                  <div className="fp" style={{ maxWidth: '640px', margin: '0 auto', padding: '24px' }}>
+                    <form onSubmit={handleSaveActivity}>
+                      <div className="fg">
+                        <label className="fl">Activity Title <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <input
+                          className="fc"
+                          required
+                          placeholder="e.g. Barangay Assembly, Clean-up Drive, Medical Mission"
+                          value={activityForm.title}
+                          onChange={(e) => setActivityForm({ ...activityForm, title: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="fg2" style={{ marginTop: '12px' }}>
+                        <div className="fg">
+                          <label className="fl">Category</label>
+                          <select
+                            className="fc"
+                            value={activityForm.category}
+                            onChange={(e) => setActivityForm({ ...activityForm, category: e.target.value })}
+                          >
+                            <option value="Events">Events</option>
+                            <option value="Meetings">Meetings</option>
+                            <option value="Programs">Programs</option>
+                            <option value="Health">Health</option>
+                            <option value="Governance">Governance</option>
+                            <option value="Sports">Sports</option>
+                            <option value="Others">Others</option>
+                          </select>
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Date <span style={{ color: 'var(--red)' }}>*</span></label>
+                          <input
+                            className="fc"
+                            type="date"
+                            required
+                            value={activityForm.date}
+                            onChange={(e) => setActivityForm({ ...activityForm, date: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="fg" style={{ marginTop: '12px' }}>
+                        <label className="fl">Location</label>
+                        <input
+                          className="fc"
+                          placeholder="e.g. Barangay Covered Court, Purok 3"
+                          value={activityForm.location}
+                          onChange={(e) => setActivityForm({ ...activityForm, location: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="fg" style={{ marginTop: '12px' }}>
+                        <label className="fl">Description / Details <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <textarea
+                          className="fc"
+                          required
+                          rows={5}
+                          placeholder="Describe the activity, schedule, and any instructions for residents..."
+                          value={activityForm.description}
+                          onChange={(e) => setActivityForm({ ...activityForm, description: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="fa" style={{ marginTop: '20px', justifyContent: 'flex-end' }}>
+                        <button type="button" className="btn btn-g" onClick={() => setActivitySubScreen('list')} style={{ marginRight: '10px' }}>
+                          Cancel
+                        </button>
+                        <button type="submit" className="btn btn-p">
+                          {editingActivityId ? 'Save Changes' : 'Publish Activity'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* ════════════════════════════════════════
+                SCREEN: RELIEF & AID ADVISORIES
+                ════════════════════════════════════════ */}
+            {screen === 'aid-advisories' && (
+              <div className="screen active">
+                
+                {/* Header Toolbar */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <div>
+                    <div style={{ fontSize: '12px', color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px' }}>
+                      Community Advisories
+                    </div>
+                    <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>
+                      {advisorySubScreen === 'list' ? 'Relief & Aid Advisories' : editingAdvisoryId ? 'Edit Advisory' : 'New Advisory'}
+                    </div>
+                  </div>
+                  {advisorySubScreen === 'list' ? (
+                    <button 
+                      className="btn btn-p" 
+                      onClick={() => {
+                        setEditingAdvisoryId(null);
+                        setAdvisoryForm({
+                          title: '',
+                          category: 'Relief',
+                          description: '',
+                          date: new Date().toISOString().split('T')[0],
+                          priority: 'Medium',
+                          status: 'Active',
+                        });
+                        setAdvisorySubScreen('new');
+                      }}
+                    >
+                      + Create Advisory
+                    </button>
+                  ) : (
+                    <button 
+                      className="btn btn-g" 
+                      onClick={() => setAdvisorySubScreen('list')}
+                    >
+                      ← Back to List
+                    </button>
+                  )}
+                </div>
+
+                {/* LIST VIEW */}
+                {advisorySubScreen === 'list' && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                    {advisoriesList.length === 0 ? (
+                      <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
+                        <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>No advisories found</div>
+                        <div style={{ fontSize: '12px' }}>Click "+ Create Advisory" to publish relief operations or assistance program information.</div>
+                      </div>
+                    ) : (
+                      advisoriesList
+                        .slice()
+                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+                        .map((adv) => (
+                          <div 
+                            key={adv._id || adv.id} 
+                            className="card"
+                            style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'flex-start',
+                              gap: '16px',
+                              padding: '16px 20px',
+                              borderLeft: adv.priority === 'High' ? '4px solid var(--red)' : adv.priority === 'Medium' ? '4px solid var(--amber)' : '4px solid var(--green)'
+                            }}
+                          >
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                                <span className="badge a" style={{ fontSize: '10px' }}>
+                                  {adv.category || 'Relief'}
+                                </span>
+                                <span style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                                  {adv.date}
+                                </span>
+                                <span className={`badge ${adv.priority === 'High' ? 'r' : adv.priority === 'Medium' ? 'a' : 'g'}`} style={{ fontSize: '10px' }}>
+                                  {adv.priority} Priority
+                                </span>
+                                <span className="badge t" style={{ fontSize: '10px' }}>
+                                  {adv.status}
+                                </span>
+                              </div>
+                              <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>
+                                {adv.title}
+                              </div>
+                              <div style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5 }}>
+                                {adv.description}
+                              </div>
+                            </div>
+                            <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
+                              <button className="btn btn-g btn-sm" onClick={() => handleEditAdvisory(adv)}>
+                                Edit
+                              </button>
+                              <button 
+                                className="btn btn-d btn-sm" 
+                                onClick={() => handleDeleteAdvisory(adv._id || adv.id)}
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </div>
+                        ))
+                    )}
+                  </div>
+                )}
+
+                {/* NEW / EDIT FORM */}
+                {(advisorySubScreen === 'new' || advisorySubScreen === 'edit') && (
+                  <div className="fp" style={{ maxWidth: '640px', margin: '0 auto', padding: '24px' }}>
+                    <form onSubmit={handleSaveAdvisory}>
+                      <div className="fg">
+                        <label className="fl">Advisory Title <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <input
+                          className="fc"
+                          required
+                          placeholder="e.g. Typhoon Preparedness Advisory, Rice Distribution Schedule"
+                          value={advisoryForm.title}
+                          onChange={(e) => setAdvisoryForm({ ...advisoryForm, title: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="fg2" style={{ marginTop: '12px' }}>
+                        <div className="fg">
+                          <label className="fl">Category</label>
+                          <select
+                            className="fc"
+                            value={advisoryForm.category}
+                            onChange={(e) => setAdvisoryForm({ ...advisoryForm, category: e.target.value })}
+                          >
+                            <option value="Relief">Relief</option>
+                            <option value="Aid">Aid</option>
+                            <option value="Disaster">Disaster</option>
+                            <option value="Health">Health</option>
+                            <option value="Emergency">Emergency</option>
+                            <option value="General">General</option>
+                          </select>
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Date <span style={{ color: 'var(--red)' }}>*</span></label>
+                          <input
+                            className="fc"
+                            type="date"
+                            required
+                            value={advisoryForm.date}
+                            onChange={(e) => setAdvisoryForm({ ...advisoryForm, date: e.target.value })}
+                          />
+                        </div>
+                      </div>
+
+                      <div className="fg2" style={{ marginTop: '12px' }}>
+                        <div className="fg">
+                          <label className="fl">Priority</label>
+                          <select
+                            className="fc"
+                            value={advisoryForm.priority}
+                            onChange={(e) => setAdvisoryForm({ ...advisoryForm, priority: e.target.value })}
+                          >
+                            <option value="Low">Low</option>
+                            <option value="Medium">Medium</option>
+                            <option value="High">High</option>
+                          </select>
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Status</label>
+                          <select
+                            className="fc"
+                            value={advisoryForm.status}
+                            onChange={(e) => setAdvisoryForm({ ...advisoryForm, status: e.target.value })}
+                          >
+                            <option value="Active">Active</option>
+                            <option value="Ongoing">Ongoing</option>
+                            <option value="Completed">Completed</option>
+                            <option value="Cancelled">Cancelled</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      <div className="fg" style={{ marginTop: '12px' }}>
+                        <label className="fl">Description / Details <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <textarea
+                          className="fc"
+                          required
+                          rows={5}
+                          placeholder="Provide details about the relief operation, eligibility, schedule, distribution points..."
+                          value={advisoryForm.description}
+                          onChange={(e) => setAdvisoryForm({ ...advisoryForm, description: e.target.value })}
+                        />
+                      </div>
+
+                      <div className="fa" style={{ marginTop: '20px', justifyContent: 'flex-end' }}>
+                        <button type="button" className="btn btn-g" onClick={() => setAdvisorySubScreen('list')} style={{ marginRight: '10px' }}>
+                          Cancel
+                        </button>
+                        <button type="submit" className="btn btn-p">
+                          {editingAdvisoryId ? 'Save Changes' : 'Publish Advisory'}
+                        </button>
+                      </div>
+                    </form>
+                  </div>
+                )}
+
+              </div>
+            )}
             {/* ════════════════════════════════════════
                 SCREEN: CONFLICT RESOLUTION (Admin only)
              ════════════════════════════════════════ */}
@@ -11214,16 +11793,38 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                         onClick={(e) => e.stopPropagation()}
                       >
                         {/* Modal Header */}
-                        <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div 
+                          className="modal-header" 
+                          style={{ 
+                            padding: '16px 20px', 
+                            borderBottom: '1px solid var(--border)', 
+                            display: 'flex', 
+                            justifyContent: 'space-between', 
+                            alignItems: 'center',
+                            backgroundColor: 'var(--bg-card, var(--card-bg, #ffffff))', // Dynamic background depende sa active theme
+                            color: 'var(--text-main, var(--foreground, inherit))'
+                          }}
+                        >
                           <div>
-                            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>
+                            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-main, inherit)' }}>
                               {businessModalMode === 'edit' ? 'Edit Business Clearance' : 'New Business Clearance'}
                             </h3>
-                            <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
+                            <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted, #64748b)' }}>
                               Update business details, owner information, and OR reference
                             </p>
                           </div>
-                          <button type="button" className="btn-close" onClick={() => setIsBusinessModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '20px', cursor: 'pointer' }}>
+                          <button 
+                            type="button" 
+                            className="btn-close" 
+                            onClick={() => setIsBusinessModalOpen(false)} 
+                            style={{ 
+                              background: 'none', 
+                              border: 'none', 
+                              color: 'var(--text-main, var(--muted))', 
+                              fontSize: '20px', 
+                              cursor: 'pointer' 
+                            }}
+                          >
                             ✕
                           </button>
                         </div>
