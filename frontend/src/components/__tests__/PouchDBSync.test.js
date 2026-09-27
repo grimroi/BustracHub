@@ -1,5 +1,13 @@
-import PouchDB from 'pouchdb';
-import memoryAdapter from 'pouchdb-adapter-memory';
+// 1. Unang i-assign ang setImmediate global Polyfill para sa memdown/leveldown
+if (typeof setImmediate === 'undefined') {
+  global.setImmediate = (fn, ...args) => setTimeout(fn, 0, ...args);
+}
+
+// 2. I-unmock ang pouchdb para magamit ang totoong PouchDB engine
+jest.unmock('pouchdb');
+
+const PouchDB = require('pouchdb');
+const memoryAdapter = require('pouchdb-adapter-memory');
 
 PouchDB.plugin(memoryAdapter);
 
@@ -7,11 +15,14 @@ describe('Offline-to-Online PouchDB Conflict Handling', () => {
   let localDb;
 
   beforeEach(async () => {
-    localDb = new PouchDB('test_barangay_db', { adapter: 'memory' });
+    // Gumawa ng totoong in-memory PouchDB instance na may unique name bawat test
+    localDb = new PouchDB('test_barangay_db_' + Date.now(), { adapter: 'memory' });
   });
 
   afterEach(async () => {
-    await localDb.destroy();
+    if (localDb) {
+      await localDb.destroy();
+    }
   });
 
   test('should correctly identify and handle document conflicts during parallel offline edits', async () => {
@@ -33,17 +44,16 @@ describe('Offline-to-Online PouchDB Conflict Handling', () => {
       contactNo: '09179999999',
       updatedAt: '2026-09-01T10:05:00Z'
     };
-
     const updateB = {
       ...fetchedDoc,
       contactNo: '09188888888',
       updatedAt: '2026-09-01T10:10:00Z'
     };
 
-    // First update succeeds and creates a new _rev
+    // Ang unang update ay magtatagumpay at gagawa ng bagong _rev
     await localDb.put(updateA);
 
-    // Attempting to put updateB with the old _rev must throw a 409 conflict
+    // Ang pagsubok na i-save ang updateB gamit ang LUMANG _rev ay dapat magtapon ng 409 conflict error
     await expect(localDb.put(updateB)).rejects.toMatchObject({
       status: 409,
       name: 'conflict'
@@ -53,7 +63,7 @@ describe('Offline-to-Online PouchDB Conflict Handling', () => {
   test('should resolve conflicts using Last-Write-Wins (LWW) strategy based on updatedAt', async () => {
     const docId = 'resident_conflict_resolution';
 
-    // Seed Initial Doc
+    // 1. Seed Initial Parent Doc
     const seeded = await localDb.put({
       _id: docId,
       name: 'Maria Santos',
@@ -61,30 +71,40 @@ describe('Offline-to-Online PouchDB Conflict Handling', () => {
       updatedAt: '2026-09-01T08:00:00Z'
     });
 
-    // Create Revision Branch A
-    await localDb.put({
-      _id: docId,
-      _rev: seeded.rev,
-      purok: 'Purok 2 (Staff A)',
-      updatedAt: '2026-09-01T09:00:00Z'
-    });
+    const parentRevHash = seeded.rev.split('-')[1];
 
-    // Force conflicting Revision Branch B using allDocs / bulkDocs
-    const conflictRevDoc = {
+    // 2. Gumawa ng dalawang magkaibang valid revision branch sa parehong parent (_rev) gamit ang 32-char hex hashes
+    const revBranchA = {
       _id: docId,
-      _rev: seeded.rev,
-      purok: 'Purok 3 (Staff B)',
-      updatedAt: '2026-09-01T09:30:00Z'
+      _rev: '2-a1111111111111111111111111111111',
+      purok: 'Purok 2 (Staff A)',
+      updatedAt: '2026-09-01T09:00:00Z',
+      _revisions: {
+        start: 2,
+        ids: ['a1111111111111111111111111111111', parentRevHash]
+      }
     };
 
-    await localDb.bulkDocs([conflictRevDoc], { new_edits: false });
+    const revBranchB = {
+      _id: docId,
+      _rev: '2-b2222222222222222222222222222222',
+      purok: 'Purok 3 (Staff B)',
+      updatedAt: '2026-09-01T09:30:00Z',
+      _revisions: {
+        start: 2,
+        ids: ['b2222222222222222222222222222222', parentRevHash]
+      }
+    };
 
-    // Verify that the document has conflicts
+    // Forced insertion ng dalawang magkatunggaling revision branch
+    await localDb.bulkDocs([revBranchA, revBranchB], { new_edits: false });
+
+    // 3. Kunin ang document kasama ang conflict status
     const docWithConflicts = await localDb.get(docId, { conflicts: true });
     expect(docWithConflicts._conflicts).toBeDefined();
     expect(docWithConflicts._conflicts.length).toBeGreaterThan(0);
 
-    // LWW Resolution Logic Implementation
+    // 4. Last-Write-Wins (LWW) Resolution Logic Execution
     const winningRev = docWithConflicts;
     const losingRevId = docWithConflicts._conflicts[0];
     const losingRev = await localDb.get(docId, { rev: losingRevId });
@@ -93,14 +113,14 @@ describe('Offline-to-Online PouchDB Conflict Handling', () => {
     const losingTime = new Date(losingRev.updatedAt).getTime();
 
     if (losingTime > winningTime) {
-      // Mark winning rev as deleted and keep losing rev as main
+      // Kung mas bago ang losing revision, i-delete ang kasalukuyang winning at palitan ito
       await localDb.remove(winningRev._id, winningRev._rev);
     } else {
-      // Delete losing conflict revision
+      // Kung mas lumang timestamp ang losing conflict, i-delete ang losing conflict branch
       await localDb.remove(losingRev._id, losingRev._rev);
     }
 
-    // Assert that conflict flag is now resolved
+    // 5. Tiyakin na resolved na ang conflict at wala nang _conflicts array
     const cleanDoc = await localDb.get(docId, { conflicts: true });
     expect(cleanDoc._conflicts).toBeUndefined();
   });

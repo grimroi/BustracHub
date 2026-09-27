@@ -1,7 +1,87 @@
 /* --- SYNC STATUS INDICATOR COMPONENT --- */
 
-/* Main Badge Container */
-.sync-status-container {
+/* CSS Variables para madaling i-customize */
+:root {
+  /* Success */
+  --sync-success-bg: #e6f4ea;
+  --sync-success-text: #137333;
+  --sync-success-border: #ceead6;
+  --sync-success-dot: #1e8e3e;
+
+  /* Offline / Checking */
+  --sync-neutral-bg: #f1f3f4;
+  --sync-neutral-text: #5f6368;
+  --sync-neutral-border: #dadce0;
+  --sync-neutral-dot: #80868b;
+
+  /* Active / Syncing */
+  --sync-active-bg: #e8f0fe;
+  --sync-active-text: #1a73e8;
+  --sync-active-border: #d2e3fc;
+  --sync-active-dot: #1a73e8;
+
+  /* Error */
+  --sync-error-bg: #fce8e6;
+  --sync-error-text: #c5221f;
+  --sync-error-border: #fad2cf;
+  --sync-error-dot: #d93025;
+}
+
+/* =========================================
+   DARK MODE VARIABLES
+   ========================================= */
+.dark-theme,
+[data-theme="dark"] {
+  --sync-success-bg: rgba(30, 142, 62, 0.2);
+  --sync-success-text: #81c995;
+  --sync-success-border: rgba(129, 201, 149, 0.3);
+  --sync-success-dot: #81c995;
+
+  --sync-neutral-bg: rgba(241, 243, 244, 0.1);
+  --sync-neutral-text: #bdc1c6;
+  --sync-neutral-border: rgba(218, 220, 224, 0.2);
+  --sync-neutral-dot: #bdc1c6;
+
+  --sync-active-bg: rgba(26, 115, 232, 0.2);
+  --sync-active-text: #8ab4f8;
+  --sync-active-border: rgba(138, 180, 248, 0.3);
+  --sync-active-dot: #8ab4f8;
+
+  --sync-error-bg: rgba(217, 48, 38, 0.2);
+  --sync-error-text: #f28b82;
+  --sync-error-border: rgba(242, 139, 130, 0.3);
+  --sync-error-dot: #f28b82;
+}
+
+/* Fallback para sa system-level Dark Mode preference */
+@media (prefers-color-scheme: dark) {
+  body:not(.light-theme) {
+    --sync-success-bg: rgba(30, 142, 62, 0.2);
+    --sync-success-text: #81c995;
+    --sync-success-border: rgba(129, 201, 149, 0.3);
+    --sync-success-dot: #81c995;
+
+    --sync-neutral-bg: rgba(241, 243, 244, 0.1);
+    --sync-neutral-text: #bdc1c6;
+    --sync-neutral-border: rgba(218, 220, 224, 0.2);
+    --sync-neutral-dot: #bdc1c6;
+
+    --sync-active-bg: rgba(26, 115, 232, 0.2);
+    --sync-active-text: #8ab4f8;
+    --sync-active-border: rgba(138, 180, 248, 0.3);
+    --sync-active-dot: #8ab4f8;
+
+    --sync-error-bg: rgba(217, 48, 38, 0.2);
+    --sync-error-text: #f28b82;
+    --sync-error-border: rgba(242, 139, 130, 0.3);
+    --sync-error-dot: #f28b82;
+  }
+}
+
+/* =========================================
+   BASE BADGE CONTAINER
+   ========================================= */
+.sync-status-badge {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -13,76 +93,83 @@
   transition: all 0.3s ease-in-out;
   border: 1px solid transparent;
   user-select: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
-/* Status Text Style */
-.sync-status-text {
+.sync-status-badge .status-text {
   display: inline-block;
   line-height: 1;
 }
 
-/* Pulsing Status Dot Indicator */
-.sync-status-container::before {
+.sync-status-badge .status-icon {
+  font-size: 0.9rem;
+  display: inline-flex;
+  align-items: center;
+}
+
+/* Status Dot via ::before pseudo-element */
+.sync-status-badge::before {
   content: '';
   display: inline-block;
   width: 8px;
   height: 8px;
   border-radius: 50%;
   transition: background-color 0.3s ease;
+  flex-shrink: 0;
 }
 
+/* =========================================
+   STATE SPECIFIC STYLES (Using CSS Vars)
+   ========================================= */
 
-/* --- STATE SPECIFIC STYLES --- */
-
-/* 1. Synced State (Success) */
-.sync-status-container.sync-success {
-  background-color: #e6f4ea;
-  color: #137333;
-  border-color: #ceead6;
+/* 1. Online & Synced State */
+.sync-status-badge.sync-success {
+  background-color: var(--sync-success-bg);
+  color: var(--sync-success-text);
+  border-color: var(--sync-success-border);
 }
-.sync-status-container.sync-success::before {
-  background-color: #1e8e3e;
+.sync-status-badge.sync-success::before {
+  background-color: var(--sync-success-dot);
   box-shadow: 0 0 0 2px rgba(30, 142, 62, 0.2);
 }
 
-/* 2. Syncing State (Active - Rotating/Pulsing Animation) */
-.sync-status-container.sync-active {
-  background-color: #e8f0fe;
-  color: #1a73e8;
-  border-color: #d2e3fc;
+/* 2. Working Offline / Checking State */
+.sync-status-badge.sync-offline,
+.sync-status-badge.sync-checking {
+  background-color: var(--sync-neutral-bg);
+  color: var(--sync-neutral-text);
+  border-color: var(--sync-neutral-border);
 }
-.sync-status-container.sync-active::before {
-  background-color: #1a73e8;
+.sync-status-badge.sync-offline::before,
+.sync-status-badge.sync-checking::before {
+  background-color: var(--sync-neutral-dot);
+}
+
+/* 3. Sync Active/Progress State */
+.sync-status-badge.sync-active {
+  background-color: var(--sync-active-bg);
+  color: var(--sync-active-text);
+  border-color: var(--sync-active-border);
+}
+.sync-status-badge.sync-active::before {
+  background-color: var(--sync-active-dot);
   animation: pulse-active 1.2s infinite ease-in-out;
 }
 
-/* 3. Sync Error State (Error/Danger) */
-.sync-status-container.sync-error {
-  background-color: #fce8e6;
-  color: #c5221f;
-  border-color: #fad2cf;
+/* 4. Sync Error State */
+.sync-status-badge.sync-error {
+  background-color: var(--sync-error-bg);
+  color: var(--sync-error-text);
+  border-color: var(--sync-error-border);
 }
-.sync-status-container.sync-error::before {
-  background-color: #d93025;
+.sync-status-badge.sync-error::before {
+  background-color: var(--sync-error-dot);
   animation: pulse-error 1.5s infinite;
 }
 
-/* 4. Checking Status / Offline State (Neutral/Warning) */
-.sync-status-container.sync-checking,
-.sync-status-container.sync-offline {
-  background-color: #f1f3f4;
-  color: #5f6368;
-  border-color: #dadce0;
-}
-.sync-status-container.sync-checking::before,
-.sync-status-container.sync-offline::before {
-  background-color: #80868b;
-}
-
-
-/* --- ANIMATIONS --- */
-
+/* =========================================
+   ANIMATIONS
+   ========================================= */
 @keyframes pulse-active {
   0% {
     transform: scale(0.8);
@@ -106,4 +193,21 @@
   50% {
     opacity: 0.3;
   }
+}
+
+/* Dynamic Pulse Animation para sa Syncing status */
+@keyframes dp-sync-pulse {
+  0% {
+    opacity: 0.4;
+    transform: scale(0.8);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+
+.sync-status-container {
+  user-select: none;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }

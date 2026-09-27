@@ -1,55 +1,37 @@
-// src/components/SyncStatusIndicator.jsx
 import React, { useState, useEffect } from 'react';
-import { localDb } from '../services/db';
 import '../styles/SyncStatusIndicator.css';
 
-const SyncStatusIndicator = () => {
-  const [statusText, setStatusText] = useState('Checking Connection...');
-  const [statusClass, setStatusClass] = useState('sync-checking');
+const SyncStatusIndicator = ({ syncState }) => {
+  const [isOnline, setIsOnline] = useState(navigator.onLine);
 
   useEffect(() => {
-    let syncHandler;
-    try {
-      syncHandler = localDb.sync();
-      if (syncHandler && typeof syncHandler.on === 'function') {
-        syncHandler
-          .on('active', () => {
-            setStatusText('🔄 Connecting & Syncing changes to Central Cloud...');
-            setStatusClass('sync-active');
-          })
-          .on('change', () => {
-            setStatusText('🔄 Connecting & Syncing changes to Central Cloud...');
-            setStatusClass('sync-active');
-          })
-          .on('paused', (err) => {
-            if (err) {
-              setStatusText('☁️ Working Offline (Saved to Local Device)');
-              setStatusClass('sync-offline');
-            } else {
-              setStatusText('⚡ All changes synced to Cloud');
-              setStatusClass('sync-success');
-            }
-          })
-          .on('error', () => {
-            setStatusText('☁️ Working Offline (Saved to Local Device)');
-            setStatusClass('sync-offline');
-          });
-      }
-    } catch (err) {
-      setStatusText('☁️ Working Offline (Saved to Local Device)');
-      setStatusClass('sync-offline');
-    }
+    const handleOnline = () => setIsOnline(true);
+    const handleOffline = () => setIsOnline(false);
+
+    window.addEventListener('online', handleOnline);
+    window.addEventListener('offline', handleOffline);
 
     return () => {
-      if (syncHandler && typeof syncHandler.cancel === 'function') {
-        syncHandler.cancel();
-      }
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
     };
   }, []);
 
+  // Determinado ang aktwal na status state: 'offline', 'syncing', o 'synced'
+  const currentStatus = !isOnline 
+    ? 'offline' 
+    : syncState === 'syncing' 
+      ? 'syncing' 
+      : 'synced';
+
   return (
-    <div className={`sync-status-container ${statusClass}`}>
-      <span className="sync-status-text">{statusText}</span>
+    <div className={`sync-status-container sync-${currentStatus}`} role="status" aria-live="polite">
+      <span className="sync-status-dot" aria-hidden="true" />
+      <span className="sync-status-text">
+        {currentStatus === 'offline' && "☁️ Working Offline (Saved to Local Device)"}
+        {currentStatus === 'syncing' && "🔄 Connecting & Syncing changes to Central Cloud..."}
+        {currentStatus === 'synced' && "🗲 All changes synced to Cloud"}
+      </span>
     </div>
   );
 };
