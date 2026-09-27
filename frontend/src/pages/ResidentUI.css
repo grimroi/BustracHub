@@ -975,3 +975,461 @@ html, body, #root {
   background-color: var(--surface) !important;
   color: var(--text) !important;
 }
+
+/* =========================================================
+   RESIDENT PORTAL - MOBILE-FIRST RESPONSIVE OPTIMIZATIONS
+   ========================================================= */
+
+/* 1. Touch Target & Layout Container */
+.resident-container {
+  width: 100%;
+  max-width: 600px;
+  margin: 0 auto;
+  padding: 12px;
+  box-sizing: border-box;
+}
+
+/* Fix Touch Target Sizes for Mobile Phones (Apple/Android standard: min 44px) */
+.resident-container button,
+.resident-container .btn,
+.resident-container select,
+.resident-container input {
+  min-height: 44px;
+  font-size: 14px;
+  touch-action: manipulation;
+}
+
+/* 2. Responsive Status Cards Grid */
+.stat-cards-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+  gap: 10px;
+  margin-bottom: 16px;
+}
+
+.stat-card-item {
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 10px;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+}
+
+/* 3. Horizontal Scroll Container for Tables/Cards on Small Screens */
+.mobile-scroll-x {
+  width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  border-radius: 8px;
+}
+
+/* 4. Blotter Progress Timeline (Steppers) for Mobile */
+.blotter-stepper-container {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  position: relative;
+  margin: 20px 0 15px 0;
+  padding: 0 5px;
+}
+
+/* Connecting Line behind steps */
+.blotter-stepper-line {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  right: 20px;
+  height: 3px;
+  background-color: var(--border, #e5e7eb);
+  z-index: 1;
+}
+
+.blotter-stepper-line-active {
+  position: absolute;
+  top: 18px;
+  left: 20px;
+  height: 3px;
+  background-color: #10b981; /* Green active */
+  z-index: 1;
+  transition: width 0.3s ease;
+}
+
+.blotter-step-node {
+  position: relative;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+}
+
+.step-circle {
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  background: #ffffff;
+  border: 2px solid #d1d5db;
+  color: #6b7280;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 700;
+  transition: all 0.2s ease;
+}
+
+.step-circle.done {
+  background: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
+}
+
+.step-circle.active {
+  border-color: #2563eb;
+  color: #2563eb;
+  background: #eff6ff;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.2);
+}
+
+.step-label {
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 6px;
+  color: #4b5563;
+  text-align: center;
+  line-height: 1.1;
+  word-break: break-word;
+}
+
+/* Mobile Media Query Adjustments (< 480px) */
+@media (max-width: 480px) {
+  .resident-container {
+    padding: 8px;
+  }
+
+  .stat-cards-grid {
+    grid-template-columns: repeat(2, 1fr); /* 2 columns sa mobile */
+    gap: 8px;
+  }
+
+  .step-label {
+    font-size: 9px;
+    max-width: 60px;
+  }
+
+  .step-circle {
+    width: 28px;
+    height: 28px;
+    font-size: 11px;
+  }
+
+  /* Force word wrapping on long text/reference numbers */
+  .truncate-mobile {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 140px;
+  }
+}
+/* =========================================================
+   MOBILE-FIRST STEPPER & TIMELINE OPTIMIZATIONS
+   ========================================================= */
+
+.steps {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  position: relative;
+  width: 100%;
+  margin: 16px 0 12px 0;
+  padding: 0 4px;
+  box-sizing: border-box;
+}
+
+.step {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  flex: 1;
+  position: relative;
+  z-index: 2;
+}
+
+/* Horizontal Line connecting steps */
+.step-line {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  width: 100%;
+  height: 2px;
+  background-color: var(--border, #e5e7eb);
+  z-index: -1;
+}
+
+.step.done + .step .step-line,
+.step.done .step-line {
+  background-color: #10b981; /* Connected active/done green line */
+}
+
+/* Circles */
+.step-circle {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: var(--surface, #ffffff);
+  border: 2px solid var(--border, #d1d5db);
+  color: var(--muted, #6b7280);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  transition: all 0.25s ease;
+}
+
+.step.done .step-circle {
+  background: #10b981;
+  border-color: #10b981;
+  color: #ffffff;
+}
+
+.step.active .step-circle {
+  border-color: #3b82f6;
+  color: #3b82f6;
+  background: rgba(59, 130, 246, 0.1);
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2);
+}
+
+.step-label {
+  font-size: 10px;
+  font-weight: 600;
+  margin-top: 6px;
+  color: var(--muted, #6b7280);
+  text-align: center;
+  line-height: 1.1;
+  max-width: 65px;
+  word-wrap: break-word;
+}
+
+.step.done .step-label,
+.step.active .step-label {
+  color: var(--text, #111827);
+}
+
+/* Extra Small Screens (iPhone SE / older Androids <= 375px) */
+@media (max-width: 375px) {
+  .step-circle {
+    width: 24px;
+    height: 24px;
+    font-size: 10px;
+  }
+  .step-line {
+    top: 12px;
+  }
+  .step-label {
+    font-size: 8.5px;
+    max-width: 50px;
+  }
+}
+/* Responsive Global Container Enhancements */
+.resident-portal-mobile {
+  width: 100%;
+  max-width: 100vw;
+  overflow-x: hidden;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: env(safe-area-inset-bottom, 20px); /* Para sa iPhone Home Indicator */
+}
+
+/* Card Touch States & Feedback */
+.resident-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+  touch-action: manipulation;
+}
+
+.resident-card:active {
+  transform: scale(0.985);
+}
+
+/* Better Line Clamping for Details Text on Small Screens */
+.card-details-preview {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+/* 1. Enhanced resident-portal-mobile */
+.resident-portal-mobile {
+  box-sizing: border-box;
+  padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+}
+
+/* 2. Enhanced resident-card */
+.resident-card {
+  background: var(--surface, #ffffff);
+  border: 1px solid var(--border, #e5e7eb);
+  border-radius: 14px;
+  padding: 16px;
+  margin-bottom: 14px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* 3. New Card Header & Badges */
+.card-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.card-title-text {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text, #111827);
+  line-height: 1.3;
+  word-break: break-word;
+}
+
+.status-badge {
+  white-space: nowrap;
+  flex-shrink: 0;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+
+/* 4. New Details Box */
+.card-details-box {
+  font-size: 12px;
+  color: var(--text, #374151);
+  line-height: 1.45;
+  margin-bottom: 12px;
+  background: var(--surface2, rgba(255, 255, 255, 0.03));
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border, #e5e7eb);
+  word-break: break-word;
+}
+
+/* 5. New Mobile Button */
+.btn-mobile-full {
+  width: 100%;
+  min-height: 42px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  font-size: 13px;
+  border-radius: 8px;
+  touch-action: manipulation;
+}
+
+/* 6. Fix last step line overflow */
+.step:last-child .step-line {
+  display: none;
+}
+
+/* 7. Add to existing 375px media query */
+@media (max-width: 375px) {
+  .card-title-text {
+    font-size: 13px;
+  }
+}
+/* Responsive Form Inputs & Touch Focus for Mobile */
+.resident-portal-mobile input[type="text"],
+.resident-portal-mobile input[type="date"],
+.resident-portal-mobile select,
+.resident-portal-mobile textarea {
+  width: 100%;
+  font-size: 16px !important; /* Pinipigilan ang auto-zoom ng iOS Safari kapag nag-fofocus sa input */
+  padding: 12px;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+/* Mobile Modal Bottom-Sheet Style (Kapag nag-o-open ng Request/Edit Form) */
+@media (max-width: 640px) {
+  .resident-modal-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-top-left-radius: 20px !important;
+    border-top-right-radius: 20px !important;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: slideUp 0.3s ease-out;
+  }
+}
+
+@keyframes slideUp {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
+}
+
+/* Prevent iOS Safari auto-zoom on input focus */
+.resident-portal-mobile input[type="text"],
+.resident-portal-mobile input[type="date"],
+.resident-portal-mobile select,
+.resident-portal-mobile textarea {
+  width: 100%;
+  font-size: 16px !important;
+  padding: 12px;
+  border-radius: 8px;
+  box-sizing: border-box;
+}
+
+/* Mobile Modal Bottom-Sheet Style */
+@media (max-width: 640px) {
+  .resident-modal-content {
+    width: 100% !important;
+    max-width: 100% !important;
+    border-bottom-left-radius: 0 !important;
+    border-bottom-right-radius: 0 !important;
+    border-top-left-radius: 20px !important;
+    border-top-right-radius: 20px !important;
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    max-height: 88vh;
+    overflow-y: auto;
+    animation: slideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  }
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+/* Merge card-details-preview clamping into card-details-box */
+.card-details-box {
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+/* Update padding shorthand for resident-portal-mobile */
+.resident-portal-mobile {
+  padding: 12px 12px calc(24px + env(safe-area-inset-bottom, 0px)) 12px;
+}
+
+/* Add cursor pointer to mobile full button */
+.btn-mobile-full {
+  cursor: pointer;
+}

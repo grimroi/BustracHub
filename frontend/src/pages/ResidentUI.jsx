@@ -22,7 +22,7 @@ const CERT_FORM_INITIAL = {
   certPurpose: '',
 };
 
-const REMOTE_DB_URL = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@localhost:5984/bustrachub_db';
+const REMOTE_DB_URL = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
 
 const mapDocToResidentFeedback = (doc) => {
   const rawTime = doc.timestamp || doc.createdAt || doc.date || new Date().toISOString();
@@ -316,117 +316,18 @@ export default function ResidentUI() {
     };
   }, []);
   
-   // SINGLE CONSOLIDATED PROFILE SYNC EFFECT
-useEffect(() => {
-  if (!db || !loggedInUser) return;
 
-  // 1. Function para mag-fetch at mag-match ng Profile
-  const syncResidentProfile = async () => {
-    try {
-      const res = await db.allDocs({ include_docs: true });
-      const allDocs = res.rows.map((row) => row.doc).filter(Boolean);
-
-      const currentId = String(
-        loggedInUser.residentId || loggedInUser.id || loggedInUser._id || ''
-      ).trim().toLowerCase();
-
-      const currentName = String(
-        loggedInUser.fullName || loggedInUser.name || 'Juan Reyes'
-      ).trim().toLowerCase();
-
-      const matchedResident = allDocs.find((doc) => {
-        const isResidentDoc =
-          doc.docType === 'resident' ||
-          doc.type === 'resident' ||
-          Boolean(doc.rbiNo || doc.householdId || doc.residentId);
-
-        if (!isResidentDoc) return false;
-
-        const docId = String(
-          doc.residentId || doc.id || doc._id || ''
-        ).trim().toLowerCase();
-
-        const docFullName = doc.fullName
-          ? doc.fullName.toLowerCase()
-          : `${doc.firstName || ''} ${doc.lastName || ''}`.trim().toLowerCase();
-
-        // Matching gamit ang ID o Name
-        if (currentId && docId === currentId) return true;
-        if (currentName && docFullName) {
-          const cleanCurrent = currentName.replace(/[^a-z0-9]/g, '');
-          const cleanDoc = docFullName.replace(/[^a-z0-9]/g, '');
-          if (cleanDoc.includes(cleanCurrent) || cleanCurrent.includes(cleanDoc)) {
-            return true;
-          }
-        }
-        return false;
-      });
-
-      if (matchedResident) {
-        console.log('✅ Matched Official Resident Record:', matchedResident);
-        setResidentProfile({
-          id: matchedResident.residentId || matchedResident._id || 'RES-0002',
-          firstName: matchedResident.firstName || 'Juan',
-          lastName: matchedResident.lastName || 'Reyes',
-          fullName: matchedResident.fullName || `${matchedResident.firstName || 'Juan'} ${matchedResident.lastName || 'Reyes'}`,
-          civilStatus: matchedResident.civilStatus || 'Widowed',
-          purok: matchedResident.purok || matchedResident.zone || 'Purok 1',
-          householdId: matchedResident.householdId || matchedResident.householdNo || 'HH-0003',
-          voterStatus: matchedResident.isVoter ? 'Registered Voter' : 'Non-Voter',
-          gender: matchedResident.gender || 'Male',
-          age: matchedResident.age || 'N/A',
-          birthdate: matchedResident.birthdate || matchedResident.dob || 'N/A',
-          contact: matchedResident.contact || matchedResident.phone || 'N/A',
-          email: matchedResident.email || loggedInUser?.email || 'N/A',
-          address: matchedResident.address || 'Purok 1, Barangay Bustrac',
-          emergencyContactPerson: matchedResident.emergencyContactPerson || 'N/A',
-          emergencyContactNo: matchedResident.emergencyContactNo || 'N/A',
-          rawDoc: matchedResident,
-        });
-      }
-    } catch (err) {
-      console.error('❌ Error syncing Resident Profile with Admin Registry:', err);
-    }
-  };
-
-  // Unang pag-load
-  syncResidentProfile();
-
-  // 2. Real-Time Listener para sa mga pagbabago mula sa Admin (e.g. kapag pinalitan ang civil status o purok)
-  const changes = db.changes({
-    live: true,
-    since: 'now',
-    include_docs: true,
-  });
-
-  changes.on('change', (changeInfo) => {
-    const doc = changeInfo.doc;
-    if (doc && (doc.docType === 'resident' || doc.type === 'resident' || doc.residentId)) {
-      console.log('⚡ Resident Profile change detected in database, refreshing...');
-      syncResidentProfile();
-    }
-  });
-
-  changes.on('error', (err) => {
-    console.error('❌ Profile sync listener error:', err);
-  });
-
-  return () => {
-    changes.cancel();
-  };
-}, [db, loggedInUser]);
 
   // Single Unified Effect for All Resident Data & Real-Time Sync
 useEffect(() => {
   if (!db || !loggedInUser) return;
 
-  // Flexible and Robust User Matching Helper
-  const matchesUser = (doc) => {
+  // Flexible and Robust User Matching Helper Function
+  const checkUserMatch = (doc) => {
     if (!doc) return false;
 
-    // Get the possible names and ID of the logged-in resident
     const rawFullName = loggedInUser.fullName || loggedInUser.name || loggedInUser.displayName || '';
-    const rawUsername = loggedInUser.username || '';
+    const rawUsername = loggedInUser.username || loggedInUser.email || '';
     const rawUserId = loggedInUser._id || loggedInUser.residentId || loggedInUser.id || '';
 
     const userFullName = rawFullName.toLowerCase().trim();
@@ -439,16 +340,16 @@ useEffect(() => {
       return true;
     }
 
-    // 2. Extract the Complainant name (whether String or Object)
-    const comp = typeof doc.complainant === 'object'
-      ? (doc.complainant?.name || doc.complainant?.displayName || '')
-      : (doc.complainant || doc.complainantName || doc.compName || '');
+    // 2. Direct Username / User Matching
+    const docUsername = String(doc.username || doc.user || '').toLowerCase().trim();
+    if (userName && docUsername && docUsername === userName) {
+      return true;
+    }
 
-    // 3. Extract the Respondent name (whether String or Object)
-    const resp = typeof doc.respondent === 'object'
-      ? (doc.respondent?.name || doc.respondent?.displayName || '')
-      : (doc.respondent || doc.respondentName || doc.respName || '');
-
+    // 3. Extract Complainant or Respondent name (whether String or Object)
+    const comp = typeof doc.complainant === 'object' ? (doc.complainant?.name || doc.complainant?.displayName || '') : (doc.complainant || doc.complainantName || doc.compName || '');
+    const resp = typeof doc.respondent === 'object' ? (doc.respondent?.name || doc.respondent?.displayName || '') : (doc.respondent || doc.respondentName || doc.respName || '');
+    
     const compLower = String(comp).toLowerCase().trim();
     const respLower = String(resp).toLowerCase().trim();
 
@@ -475,44 +376,54 @@ useEffect(() => {
     if (s.includes('resolved') || s.includes('closed') || s.includes('settled')) return 4;
     if (s.includes('summon') || s.includes('mediation') || s.includes('hearing') || s.includes('pangkat')) return 3;
     if (s.includes('investigation') || s.includes('review') || s.includes('ongoing')) return 2;
-    return 1; // Default to 'Filed'
+    return 1; 
   };
 
-  // Main Data Loading Function
   const loadData = async () => {
     try {
       const res = await db.allDocs({ include_docs: true });
       const docs = res.rows.map(r => r.doc).filter(Boolean);
 
       const byType = (type) => docs.filter(d => d.type === type || d.docType === type);
-      const sortTs = (a, b) => new Date(b.updatedAt || b.timestamp || b.createdAt || b.dateFiled || 0) - new Date(a.updatedAt || a.timestamp || a.createdAt || a.dateFiled || 0);
+      const sortTs = (a, b) => new Date(b.timestamp || b.updatedAt || b.createdAt || b.dateFiled || 0) - new Date(a.timestamp || a.updatedAt || a.createdAt || a.dateFiled || 0);
 
-      // Filter Blotters
+      // 1. Filter Blotters
       const userBlotters = docs.filter(doc => {
-        const isBlotterDoc = doc.docType === 'blotter' || 
-                            doc.type === 'blotter' || 
-                            doc.type === 'blotter_report' || 
-                            Boolean(doc.trackingNo || doc.caseNo || doc.caseNum || doc.refNumber);
-        return isBlotterDoc && matchesUser(doc);
+        const isBlotterDoc = doc.docType === 'blotter' || doc.type === 'blotter' || doc.type === 'blotter_report' || Boolean(doc.trackingNo || doc.caseNo || doc.caseNum || doc.refNumber);
+        return isBlotterDoc && checkUserMatch(doc);
       }).sort(sortTs);
-
-      console.log('📌 Matched Resident Blotters:', userBlotters);
 
       setMyBlotters(userBlotters);
       if (typeof setBlotterReports === 'function') {
         setBlotterReports(userBlotters);
       }
 
-      // Filter Requests, Announcements, Assistance, and Feedbacks
-      setMyRequests(docs.filter(d => (d.type === 'certificate_request' || d.type === 'request') && matchesUser(d)).sort(sortTs));
+      // 2. Filter Requests, Announcements, Assistance
+      setMyRequests(docs.filter(d => (d.type === 'certificate_request' || d.type === 'request') && checkUserMatch(d)).sort(sortTs));
       setAnnouncements(byType('announcement').sort(sortTs));
-      setMyAssistance(docs.filter(d => d.type === 'aid_distribution' && matchesUser(d)).sort(sortTs));
+      setMyAssistance(docs.filter(d => d.type === 'aid_distribution' && checkUserMatch(d)).sort(sortTs));
 
-      if (typeof mapDocToResidentFeedback === 'function') {
-        setMyFeedbacks(docs.filter(d => d.type === 'feedback' && matchesUser(d)).map(mapDocToResidentFeedback));
-      }
+      const userFeedbacks = docs.filter(doc => {
+        const isFeedbackDoc = doc.type === 'feedback_report' || doc.type === 'feedback' || doc.docType === 'feedback';
+        if (!isFeedbackDoc) return false;
+
+        const currentUserId = String(loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || '').toLowerCase().trim();
+        const currentUsername = String(loggedInUser?.username || loggedInUser?.email || '').toLowerCase().trim();
+
+        const docUserId = String(doc.residentId || doc.userId || doc.submittedBy || '').toLowerCase().trim();
+        const docUsername = String(doc.username || doc.user || '').toLowerCase().trim();
+
+        const isMatchById = Boolean(currentUserId && docUserId && currentUserId === docUserId);
+        const isMatchByUsername = Boolean(currentUsername && docUsername && currentUsername === docUsername);
+
+        return isMatchById || isMatchByUsername || checkUserMatch(doc);
+      }).sort(sortTs);
+
+      console.log(' Matched Resident Feedbacks:', userFeedbacks);
+      setMyFeedbacks(userFeedbacks);
+
     } catch (e) {
-      console.error('⚠️ Load error in ResidentUI:', e);
+      console.error(' Load error in ResidentUI:', e);
     }
   };
 
@@ -522,12 +433,12 @@ useEffect(() => {
   // PouchDB Real-Time Listener
   const changes = db.changes({ live: true, since: 'now', include_docs: true });
   changes.on('change', (changeInfo) => {
-    console.log('⚡ Real-time update received in Resident UI:', changeInfo.id);
+    console.log(' Real-time update received in Resident UI:', changeInfo.id);
     loadData();
   });
 
   changes.on('error', (err) => {
-    console.error('❌ Local changes listener error:', err);
+    console.error(' Local changes listener error:', err);
   });
 
   return () => {
@@ -661,57 +572,109 @@ useEffect(() => {
 }, [certForm, db, loggedInUser]);
 
   const submitFeedback = useCallback(async (e) => {
-    e.preventDefault();
-    if (!feedbackSubject.trim() || !feedbackMessage.trim()) {
-      alert('Please fill in all required fields.'); return;
-    }
-    if (!db) { alert('Local database is unavailable.'); return; }
-
-    const refNumber = 'FB-' + Date.now().toString().slice(-5);
-    const doc = {
-      _id: `feedback_${Date.now()}`,
-      type: 'feedback_report',
-      refNumber,
-      feedbackType,
-      subject: feedbackSubject.trim(),
-      details: feedbackMessage.trim(),
-      message: feedbackMessage.trim(),
-      priority: 'Medium',
-      status: 'Pending',
-      timestamp: new Date().toISOString(),
-      residentId: loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || 'RES-LOCAL',
-      residentName: loggedInUser?.fullName || loggedInUser?.name || 'Resident',
-      username: loggedInUser?.username || loggedInUser?.email || 'resident',
-      userId: loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || '',
-      sender: loggedInUser?.fullName || 'Resident',
-      response: '',
-      handledBy: '',
-      dateResolved: '',
-    };
-
-    try {
-      await db.put(doc);
-      try {
-    await createAuditLog({
-      action: 'SUBMIT_FEEDBACK',
-      module: 'FEEDBACK',
-      recordId: refNumber,
-      user: `${loggedInUser?.fullName || 'Resident'} (resident)`,
-      details: `Submitted ${feedbackType} feedback: "${feedbackSubject.trim()}"`
-    });
-  } catch (auditErr) {
-    console.warn('Audit log entry failed:', auditErr);
+  e.preventDefault();
+  if (!feedbackSubject.trim() || !feedbackMessage.trim()) {
+    alert('Please fill in all required fields.');
+    return;
+  }
+  if (!db) {
+    alert('Local database is unavailable.');
+    return;
   }
 
-      alert(`Thank you! Your ${feedbackType.toLowerCase()} report (${refNumber}) has been submitted successfully.`);
-      setFeedbackSubject('');
-      setFeedbackMessage('');
-      setFeedbackType('Complaint');
-    } catch (err) {
-      console.error('Feedback save error', err);
-      alert('Unable to save your feedback offline right now.');
+  const refNumber = 'FB-' + Date.now().toString().slice(-5);
+  const currentUserId = loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || 'RES-LOCAL';
+  const currentUsername = loggedInUser?.username || loggedInUser?.email || 'resident';
+
+  const doc = {
+    _id: `feedback_${Date.now()}`,
+    type: 'feedback_report', 
+    refNumber,
+    feedbackType,
+    subject: feedbackSubject.trim(),
+    details: feedbackMessage.trim(),
+    message: feedbackMessage.trim(),
+    priority: 'Medium',
+    status: 'Pending',
+    timestamp: new Date().toISOString(),
+    residentId: currentUserId,
+    residentName: loggedInUser?.fullName || loggedInUser?.name || 'Resident',
+    username: currentUsername,
+    userId: currentUserId,
+    sender: loggedInUser?.fullName || 'Resident',
+    response: '',
+    handledBy: '',
+    dateResolved: '',
+  };
+
+  try {
+    await db.put(doc);
+
+    try {
+      await createAuditLog({
+        action: 'SUBMIT_FEEDBACK',
+        module: 'FEEDBACK',
+        recordId: refNumber,
+        user: `${loggedInUser?.fullName || 'Resident'} (resident)`,
+        details: `Submitted ${feedbackType} feedback: "${feedbackSubject.trim()}"`
+      });
+    } catch (auditErr) {
+      console.warn('Audit log entry failed:', auditErr);
     }
-  }, [feedbackSubject, feedbackMessage, feedbackType, db, loggedInUser]);
+
+    if (typeof setMyFeedbacks === 'function') {
+      setMyFeedbacks((prevFeedbacks) => [doc, ...(prevFeedbacks || [])]);
+    }
+
+    if (typeof fetchMyFeedbacks === 'function') {
+      await fetchMyFeedbacks();
+    }
+
+    alert(`Thank you! Your ${feedbackType.toLowerCase()} report (${refNumber}) has been submitted successfully.`);
+
+    setFeedbackSubject('');
+    setFeedbackMessage('');
+    setFeedbackType('Complaint');
+
+  } catch (err) {
+    console.error('Feedback save error', err);
+    alert('Unable to save your feedback offline right now.');
+  }
+}, [feedbackSubject, feedbackMessage, feedbackType, db, loggedInUser, setMyFeedbacks]);
+  
+const fetchMyFeedbacks = useCallback(async () => {
+  if (!db || !loggedInUser) return;
+
+  try {
+    const result = await db.allDocs({
+      include_docs: true,
+      descending: true
+    });
+
+    const currentUserId = loggedInUser.residentId || loggedInUser.id || loggedInUser._id;
+    const currentUsername = (loggedInUser.username || loggedInUser.email || '').toLowerCase().trim();
+
+    const filtered = result.rows
+      .map(row => row.doc)
+      .filter(doc => {
+        if (doc.type !== 'feedback_report') return false;
+
+        const docUserId = doc.residentId || doc.userId;
+        const docUsername = (doc.username || '').toLowerCase().trim();
+
+        const matchesId = currentUserId && docUserId === currentUserId;
+        const matchesUsername = currentUsername && docUsername === currentUsername;
+
+        return matchesId || matchesUsername;
+      });
+
+    filtered.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    setMyFeedbacks(filtered);
+  } catch (err) {
+    console.error('Error fetching feedbacks:', err);
+  }
+}, [db, loggedInUser]);
 
   const submitBlotter = useCallback(async (e) => {
   e.preventDefault();
@@ -2016,6 +1979,10 @@ const handleSaveProfileEdit = async () => {
                 const blotterStep = typeof getBlotterStepProgress === 'function' ? getBlotterStepProgress(item.status) : 1;
                 const isMyReport = String(item.complainant || item.complainantName || '').toLowerCase().trim() === String(loggedInUser?.fullName || '').toLowerCase().trim();
                 const canEdit = isMyReport && ['pending', 'needs revision', 'returned'].includes((item.status || '').toLowerCase());
+                const currentStep = blotterStep;
+                const isFullyResolved = item.status?.toLowerCase().includes('settled') || item.status?.toLowerCase().includes('resolved');
+                const isSettled = isFullyResolved;
+                const isCfaIssued = item.status?.toLowerCase().includes('cfa');
                 const blotterSteps = ['Filed', 'Investigation', 'Mediation / Summons', 'Resolved'];
                 const displayRefNumber = item.trackingNo || item.caseNo || item.caseNum || item.refNumber || item._id || 'N/A';
                 const displayTitle = item.subject || item.type || item.incidentType || item.title || 'Incident Complaint';
@@ -2026,87 +1993,102 @@ const handleSaveProfileEdit = async () => {
                 const isInvestigation = item.status?.toLowerCase().includes('investigation');
 
                 return (
-                  <div key={item._id || displayRefNumber} style={{ padding: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14 }}>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
-                      <div>
-                        <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 2 }}>{displayTitle}</div>
-                        <div style={{ fontSize: 11, color: 'var(--muted)' }}>
-                          Ref: <code style={{ color: 'var(--text)', fontWeight: 600, fontFamily: 'var(--mono)' }}>{displayRefNumber}</code>
-                        </div>
+                <div className="resident-card" key={item._id || displayRefNumber}>
+                  {/* Card Header Row */}
+                  <div className="card-header-row">
+                    <div>
+                      <div className="card-title-text">{displayTitle}</div>
+                      <div style={{ fontSize: 11, color: 'var(--muted)' }}>
+                        Ref: <code style={{ color: 'var(--text)', fontWeight: 600, fontFamily: 'var(--mono)' }}>{displayRefNumber}</code>
                       </div>
-                      <span style={{
-                        fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.4px', padding: '3px 8px', borderRadius: 6,
+                    </div>
+                    <span 
+                      className="status-badge"
+                      style={{
                         color: isResolved ? '#10b981' : isMediation ? '#a855f7' : isInvestigation ? '#3b82f6' : 'var(--muted)',
                         background: isResolved ? 'rgba(16, 185, 129, 0.15)' : isMediation ? 'rgba(168, 85, 247, 0.15)' : isInvestigation ? 'rgba(59, 130, 246, 0.15)' : 'var(--surface2, rgba(255,255,255,0.05))',
                         border: `1px solid ${isResolved ? 'rgba(16, 185, 129, 0.3)' : isMediation ? 'rgba(168, 85, 247, 0.3)' : isInvestigation ? 'rgba(59, 130, 246, 0.3)' : 'var(--border)'}`
-                      }}>
-                        {item.status || 'Pending'}
-                      </span>
-                    </div>
-
-                    {(item.location || item.purok) && (
-                      <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-                          <circle cx="12" cy="10" r="3" />
-                        </svg>
-                        Location: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{typeof formatLocationDisplay === 'function' ? formatLocationDisplay(item) : (item.location || item.purok)}</strong>
-                      </div>
-                    )}
-
-                    <div style={{ fontSize: 12, color: 'var(--text)', lineHeight: 1.4, marginBottom: 12, background: 'var(--surface2, rgba(255,255,255,0.02))', padding: '10px 12px', borderRadius: 8, border: '1px solid var(--border)' }}>
-                      {item.details || item.narrative || item.description || 'No additional details provided.'}
-                    </div>
-
-                    <div className="steps" style={{ marginBottom: 12 }}>
-                      {blotterSteps.map((label, idx) => {
-                        const value = idx + 1;
-                        const done = blotterStep > value;
-                        const active = blotterStep === value;
-                        return (
-                          <div key={label} className={`step${done ? ' done' : active ? ' active' : ' pending'}`}>
-                            <div className="step-circle">{done ? '✓' : value}</div>
-                            <div className="step-label">{label}</div>
-                            {idx < 3 && <div className="step-line" />}
-                          </div>
-                        );
-                      })}
-                    </div>
-
-                    {(item.nextHearingDate || item.rawDoc?.nextHearingDate) && (
-                      <div style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid var(--primary, #3b82f6)', padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: 12 }}>
-                        📅 <strong>Patawag / Hearing Schedule:</strong>{' '}
-                        <span style={{ color: 'var(--primary, #3b82f6)', fontWeight: 700 }}>
-                          {new Date(item.nextHearingDate || item.rawDoc?.nextHearingDate).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
-                        </span>
-                      </div>
-                    )}
-
-                    {latestHistory && latestHistory.notes && (
-                      <div style={{ background: 'var(--surface2, rgba(255,255,255,0.03))', border: '1px solid var(--border)', padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: 11, color: 'var(--text)' }}>
-                        💬 <strong>Barangay Remarks:</strong> "{latestHistory.notes}"
-                      </div>
-                    )}
-
-                    {canEdit && (
-                      <button type="button" onClick={() => handleOpenEdit(item)} className="btn btn-outline btn-sm" style={{ width: '100%', marginBottom: 10 }}>
-                        Edit Report Details
-                      </button>
-                    )}
-
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: 'var(--muted)', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
-                      <span>Incident Date: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{item.incidentDate || item.dateFiled || 'N/A'}</strong></span>
-                      <span style={{
-                        fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                        background: 'var(--surface2, rgba(255,255,255,0.05))',
-                        color: (item.synced === true || item.isSynced === true) ? '#10b981' : '#f59e0b',
-                        border: `1px solid ${(item.synced === true || item.isSynced === true) ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`
-                      }}>
-                        {(item.synced === true || item.isSynced === true) ? 'Synced' : 'Local Log'}
-                      </span>
-                    </div>
+                      }}
+                    >
+                      {item.status || 'Pending'}
+                    </span>
                   </div>
-                );
+
+                  {/* Location Tag */}
+                  {(item.location || item.purok) && (
+                    <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 4 }}>
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                        <circle cx="12" cy="10" r="3" />
+                      </svg>
+                      Location: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{typeof formatLocationDisplay === 'function' ? formatLocationDisplay(item) : (item.location || item.purok)}</strong>
+                    </div>
+                  )}
+
+                  {/* Details Box */}
+                  <div className="card-details-box card-details-preview">
+                    {item.details || item.narrative || item.description || 'No additional details provided.'}
+                  </div>
+
+                  {/* Progress Step Timeline */}
+                  <div className="steps">
+                    {blotterSteps.map((label, idx) => {
+                      const value = idx + 1;
+                      const isFullyResolved = blotterStep >= 4;
+                      const done = isFullyResolved ? value <= blotterStep : blotterStep > value;
+                      const active = !isFullyResolved && blotterStep === value;
+
+                      return (
+                        <div key={label} className={`step${done ? ' done' : active ? ' active' : ' pending'}`}>
+                          <div className="step-circle">{done ? '✓' : value}</div>
+                          <div className="step-label">{label}</div>
+                          {idx < 3 && <div className="step-line" />}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Hearing Schedule Alert */}
+                  {(item.nextHearingDate || item.rawDoc?.nextHearingDate) && (
+                    <div style={{ background: 'rgba(59, 130, 246, 0.1)', border: '1px solid var(--primary, #3b82f6)', padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: 12 }}>
+                      📅 <strong>Patawag / Hearing Schedule:</strong>{' '}
+                      <span style={{ color: 'var(--primary, #3b82f6)', fontWeight: 700 }}>
+                        {new Date(item.nextHearingDate || item.rawDoc?.nextHearingDate).toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })}
+                      </span>
+                    </div>
+                  )}
+
+                  {/* Barangay Remarks */}
+                  {latestHistory && latestHistory.notes && (
+                    <div style={{ background: 'var(--surface2, rgba(255,255,255,0.03))', border: '1px solid var(--border)', padding: '10px 12px', borderRadius: 8, marginBottom: 10, fontSize: 11, color: 'var(--text)' }}>
+                      💬 <strong>Barangay Remarks:</strong> "{latestHistory.notes}"
+                    </div>
+                  )}
+
+                  {/* Mobile-Friendly Full-Width Action Button */}
+                  {canEdit && (
+                    <button type="button" onClick={() => handleOpenEdit(item)} className="btn btn-outline btn-mobile-full" style={{ marginBottom: 10 }}>
+                      Edit Report Details
+                    </button>
+                  )}
+
+                  {/* Footer Sync & Date Row */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: 11, color: 'var(--muted)', borderTop: '1px solid var(--border)', paddingTop: 10 }}>
+                    <span>Incident Date: <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{item.incidentDate || item.dateFiled || 'N/A'}</strong></span>
+                    <span style={{ 
+                      fontSize: 9, 
+                      fontWeight: 700, 
+                      padding: '2px 6px', 
+                      borderRadius: 4, 
+                      background: 'var(--surface2, rgba(255,255,255,0.05))', 
+                      color: (item.synced === true || item.isSynced === true) ? '#10b981' : '#f59e0b', 
+                      border: `1px solid ${(item.synced === true || item.isSynced === true) ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}` 
+                    }}>
+                      {(item.synced === true || item.isSynced === true) ? 'Synced' : 'Local Log'}
+                    </span>
+                  </div>
+                </div>
+              );
               })}
             </div>
           )}
@@ -2607,7 +2589,6 @@ const handleSaveProfileEdit = async () => {
                     />
                   </div>
 
-                  {/* Notice for Read-Only Fields */}
                   <div
                     style={{
                       fontSize: 11,
@@ -2619,7 +2600,7 @@ const handleSaveProfileEdit = async () => {
                       marginTop: 4,
                     }}
                   >
-                    🔒 <strong>Identity Protection:</strong> Name, Birthdate, Gender, Civil Status, and Resident ID are official barangay records and can only be updated directly at the Barangay Hall.
+                     <strong>Identity Protection:</strong> Name, Birthdate, Gender, Civil Status, and Resident ID are official barangay records and can only be updated directly at the Barangay Hall.
                   </div>
 
                   {/* Save & Cancel Actions */}

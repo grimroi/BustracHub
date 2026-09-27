@@ -16,8 +16,11 @@ import CertPrintScreen from './CertPrintScreen';
 import ResidentCombobox, { formatPurok } from '../components/ResidentCombobox'; 
 import AuditLogView from '../components/AuditLogView';
 import { localDb as db, forceSyncToRemote, createAuditLog } from '../services/db';
+import BlotterCertificatePrintModal from "../components/BlotterCertificatePrintModal";
+import { exportToExcel } from '../utils/excelExporter'
 
-const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@localhost:5984/bustrachub_db';
+
+const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
 
 // ─────────────────────────────────────────────
 // CONSTANTS
@@ -325,27 +328,84 @@ export const mapDocToBlotter = (doc) => {
 // COMPONENT
 // ─────────────────────────────────────────────
 export default function DashboardPortal({ role = 'staff' }) {
-useEffect(() => {
-  const syncHandler = db.sync(remoteCouchDB, { 
-    live: true, 
-    retry: true, 
-    ajax: { withCredentials: true } 
-  });
-
-  syncHandler
-    .on('change', (info) => console.log('[SYNC] Changed:', info.direction, info.change.docs.length))
-    .on('paused', (err) => err && console.warn('[SYNC] Paused:', err.message))
-    .on('active', () => console.log('[SYNC] Resumed'))
-    .on('error', (err) => console.error('[SYNC] Failed:', err));
-
-  if (typeof window !== 'undefined') {
-    window.db = db;
+  const [blotterList, setBlotterList] = useState(() => {
+  try {
+    const saved = localStorage.getItem('bustrac_blotter');
+    return saved ? JSON.parse(saved) : [];
+  } catch (e) {
+    return [];
   }
+});
 
-  return () => {
-    syncHandler.cancel();
+
+// ── EXTENDED DATA REGISTRY WITH WORKFLOW METADATA ──
+const [feedbackList, setFeedbackList] = useState([
+  { 
+    id: 'FB-041', 
+    sender: 'Santos, Maria', 
+    type: 'Complaint', 
+    priority: 'High', 
+    subject: 'Garbage not collected in Purok 3', 
+    message: 'The garbage truck has not visited our area for two weeks, causing bad odor and attracting pests near the community chapel.', 
+    date: 'Apr 7, 2026, 9:15 AM', 
+    status: 'Pending', 
+    assignedTo: 'Unassigned', 
+    attachment: 'garbage_pile.jpg',
+    response: '',
+    handledBy: '',
+    dateResolved: ''
+  },
+  { 
+    id: 'FB-040', 
+    sender: 'Reyes, Juan', 
+    type: 'Suggestion', 
+    priority: 'Medium', 
+    subject: 'Additional streetlights in Purok 1', 
+    message: 'Requesting additional solar streetlights along the dark curves of Purok 1 for citizen safety at night.', 
+    date: 'Apr 6, 2026, 2:30 PM', 
+    status: 'Under Review', 
+    assignedTo: 'Mark Gian Cortero', //
+    attachment: null,
+    response: '',
+    handledBy: '',
+    dateResolved: ''
+  },
+  { 
+    id: 'FB-039', 
+    sender: 'Garcia, Ana', 
+    type: 'Inquiry', 
+    priority: 'Low', 
+    subject: 'How to apply for clearance online?', 
+    message: 'Hello, ask ko lang po kung anong requirements para sa online barangay clearance retrieval window kung taga ibang purok?', 
+    date: 'Apr 5, 2026, 10:05 AM', 
+    status: 'Resolved', 
+    assignedTo: 'Juhairo Macabangon', //
+    attachment: null,
+    response: 'Good day! You can upload 1 valid government ID in the Document Request screen panel. Processing takes 1-2 business days.',
+    handledBy: 'Juhairo Macabangon', //
+    dateResolved: 'Apr 5, 2026, 4:12 PM'
+  }
+]);
+
+
+
+  const settledBlotterCount = blotterList.filter(b => b.status === 'Settled / Resolved' || b.status === 'Settled').length;
+  const cfaBlotterCount = blotterList.filter(b => b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)').length;
+  const activeBlotterCount = blotterList.filter(b => b.status === 'Pending' || b.status === 'Open' || b.status === 'Under Mediation').length;
+
+  const feedbackSummary = {
+    complaint: feedbackList.filter(f => f.feedbackType === 'Complaint').length,
+    inquiry: feedbackList.filter(f => f.feedbackType === 'Inquiry').length,
+    suggestion: feedbackList.filter(f => f.feedbackType === 'Suggestion').length
   };
-}, []);
+
+const [printModalOpen, setPrintModalOpen] = useState(false);
+const [selectedPrintData, setSelectedPrintData] = useState(null);
+
+const handleOpenPrint = (blotterItem) => {
+  setSelectedPrintData(blotterItem);
+  setPrintModalOpen(true);
+};
 
   // ── INDIGENCY PRINT MODAL STATES ──
   const [showPrintModal, setShowPrintModal] = useState(false);
@@ -2336,16 +2396,6 @@ const handleUpdateResidentChanges = async (e) => {
   nav('residents');
 };
 
-// ── 1. CORE BLOTTER LIST STATE DATABASE ──
-const [blotterList, setBlotterList] = useState(() => {
-  try {
-    const saved = localStorage.getItem('bustrac_blotter');
-    return saved ? JSON.parse(saved) : [];
-  } catch (e) {
-    return [];
-  }
-});
-
 // ── 2. MAIN CORE BLOTTER FORM OBJECT STATE ──
 const [blotterForm, setBlotterForm] = useState({
   date: new Date().toISOString().split('T')[0],
@@ -3013,54 +3063,6 @@ const handleConfirmDeleteAnnouncement = () => {
   setShowAnnDeleteModal(false);
   setAnnIdToDelete(null);
 };
-// ── EXTENDED DATA REGISTRY WITH WORKFLOW METADATA ──
-const [feedbackList, setFeedbackList] = useState([
-  { 
-    id: 'FB-041', 
-    sender: 'Santos, Maria', 
-    type: 'Complaint', 
-    priority: 'High', 
-    subject: 'Garbage not collected in Purok 3', 
-    message: 'The garbage truck has not visited our area for two weeks, causing bad odor and attracting pests near the community chapel.', 
-    date: 'Apr 7, 2026, 9:15 AM', 
-    status: 'Pending', 
-    assignedTo: 'Unassigned', 
-    attachment: 'garbage_pile.jpg',
-    response: '',
-    handledBy: '',
-    dateResolved: ''
-  },
-  { 
-    id: 'FB-040', 
-    sender: 'Reyes, Juan', 
-    type: 'Suggestion', 
-    priority: 'Medium', 
-    subject: 'Additional streetlights in Purok 1', 
-    message: 'Requesting additional solar streetlights along the dark curves of Purok 1 for citizen safety at night.', 
-    date: 'Apr 6, 2026, 2:30 PM', 
-    status: 'Under Review', 
-    assignedTo: 'Mark Gian Cortero', //
-    attachment: null,
-    response: '',
-    handledBy: '',
-    dateResolved: ''
-  },
-  { 
-    id: 'FB-039', 
-    sender: 'Garcia, Ana', 
-    type: 'Inquiry', 
-    priority: 'Low', 
-    subject: 'How to apply for clearance online?', 
-    message: 'Hello, ask ko lang po kung anong requirements para sa online barangay clearance retrieval window kung taga ibang purok?', 
-    date: 'Apr 5, 2026, 10:05 AM', 
-    status: 'Resolved', 
-    assignedTo: 'Juhairo Macabangon', //
-    attachment: null,
-    response: 'Good day! You can upload 1 valid government ID in the Document Request screen panel. Processing takes 1-2 business days.',
-    handledBy: 'Juhairo Macabangon', //
-    dateResolved: 'Apr 5, 2026, 4:12 PM'
-  }
-]);
 
 // ── ADVANCED REGISTRY SEARCH & FILTER FIELDS ──
 const [searchFbQuery, setSearchFbQuery] = useState('');
@@ -3296,38 +3298,7 @@ async function checkForConflicts() {
 }
 
 
-useEffect(() => {
-  if (typeof db === 'undefined' || !remoteCouchDB) return;
 
-  // 1. Increase the Max Listeners on PouchDB database and EventEmitter
-  if (typeof db.setMaxListeners === 'function') {
-    db.setMaxListeners(50);
-  }
-  if (db.constructor && typeof db.constructor.setMaxListeners === 'function') {
-    db.constructor.setMaxListeners(50);
-  }
-
-  // 2. Start PouchDB live synchronization
-  const sync = db.sync(remoteCouchDB, {
-    live: true,
-    retry: true,
-    ajax: { withCredentials: true }
-  });
-
-  setSyncInstance(sync);
-
-  // 3. Proper Cleanup: Cancel the sync and remove event listeners on unmount
-  return () => {
-    if (sync) {
-      if (typeof sync.cancel === 'function') {
-        sync.cancel();
-      }
-      if (typeof sync.removeAllListeners === 'function') {
-        sync.removeAllListeners();
-      }
-    }
-  };
-}, []); // Empty dependency array to trigger only on mount/unmount
 
 // Fetch all conflicted documents from PouchDB
 const fetchDatabaseConflicts = async () => {
@@ -3395,26 +3366,60 @@ const fetchResidents = async () => {
 };
 
 useEffect(() => {
-  if (!syncInstance) return;
+  // ── STRICT SAFETY GUARD ──
+  if (
+    !db ||
+    typeof db.allDocs !== 'function' ||
+    typeof db.changes !== 'function'
+  ) {
+    console.warn('[DashboardPortal] Database instance is unavailable in this environment.');
+    return;
+  }
 
-  const handleChange = (info) => {
-    console.log('⚡ Replication change detected:', info);
-    if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
-    if (typeof fetchResidents === 'function') fetchResidents();
+  const fetchAllCerts = async () => {
+    try {
+      const result = await db.allDocs({ include_docs: true });
+      const certs = (result?.rows || [])
+        .map(row => row?.doc)
+        .filter(doc => doc && doc.type === 'certificate_request');
+      setIssuedCertificates(certs);
+    } catch (err) {
+      console.error('Error loading initial certs:', err);
+    }
   };
 
-  const handleError = (err) => {
-    console.error('⚠️ CouchDB Sync Error:', err);
-  };
+  fetchAllCerts();
 
-  syncInstance.on('change', handleChange);
-  syncInstance.on('error', handleError);
+  // Listen for real-time database changes (Insert, Update, Delete)
+  const changes = db.changes({
+    since: 'now',
+    live: true,
+    include_docs: true
+  });
+
+  if (changes && typeof changes.on === 'function') {
+    changes
+      .on('change', (change) => {
+        if (change?.doc && change.doc.type === 'certificate_request') {
+          setIssuedCertificates((prevCerts) => {
+            const filtered = (prevCerts || []).filter(
+              c => c?._id !== change.doc._id
+            );
+            return [change.doc, ...filtered];
+          });
+        }
+      })
+      .on('error', (err) => {
+        console.error('PouchDB change listener error:', err);
+      });
+  }
 
   return () => {
-    syncInstance.removeListener('change', handleChange);
-    syncInstance.removeListener('error', handleError);
+    if (changes && typeof changes.cancel === 'function') {
+      changes.cancel();
+    }
   };
-}, [syncInstance]); 
+}, []);
 
 // Automatically scan for conflicts when mounting or navigating to conflict screen
 useEffect(() => {
@@ -4570,6 +4575,109 @@ const handleGenerateReport = async (module) => {
   }
 };
 
+const handleGenerateExcelReport = (moduleType) => {
+  let exportData = [];
+  const currentDate = new Date().toISOString().split('T')[0];
+  let fileName = `Barangay_Bustrac_${moduleType}_${currentDate}.xlsx`;
+
+  switch (moduleType) {
+    case 'residents':
+      exportData = (residentsList || []).map(r => ({
+        'Resident ID': r.id || r._id,
+        'Full Name': r.name || `${r.lastName || ''}, ${r.firstName || ''} ${r.middleName || ''}`.trim(),
+        'Purok / Zone': r.purok || 'N/A',
+        'Civil Status': r.civilStatus || 'N/A',
+        'Gender': r.gender || r.sex || 'N/A',
+        'Contact Number': r.contact || r.contactNo || 'N/A',
+        'Voter Status': r.voter || r.voterStatus ? 'Registered' : 'Non-Voter'
+      }));
+      break;
+
+    case 'blotter':
+      exportData = (blotterList || []).map(b => ({
+        'Case No': b.id || b.trackingNo || b.refNumber || b._id,
+        'Complainant': b.complainant || b.complainantName || 'N/A',
+        'Respondent': b.respondent || b.respondentName || 'N/A',
+        'Incident Type': b.type || b.incidentType || 'N/A',
+        'Location': b.location || 'N/A',
+        'Date': b.date || b.incidentDate || 'N/A',
+        'Status': b.status || 'Pending',
+        'Summons': b.summonCount || 0,
+        'CFA Issued': b.cfaIssued ? 'Yes' : 'No'
+      }));
+      break;
+
+    case 'certificates':
+      // Pinagsama ang issuedCertificates at pending certRequestsList kung mayroon
+      const allCerts = typeof issuedCertificates !== 'undefined' ? issuedCertificates : (certRequestsList || []);
+      exportData = allCerts.map(c => ({
+        'Reference No': c.refNumber || c.trackingNo || c._id,
+        'Resident Name': c.residentName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'N/A',
+        'Certificate Type': c.certificateType || c.certType || 'N/A',
+        'Purpose': c.purpose || c.certPurpose || 'N/A',
+        'Date Submitted': c.dateSubmitted || c.createdAt || 'N/A',
+        'Status': c.status || 'Pending',
+        'Date Issued': c.issuedAt || 'N/A'
+      }));
+      break;
+
+    case 'feedback':
+      exportData = (feedbackList || []).map(f => ({
+        'Reference No': f.id || f.refNumber || f._id,
+        'Resident Name': f.sender || f.residentName || 'Anonymous',
+        'Type': f.feedbackType || f.type || 'Inquiry',
+        'Subject': f.subject || 'N/A',
+        'Details': f.message || f.details || '',
+        'Status': f.status || 'Pending',
+        'Handled By': f.assignedTo || f.handledBy || 'Unassigned',
+        'Timestamp': f.timestamp || f.rawTimestamp || f.date || ''
+      }));
+      break;
+
+    case 'households':
+      exportData = (householdsList || []).map(h => ({
+        'Household No': h.householdNo || h.id || h._id,
+        'Head of Family': h.headName || h.headOfFamily || 'N/A',
+        'Purok / Zone': h.purok || 'N/A',
+        'Members Count': h.membersCount || (h.members ? h.members.length : 1),
+        'Address': h.address || 'N/A'
+      }));
+      break;
+
+    case 'aid':
+      exportData = (programsList || []).map(a => ({
+        'Program Name': a.title || a.name || 'N/A',
+        'Category': a.category || a.type || 'Aid Distribution',
+        'Beneficiaries Count': a.beneficiariesCount || (a.beneficiaries ? a.beneficiaries.length : 0),
+        'Status': a.status || 'Completed',
+        'Date Distributed': a.date || a.createdAt || 'N/A'
+      }));
+      break;
+
+    case 'audit':
+      exportData = (recentLogs || []).map(l => ({
+        'Log ID': l._id || l.id,
+        'Action': l.action || 'N/A',
+        'Module': l.module || 'N/A',
+        'User': l.user || l.actor?.username || 'System',
+        'Details': l.details || '',
+        'Timestamp': l.timestamp || ''
+      }));
+      break;
+
+    default:
+      alert('Pumili ng tamang report type.');
+      return;
+  }
+
+  if (exportData.length === 0) {
+    alert('Walang available data para i-export sa piniling report category.');
+    return;
+  }
+
+  exportToExcel(exportData, fileName, moduleType);
+};
+
 const getPageTitle = () => {
   const currentScreen = typeof screen !== 'undefined' ? screen : (typeof activeScreen !== 'undefined' ? activeScreen : '');
   if (currentScreen === 'profile' || currentScreen === 's-profile') return 'My Profile';
@@ -5277,7 +5385,72 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                         )}
                       </div>
                     </div>
+                    
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px', marginBottom: '20px' }}>
+                      
+                      {/* Blotter Case Outcomes Visual Card */}
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '20px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                          <div>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Blotter Case Outcomes</div>
+                            <div style={{ fontSize: '11px', color: 'var(--hint)' }}>Settled vs Escalated (CFA) vs Pending</div>
+                          </div>
+                          <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                            Total: {blotterList.length}
+                          </span>
+                        </div>
 
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+                          {[
+                            { label: 'Settled / Amicable', count: settledBlotterCount, color: 'var(--green)', bg: 'var(--green-bg)' },
+                            { label: 'Referred to PNP (CFA)', count: cfaBlotterCount, color: 'var(--red)', bg: 'var(--red-bg)' },
+                            { label: 'Active / Mediation', count: activeBlotterCount, color: 'var(--amber)', bg: 'var(--amber-bg)' }
+                          ].map((item) => {
+                            const total = blotterList.length || 1;
+                            const pct = Math.round((item.count / total) * 100);
+                            return (
+                              <div key={item.label}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
+                                  <span style={{ color: 'var(--text)' }}>{item.label}</span>
+                                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{item.count} ({pct}%)</span>
+                                </div>
+                                <div style={{ background: 'var(--surface2)', height: '10px', borderRadius: '5px', overflow: 'hidden' }}>
+                                  <div style={{ background: item.color, height: '100%', width: `${pct}%`, transition: 'width 0.5s ease' }} />
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+
+                      {/* Feedback Reports Breakdown Visual Card */}
+                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '20px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                          <div>
+                            <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Feedback Submissions</div>
+                            <div style={{ fontSize: '11px', color: 'var(--hint)' }}>Categorized by report type</div>
+                          </div>
+                          <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                            Total: {feedbackList.length}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginTop: '10px' }}>
+                          {[
+                            { label: 'Complaints', count: feedbackSummary.complaint, color: 'var(--red)', bg: 'rgba(239, 68, 68, 0.1)' },
+                            { label: 'Inquiries', count: feedbackSummary.inquiry, color: 'var(--accent)', bg: 'rgba(59, 130, 246, 0.1)' },
+                            { label: 'Suggestions', count: feedbackSummary.suggestion, color: 'var(--teal)', bg: 'rgba(20, 184, 166, 0.1)' }
+                          ].map((fb, idx) => (
+                            <div key={idx} style={{ background: fb.bg, border: `1px solid ${fb.color}`, borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
+                              <div style={{ fontSize: '22px', fontWeight: 800, color: fb.color }}>{fb.count}</div>
+                              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text)', marginTop: '2px' }}>{fb.label}</div>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+
+                    </div>
+                    
                     {/* 3. BOTTOM ROW (Purok Population & System Status) */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px' }}>
                       {/* Purok Population */}
@@ -9046,52 +9219,73 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                                     </span>
                                   </td>
                                   <td>
-                                    {/* Dynamic Action Buttons (View, Summon, Settled, etc.) */}
-                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                      <button className="btn btn-g btn-sm" onClick={() => {
+                                  {/* Dynamic Action Buttons (View, Summon, Settled, Print, etc.) */}
+                                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                    <button 
+                                      className="btn btn-g btn-sm" 
+                                      onClick={() => {
                                         const caseId = b._id || b.id;
                                         setSelectedBlotterId(caseId);
-                                        if (typeof setSelectedBlotter === 'function') {
-                                          setSelectedBlotter(b);
-                                        }
-                                        if (typeof handleViewBlotter === 'function') {
-                                          handleViewBlotter(b);
-                                        } else {
-                                          nav('blotter-detail');
-                                        }
-                                      }}>
-                                        View
-                                      </button>
+                                        if (typeof setSelectedBlotter === 'function') setSelectedBlotter(b);
+                                        if (typeof handleViewBlotter === 'function') handleViewBlotter(b);
+                                        else nav('blotter-detail');
+                                      }}
+                                    >
+                                      View
+                                    </button>
 
-                                      {!isSettled && !isCfaIssued && (
-                                        <>
-                                          {currentSummon === 0 && (
-                                            <button className="btn btn-primary btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}>
-                                              📩 1st Summon
-                                            </button>
-                                          )}
-                                          {currentSummon === 1 && (
-                                            <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}>
-                                              📩 2nd Summon
-                                            </button>
-                                          )}
-                                          {currentSummon === 2 && (
-                                            <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}>
-                                              📩 3rd Summon
-                                            </button>
-                                          )}
-                                          <button className="btn btn-success btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'settled')}>
-                                            🤝 Settled
+                                    {!isSettled && !isCfaIssued && (
+                                      <>
+                                        {currentSummon === 0 && (
+                                          <button className="btn btn-primary btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}>
+                                            1st Summon
                                           </button>
-                                          {currentSummon >= 3 && (
-                                            <button className="btn btn-danger btn-sm" style={{ backgroundColor: '#dc2626', color: '#fff' }} onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}>
-                                              📄 Escalate / Issue CFA
-                                            </button>
-                                          )}
-                                        </>
-                                      )}
-                                    </div>
-                                  </td>
+                                        )}
+                                        {currentSummon === 1 && (
+                                          <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}>
+                                            2nd Summon
+                                          </button>
+                                        )}
+                                        {currentSummon === 2 && (
+                                          <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}>
+                                            3rd Summon
+                                          </button>
+                                        )}
+                                        <button className="btn btn-success btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'settled')}>
+                                          Settled
+                                        </button>
+                                        {currentSummon >= 3 && (
+                                          <button className="btn btn-danger btn-sm" style={{ backgroundColor: '#dc2626', color: '#fff' }} onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}>
+                                            Escalate / Issue CFA
+                                          </button>
+                                        )}
+                                      </>
+                                    )}
+
+                                    {/* BUTTON PARA SA PRINT CERTIFICATE O CFA KAPAG SETTLED O ESCALATED NA */}
+                                    {(isSettled || isCfaIssued) && (
+                                      <button 
+                                        className="btn btn-sm" 
+                                        style={{ 
+                                          backgroundColor: isCfaIssued ? '#7f1d1d' : '#047857', 
+                                          color: '#ffffff',
+                                          fontWeight: 600,
+                                          display: 'inline-flex',
+                                          alignItems: 'center',
+                                          gap: '5px'
+                                        }}
+                                        onClick={() => handleOpenPrint(b)}
+                                      >
+                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M6 9V2h12v7" />
+                                          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                                          <path d="M6 14h12v8H6z" />
+                                        </svg>
+                                        {isCfaIssued ? 'Print CFA' : 'Print Certificate'}
+                                      </button>
+                                    )}
+                                  </div>
+                                </td>
                                 </tr>
                               );
                             })
@@ -9712,26 +9906,39 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                       </div>
                     )}
 
-                    {/* Stats */}
+                    {/* Stat Cards Section */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '12px', marginBottom: '16px' }}>
+                      
+                      {/* 1. Pending */}
                       <div className="fp" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <div>
                           <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>Pending</div>
-                          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{feedbackList.filter(f => f.status === 'Pending').length}</div>
+                          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#ef4444' }}>
+                            {feedbackList.filter(f => (f.status || '').toLowerCase() === 'pending').length}
+                          </div>
                         </div>
                       </div>
+
+                      {/* 2. Under Review / Responded */}
                       <div className="fp" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <div>
-                          <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>Under Review</div>
-                          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{feedbackList.filter(f => f.status === 'Under Review').length}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>In Process / Responded</div>
+                          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#f59e0b' }}>
+                            {feedbackList.filter(f => ['under review', 'responded'].includes((f.status || '').toLowerCase())).length}
+                          </div>
                         </div>
                       </div>
+
+                      {/* 3. Resolved */}
                       <div className="fp" style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '12px' }}>
                         <div>
                           <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>Resolved</div>
-                          <div style={{ fontSize: '24px', fontWeight: 'bold' }}>{feedbackList.filter(f => f.status === 'Resolved').length}</div>
+                          <div style={{ fontSize: '24px', fontWeight: 'bold', color: '#10b981' }}>
+                            {feedbackList.filter(f => ['resolved', 'settled'].includes((f.status || '').toLowerCase())).length}
+                          </div>
                         </div>
                       </div>
+
                     </div>
 
                     {/* Filters */}
@@ -10240,7 +10447,7 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                 ════════════════════════════════════════ */}
                 {screen === 'reports' && (
                   <div className="screen active">
-                    <div className="thc" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: '16px' }}>
+                    <div className="thc" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
                       {[
                         { title: 'Certificate Issuance', desc: 'Monthly issuance summary by type', select: ['April 2026', 'March 2026', 'February 2026'], module: 'certificates' },
                         { title: 'Aid Distribution', desc: 'Beneficiary list per program', select: ['Ayuda Rice Distribution', 'Financial Assistance', 'Medical Aid'], module: 'aid' },
@@ -10250,17 +10457,7 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                         { title: 'Household Registry', desc: 'Household listing by purok', select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'], module: 'households' },
                         ...(role === 'admin' ? [{ title: 'Audit Trail Report', desc: 'Full system transaction log', select: ['September 2026', 'August 2026', 'July 2026'], module: 'audit', adminOnly: true }] : [])
                       ].map((r) => (
-                        <div
-                          key={r.title}
-                          className="fp"
-                          style={{
-                            margin: 0,
-                            display: 'flex',
-                            flexDirection: 'column',
-                            justifyContent: 'space-between',
-                            gap: '14px'
-                          }}
-                        >
+                        <div key={r.title} className="fp" style={{ margin: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '14px' }}>
                           <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
                               <div style={{ fontWeight: 600, fontSize: '15px', color: 'var(--text)' }}>{r.title}</div>
@@ -10278,34 +10475,43 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                             </select>
                           </div>
 
-                          <button
-                            className="btn btn-p"
-                            disabled={generatingReport === r.module}
-                            style={{
-                              width: '100%',
-                              justifyContent: 'center',
-                              opacity: generatingReport === r.module ? 0.7 : 1,
-                              cursor: generatingReport === r.module ? 'wait' : 'pointer'
-                            }}
-                            onClick={() => handleGenerateReport(r.module)}
-                          >
-                            {generatingReport === r.module ? (
-                              <>
-                                <span style={{
-                                  display: 'inline-block',
-                                  width: '14px',
-                                  height: '14px',
-                                  border: '2px solid rgba(255,255,255,0.3)',
-                                  borderTopColor: '#fff',
-                                  borderRadius: '50%',
-                                  animation: 'spin 0.6s linear infinite'
-                                }} />
-                                Generating...
-                              </>
-                            ) : (
-                              'Generate PDF'
-                            )}
-                          </button>
+                          {/* Action Buttons Row: PDF & Excel */}
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                            {/* Generate PDF Button */}
+                            <button
+                              className="btn btn-p"
+                              disabled={generatingReport === r.module}
+                              style={{ justifyContent: 'center', opacity: generatingReport === r.module ? 0.7 : 1, cursor: generatingReport === r.module ? 'wait' : 'pointer', fontSize: '12px', padding: '8px 10px' }}
+                              onClick={() => handleGenerateReport(r.module)}
+                            >
+                              {generatingReport === r.module ? (
+                                <>
+                                  <span style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
+                                  Generating...
+                                </>
+                              ) : (
+                                '📄 Generate PDF'
+                              )}
+                            </button>
+
+                            {/* Export Excel Button */}
+                            <button
+                              className="btn"
+                              style={{
+                                justifyContent: 'center',
+                                background: 'var(--green-bg, #dcfce7)',
+                                color: 'var(--green-text, #15803d)',
+                                border: '1px solid var(--green, #22c55e)',
+                                fontWeight: 700,
+                                fontSize: '12px',
+                                padding: '8px 10px',
+                                cursor: 'pointer'
+                              }}
+                              onClick={() => handleGenerateExcelReport(r.module)}
+                            >
+                              📊 Export Excel
+                            </button>
+                          </div>
                         </div>
                       ))}
                     </div>
@@ -10814,6 +11020,7 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                       </div>
                     </div>
                   )}
+
                   {/* INDIVIDUAL BARANGAY CLEARANCE PRINT MODAL & PORTAL */}
                   {showClearancePrintModal && selectedClearanceCert && (
                     <>
@@ -10963,135 +11170,144 @@ const [businessModalMode, setBusinessModalMode] = useState('edit');
                     </div>
                   )}
                   {/* ═══ BUSINESS CLEARANCE EDIT MODAL ═══ */}
-{isBusinessModalOpen && (
-  <div 
-    className="modal-overlay" 
-    style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.75)',
-      display: 'flex',
-      alignItems: 'center',
-      justify: 'center',
-      zIndex: 99999,
-      backdropFilter: 'blur(4px)',
-      padding: '20px'
-    }}
-    onClick={() => setIsBusinessModalOpen(false)}
-  >
-    <div 
-      className="modal-card width-lg" 
-      style={{
-        background: 'var(--surface, #1e293b)',
-        color: 'var(--text, #f8fafc)',
-        borderRadius: '12px',
-        width: '100%',
-        maxWidth: '800px',
-        maxHeight: '90vh',
-        display: 'flex',
-        flexDirection: 'column',
-        boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
-        border: '1px solid var(--border, #334155)',
-        overflow: 'hidden'
-      }}
-      onClick={(e) => e.stopPropagation()}
-    >
-      {/* Modal Header */}
-      <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <div>
-          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>
-            {businessModalMode === 'edit' ? 'Edit Business Clearance' : 'New Business Clearance'}
-          </h3>
-          <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
-            Update business details, owner information, and OR reference
-          </p>
-        </div>
-        <button type="button" className="btn-close" onClick={() => setIsBusinessModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '20px', cursor: 'pointer' }}>
-          ✕
-        </button>
-      </div>
+                  {isBusinessModalOpen && (
+                    <div 
+                      className="modal-overlay" 
+                      style={{
+                        position: 'fixed',
+                        top: 0,
+                        left: 0,
+                        right: 0,
+                        bottom: 0,
+                        backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                        display: 'flex',
+                        alignItems: 'center',
+                        justify: 'center',
+                        zIndex: 99999,
+                        backdropFilter: 'blur(4px)',
+                        padding: '20px'
+                      }}
+                      onClick={() => setIsBusinessModalOpen(false)}
+                    >
+                      <div 
+                        className="modal-card width-lg" 
+                        style={{
+                          background: 'var(--surface, #1e293b)',
+                          color: 'var(--text, #f8fafc)',
+                          borderRadius: '12px',
+                          width: '100%',
+                          maxWidth: '800px',
+                          maxHeight: '90vh',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+                          border: '1px solid var(--border, #334155)',
+                          overflow: 'hidden'
+                        }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        {/* Modal Header */}
+                        <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <div>
+                            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700 }}>
+                              {businessModalMode === 'edit' ? 'Edit Business Clearance' : 'New Business Clearance'}
+                            </h3>
+                            <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
+                              Update business details, owner information, and OR reference
+                            </p>
+                          </div>
+                          <button type="button" className="btn-close" onClick={() => setIsBusinessModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '20px', cursor: 'pointer' }}>
+                            ✕
+                          </button>
+                        </div>
 
-      {/* Modal Body - Scrollable Form */}
-      <div className="modal-body" style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-        <form onSubmit={handleSaveBusinessClearance} id="business-clearance-form">
-          {/* Section 1: Business Details */}
-          <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
-            1. Business Information
-          </div>
-          <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-            <div className="fg">
-              <label className="fl">BC ID No.</label>
-              <input type="text" className="fc" value={businessForm.bcIdNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, bcIdNo: e.target.value }))} placeholder="e.g. BC-2026-001" />
-            </div>
-            <div className="fg">
-              <label className="fl">Business Name *</label>
-              <input type="text" className="fc" required value={businessForm.businessName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessName: e.target.value }))} placeholder="e.g. Macabangon General Store" />
-            </div>
-            <div className="fg">
-              <label className="fl">Nature / Type of Business</label>
-              <input type="text" className="fc" value={businessForm.natureOfBusiness || ''} onChange={(e) => setBusinessForm(p => ({ ...p, natureOfBusiness: e.target.value }))} placeholder="e.g. Retail / Sari-sari Store" />
-            </div>
-            <div className="fg">
-              <label className="fl">Business Address</label>
-              <input type="text" className="fc" value={businessForm.businessAddress || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessAddress: e.target.value }))} placeholder="Zone / Street Address" />
-            </div>
-          </div>
+                        {/* Modal Body - Scrollable Form */}
+                        <div className="modal-body" style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                          <form onSubmit={handleSaveBusinessClearance} id="business-clearance-form">
+                            {/* Section 1: Business Details */}
+                            <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+                              1. Business Information
+                            </div>
+                            <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">BC ID No.</label>
+                                <input type="text" className="fc" value={businessForm.bcIdNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, bcIdNo: e.target.value }))} placeholder="e.g. BC-2026-001" />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Business Name *</label>
+                                <input type="text" className="fc" required value={businessForm.businessName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessName: e.target.value }))} placeholder="e.g. Macabangon General Store" />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Nature / Type of Business</label>
+                                <input type="text" className="fc" value={businessForm.natureOfBusiness || ''} onChange={(e) => setBusinessForm(p => ({ ...p, natureOfBusiness: e.target.value }))} placeholder="e.g. Retail / Sari-sari Store" />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Business Address</label>
+                                <input type="text" className="fc" value={businessForm.businessAddress || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessAddress: e.target.value }))} placeholder="Zone / Street Address" />
+                              </div>
+                            </div>
 
-          {/* Section 2: Owner / Applicant Details */}
-          <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
-            2. Owner / Applicant Details
-          </div>
-          <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-            <div className="fg">
-              <label className="fl">First Name *</label>
-              <input type="text" className="fc" required value={businessForm.firstName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, firstName: e.target.value }))} />
-            </div>
-            <div className="fg">
-              <label className="fl">Middle Name</label>
-              <input type="text" className="fc" value={businessForm.middleName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, middleName: e.target.value }))} />
-            </div>
-            <div className="fg">
-              <label className="fl">Last Name *</label>
-              <input type="text" className="fc" required value={businessForm.lastName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, lastName: e.target.value }))} />
-            </div>
-          </div>
+                            {/* Section 2: Owner / Applicant Details */}
+                            <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+                              2. Owner / Applicant Details
+                            </div>
+                            <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                              <div className="fg">
+                                <label className="fl">First Name *</label>
+                                <input type="text" className="fc" required value={businessForm.firstName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, firstName: e.target.value }))} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Middle Name</label>
+                                <input type="text" className="fc" value={businessForm.middleName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, middleName: e.target.value }))} />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Last Name *</label>
+                                <input type="text" className="fc" required value={businessForm.lastName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, lastName: e.target.value }))} />
+                              </div>
+                            </div>
 
-          {/* Section 3: Payment & OR Reference */}
-          <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
-            3. Official Receipt & Fee
-          </div>
-          <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-            <div className="fg">
-              <label className="fl">O.R. Number *</label>
-              <input type="text" className="fc" required value={businessForm.orNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orNo: e.target.value }))} placeholder="e.g. 1234567" />
-            </div>
-            <div className="fg">
-              <label className="fl">Clearance Fee (₱)</label>
-              <input type="number" className="fc" value={businessForm.clearanceFee || ''} onChange={(e) => setBusinessForm(p => ({ ...p, clearanceFee: e.target.value }))} placeholder="0.00" />
-            </div>
-            <div className="fg">
-              <label className="fl">OR Date Issued</label>
-              <input type="date" className="fc" value={businessForm.orDateIssued || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orDateIssued: e.target.value }))} />
-            </div>
-          </div>
-        </form>
-      </div>
+                            {/* Section 3: Payment & OR Reference */}
+                            <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+                              3. Official Receipt & Fee
+                            </div>
+                            <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                              <div className="fg">
+                                <label className="fl">O.R. Number *</label>
+                                <input type="text" className="fc" required value={businessForm.orNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orNo: e.target.value }))} placeholder="e.g. 1234567" />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">Clearance Fee (₱)</label>
+                                <input type="number" className="fc" value={businessForm.clearanceFee || ''} onChange={(e) => setBusinessForm(p => ({ ...p, clearanceFee: e.target.value }))} placeholder="0.00" />
+                              </div>
+                              <div className="fg">
+                                <label className="fl">OR Date Issued</label>
+                                <input type="date" className="fc" value={businessForm.orDateIssued || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orDateIssued: e.target.value }))} />
+                              </div>
+                            </div>
+                          </form>
+                        </div>
 
-      {/* Modal Actions */}
-      <div className="modal-footer" style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-        <button type="button" className="btn btn-g" onClick={() => setIsBusinessModalOpen(false)}>
-          Cancel
-        </button>
-        <button type="submit" form="business-clearance-form" className="btn btn-p">
-          Save Record
-        </button>
-      </div>
-    </div>
-  </div>
-)}
+                        {/* Modal Actions */}
+                        <div className="modal-footer" style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                          <button type="button" className="btn btn-g" onClick={() => setIsBusinessModalOpen(false)}>
+                            Cancel
+                          </button>
+                          <button type="submit" form="business-clearance-form" className="btn btn-p">
+                            Save Record
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                  {/* Print Modal Component Call */}
+                  <BlotterCertificatePrintModal
+                    isOpen={printModalOpen}
+                    onClose={() => {
+                      setPrintModalOpen(false);
+                      setSelectedPrintData(null);
+                    }}
+                    blotterData={selectedPrintData}
+                  />
                 </div>{/* /app */}
               </div>/* /dashboard-shell-container */
             );

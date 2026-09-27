@@ -109,24 +109,24 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data }) => {
   const isDuplicateMode = data.printMode === 'copy' || data.isDuplicate || data.status === 'Released';
 
   return (
-    <div
-      style={{
-        border: '2px solid #000',
-        padding: '40px 50px',
-        background: '#fff',
-        minHeight: '270mm',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between', // Inayos mula 'justify' papuntang 'justifyContent'
-        boxSizing: 'border-box',
-        fontFamily: '"Times New Roman", Times, serif',
-        color: '#000000',
-        fontSize: '13px',
-        lineHeight: '1.6',
-        position: 'relative',
-        overflow: 'hidden',
-      }}
-    >
+  <div
+    style={{
+      border: '2px solid #000',
+      padding: '40px 50px',
+      background: '#fff',
+      minHeight: '270mm',
+      display: 'flex',
+      flexDirection: 'column',
+      justifyContent: 'space-between',
+      boxSizing: 'border-box',
+      fontFamily: '"Times New Roman", Times, serif',
+      color: '#000000',
+      fontSize: '13px',
+      lineHeight: '1.6',
+      position: 'relative',
+      overflow: 'hidden',
+    }}
+  >
       {/* ═══ REPRINT / DUPLICATE WATERMARK OVERLAY ═══ */}
       {isDuplicateMode && (
         <div

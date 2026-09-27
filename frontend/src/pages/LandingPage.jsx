@@ -3,9 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import bustracLogo from '../assets/logo.png';
 import './LandingPage.css';
 
-const PUBLIC_API = import.meta.env.VITE_API_URL 
-  ? `${import.meta.env.VITE_API_URL}/api/public` 
-  : 'http://localhost:5000/api/public';
+const PUBLIC_API = `${import.meta.env.VITE_API_URL || 'http://192.168.1.3:5000'}/api/public`;
 
 export default function LandingPage() {
   const navigate = useNavigate();

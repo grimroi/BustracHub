@@ -4,7 +4,7 @@ import PouchDB from 'pouchdb-browser';
 export const localDb = new PouchDB('bustrachub_db');
 
 // 2. Remote CouchDB Connection Setup
-const RAW_COUCH_URL = import.meta.env.VITE_COUCHDB_URL || 'http://localhost:5984/bustrachub_db';
+const RAW_COUCH_URL = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
 const CLEAN_URL = RAW_COUCH_URL.replace(/\/\/[^:]+:[^@]+@/, '//');
 
 export const remoteDb = new PouchDB(CLEAN_URL, {

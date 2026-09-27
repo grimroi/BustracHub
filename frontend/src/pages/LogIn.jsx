@@ -1,11 +1,16 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
-// ✅ Pinalitan ang import papunta sa central services/db.js
 import { createAuditLog } from '../services/db';
 import './LogIn.css';
 
-const API_BASE_URL = import.meta.env?.VITE_API_URL || 'http://localhost:5000';
+const getApiBaseUrl = () => {
+  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
+  const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
+  return `http://${currentHost}:5000`;
+};
+
+const API_BASE_URL = getApiBaseUrl();
 
 const hashPasswordForOffline = async (password) => {
   const encoder = new TextEncoder();
@@ -29,140 +34,140 @@ export default function LogIn() {
     typeof navigator !== 'undefined' ? navigator.onLine : true
   );
 
-  const handleLogin = useCallback(
-    async (event) => {
-      event.preventDefault();
-      setShowError(false);
-      setIsLoading(true);
+  const handleLogin = useCallback( async (event) => {
+  event.preventDefault();
+  setShowError(false);
+  setIsLoading(true);
 
-      const trimmedUsername = username.trim();
-      const lowerUsername = trimmedUsername.toLowerCase();
+  const trimmedUsername = username.trim();
+  const lowerUsername = trimmedUsername.toLowerCase();
 
-      // Helper for Local Authentication Check
-      const checkLocalAuth = async () => {
-        try {
-          const storedOfflineAuth = localStorage.getItem('bustrac_offline_auth');
-          if (!storedOfflineAuth) return null;
+  // Helper for Local Authentication Check (Offline Fallback)
+  const checkLocalAuth = async () => {
+    try {
+      const storedOfflineAuth = localStorage.getItem('bustrac_offline_auth');
+      if (!storedOfflineAuth) return null;
+      const allOfflineAuth = JSON.parse(storedOfflineAuth);
+      const offlineAuth = allOfflineAuth[lowerUsername];
+      if (!offlineAuth) return null;
 
-          const allOfflineAuth = JSON.parse(storedOfflineAuth);
-          const offlineAuth = allOfflineAuth[lowerUsername];
-          if (!offlineAuth) return null;
-
-          const passwordHash = await hashPasswordForOffline(password);
-          if (passwordHash === offlineAuth.passwordHash) {
-            return offlineAuth;
-          }
-          return null;
-        } catch (err) {
-          console.error('Error checking local auth:', err);
-          return null;
-        }
-      };
-
-      try {
-        // 1. Try Local Auth first (Fast and no 401 console logs for offline/local users)
-        const localUser = await checkLocalAuth();
-        if (localUser) {
-          sessionStorage.setItem('bustrac_role', localUser.role);
-          sessionStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
-          sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
-
-          try {
-            await createAuditLog({
-              action: 'USER_LOGIN',
-              module: 'SYSTEM',
-              recordId: localUser.user?.username || trimmedUsername || 'UNKNOWN',
-              user: `${localUser.user?.username || trimmedUsername || 'user'} (${localUser.role})`,
-              details: `${localUser.role === 'admin' ? 'Admin' : localUser.role === 'staff' ? 'Staff' : 'Resident'} logged in via Local Storage`,
-            });
-          } catch (auditErr) {
-            console.warn('Audit log entry failed for Offline Login:', auditErr);
-          }
-
-          if (localUser.role === 'admin') navigate('/admin');
-          else if (localUser.role === 'staff') navigate('/staff');
-          else if (localUser.role === 'resident') {
-            const destination = location.state?.redirectTo || '/resident';
-            navigate(destination, { state: { activeTab: location.state?.activeTab } });
-          } else {
-            navigate('/');
-          }
-          return;
-        }
-
-        // 2. If not found in Local Auth, fetch from the Online Backend API Server
-        const response = await fetch(`${API_BASE_URL}/api/login`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ username: trimmedUsername, password }),
-        });
-
-        const data = await response.json();
-
-        if (response.ok && data.success) {
-          sessionStorage.setItem('bustrac_role', data.role);
-          sessionStorage.setItem('bustrac_user', JSON.stringify(data.user));
-          sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
-
-          const passwordHash = await hashPasswordForOffline(password);
-          const existingOfflineAuth = JSON.parse(
-            localStorage.getItem('bustrac_offline_auth') || '{}'
-          );
-          existingOfflineAuth[lowerUsername] = {
-            username: trimmedUsername,
-            passwordHash,
-            role: data.role,
-            user: data.user,
-          };
-          localStorage.setItem('bustrac_offline_auth', JSON.stringify(existingOfflineAuth));
-
-          // ✅ Audit Log for Online API Login
-          try {
-            await createAuditLog({
-              action: 'USER_LOGIN',
-              module: 'SYSTEM',
-              recordId: data.user?.username || trimmedUsername || 'UNKNOWN',
-              user: `${data.user?.username || trimmedUsername} (${data.role})`,
-              details: `${data.role === 'admin' ? 'Admin' : data.role === 'staff' ? 'Staff' : 'Resident'} logged in via Online API`,
-            });
-          } catch (auditErr) {
-            console.warn('Audit log entry failed for Online Login:', auditErr);
-          }
-
-          if (data.role === 'admin') navigate('/admin');
-          else if (data.role === 'staff') navigate('/staff');
-          else if (data.role === 'resident') {
-            const destination = location.state?.redirectTo || '/resident';
-            navigate(destination, { state: { activeTab: location.state?.activeTab } });
-          } else {
-            navigate('/');
-          }
-          return;
-        }
-
-        // If both local and API fail
-        setShowError(true);
-      } catch (err) {
-        console.warn('Network / API Login failed, checking local auth fallback:', err);
-        const localUser = await checkLocalAuth();
-        if (localUser) {
-          sessionStorage.setItem('bustrac_role', localUser.role);
-          sessionStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
-          sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
-
-          if (localUser.role === 'admin') navigate('/admin');
-          else if (localUser.role === 'staff') navigate('/staff');
-          else if (localUser.role === 'resident') navigate('/resident');
-          else navigate('/');
-        } else {
-          setShowError(true);
-        }
-      } finally {
-        setIsLoading(false);
+      const passwordHash = await hashPasswordForOffline(password);
+      if (passwordHash === offlineAuth.passwordHash) {
+        return offlineAuth;
       }
-    },
-    [username, password, navigate, location]
-  );
+      return null;
+    } catch (err) {
+    // STEP 2: FALLBACK SA LOCAL OFFLINE AUTH (Kapag walang internet / Server Down / Network Issue)
+    console.warn('Network / API Login failed, attempting local offline fallback...', err);
+    
+    const localUser = await checkLocalAuth();
+    if (localUser) {
+      const userRole = localUser.role || localUser.user?.role;
+      sessionStorage.setItem('bustrac_role', userRole);
+      sessionStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
+      sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+      
+      if (userRole === 'admin') navigate('/admin');
+      else if (userRole === 'staff') navigate('/staff');
+      else if (userRole === 'resident') navigate('/resident');
+      else navigate('/');
+    } else {
+      // KAPAG NETWORK ERROR AT WALANG NAKASAVE NA CACHE SA CELLPHONE:
+      setShowError('Cannot connect to server. Please check your network or Wi-Fi connection.');
+    }
+  } finally {
+    setIsLoading(false);
+  }
+  };
+
+  try {
+    // ==========================================
+    // STEP 1: SUBUKANG MAG-ONLINE LOGIN SA API SERVER MUNA
+    // ==========================================
+    const response = await fetch(`${API_BASE_URL}/api/login`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username: trimmedUsername, password }),
+    });
+
+    const data = await response.json();
+
+    if (response.ok && data.success) {
+      const userRole = data.user?.role || data.role;
+      sessionStorage.setItem('bustrac_role', userRole);
+      sessionStorage.setItem('bustrac_user', JSON.stringify(data.user));
+      sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
+      // I-cache at i-sync sa local storage para magamit sa susunod na offline login
+      try {
+        const passwordHash = await hashPasswordForOffline(password);
+        const existingOfflineAuth = JSON.parse(
+          localStorage.getItem('bustrac_offline_auth') || '{}'
+        );
+        existingOfflineAuth[lowerUsername] = {
+          username: trimmedUsername,
+          passwordHash,
+          role: userRole,
+          user: data.user,
+        };
+        localStorage.setItem('bustrac_offline_auth', JSON.stringify(existingOfflineAuth));
+      } catch (e) {
+        console.warn('Failed to cache credentials locally:', e);
+      }
+
+      // Audit Log for Online API Login
+      try {
+        await createAuditLog({
+          action: 'USER_LOGIN',
+          module: 'SYSTEM',
+          recordId: data.user?.username || trimmedUsername || 'UNKNOWN',
+          user: `${data.user?.username || trimmedUsername} (${userRole})`,
+          details: `${userRole === 'admin' ? 'Admin' : userRole === 'staff' ? 'Staff' : 'Resident'} logged in via Online API`,
+        });
+      } catch (auditErr) {
+        console.warn('Audit log entry failed:', auditErr);
+      }
+
+      // Proper Navigation
+      if (userRole === 'admin') navigate('/admin');
+      else if (userRole === 'staff') navigate('/staff');
+      else if (userRole === 'resident') {
+        const destination = location.state?.redirectTo || '/resident';
+        navigate(destination, { state: { activeTab: location.state?.activeTab } });
+      } else {
+        navigate('/');
+      }
+      return;
+    }
+
+    // Kung sumagot ang Server pero "Invalid username or password" (HTTP 401)
+    setShowError(true);
+
+  } catch (err) {
+    // ==========================================
+    // STEP 2: FALLBACK SA LOCAL OFFLINE AUTH (Kapag walang internet/Server Down)
+    // ==========================================
+    console.warn('Network / API Login failed, attempting local offline fallback...', err);
+
+    const localUser = await checkLocalAuth();
+
+    if (localUser) {
+      const userRole = localUser.role || localUser.user?.role;
+      sessionStorage.setItem('bustrac_role', userRole);
+      sessionStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
+      sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
+      if (userRole === 'admin') navigate('/admin');
+      else if (userRole === 'staff') navigate('/staff');
+      else if (userRole === 'resident') navigate('/resident');
+      else navigate('/');
+    } else {
+      setShowError(true);
+    }
+  } finally {
+    setIsLoading(false);
+  }
+}, [username, password, navigate, location]);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
