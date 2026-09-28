@@ -78,25 +78,7 @@
    2. PRINT MEDIA STYLES (Lalabas lang kapag pumasok sa Print Preview)
    ═══════════════════════════════════════════════════════════════ */
 @media print {
-  /* 1. Itago ang lahat ng UI Elements maliban sa printable certificate */
-  body * {
-    visibility: hidden !important;
-  }
-
-  /* 2. Itago ang mga partikular na interactive components */
-  #root, 
-  .modal-overlay, 
-  .modal-card, 
-  header, 
-  nav, 
-  aside, 
-  form, 
-  button, 
-  .btn {
-    display: none !important;
-  }
-
-  /* 3. I-reset ang Body at HTML para sa A4 Page */
+  /* 1. I-reset ang HTML at Body para sa eksaktong sukat ng A4 */
   html, body {
     margin: 0 !important;
     padding: 0 !important;
@@ -106,7 +88,17 @@
     overflow: visible !important;
   }
 
-  /* 4. Ipakita at I-force display ang Printable Certificate Container at Card */
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  /* 2. Itago ang buong UI sa likod */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* 3. Siguraduhin na ang print container at lahat ng elemento sa loob nito ay makikita */
   .certificate-print-container,
   #printable-certificate-card,
   .certificate-print-container *,
@@ -114,12 +106,13 @@
     visibility: visible !important;
   }
 
+  /* 4. I-position ang certificate sa pinakataas ng A4 page */
   .certificate-print-container,
   #printable-certificate-card {
     display: block !important;
     position: absolute !important;
-    top: 0 !important;
     left: 0 !important;
+    top: 0 !important;
     width: 210mm !important;
     min-height: 297mm !important;
     margin: 0 !important;
@@ -133,9 +126,11 @@
     print-color-adjust: exact !important;
   }
 
-  @page {
-    size: A4 portrait;
-    margin: 0;
+  /* 5. Itago lamang ang mga action buttons o elements na may class na .no-print */
+  .no-print,
+  .no-print * {
+    display: none !important;
+    visibility: hidden !important;
   }
 }
 

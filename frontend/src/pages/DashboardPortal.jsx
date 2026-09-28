@@ -13,14 +13,16 @@ import ResidencyCertificate from '../components/certificates/templates/Residency
 import { ThemeToggle } from '../components/ThemeToggle';
 import CertificateLifecycle, { CertificateIssuancePrint } from './CertificateLifecycle';
 import CertPrintScreen from './CertPrintScreen';
-import ResidentCombobox, { formatPurok } from '../components/ResidentCombobox'; 
+import ResidentCombobox, { formatPurok } from '../components/ResidentCombobox';
 import AuditLogView from '../components/AuditLogView';
-import { localDb as db, forceSyncToRemote, createAuditLog } from '../services/db';
-import BlotterCertificatePrintModal from "../components/BlotterCertificatePrintModal";
-import { exportToExcel } from '../utils/excelExporter'
+import { localDb as db, localDb, forceSyncToRemote, createAuditLog } from '../services/db';
+import { exportToExcel } from '../utils/excelExporter';
 import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import BlotterForm from '../components/BlotterForm';
-
+import { SummonsPanel } from '../components/SummonsPanel';
+import { CaseStatusActions } from '../components/CaseStatusActions';
+import A4PreviewWrapper from '../components/A4PreviewWrapper';
+import BlotterCertificatePrintModal from '../components/BlotterCertificatePrintModal';
 
 const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
 
@@ -341,6 +343,19 @@ export default function DashboardPortal({ role = 'staff' }) {
   }
 });
 
+const getStatusBadge = (status) => {
+  switch (status) {
+    case 'Settled / Closed':
+      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#dcfce7', color: '#15803d', fontWeight: 'bold' }}>✓ Settled</span>;
+    case 'Referred to Lupon':
+      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#fef3c7', color: '#b45309', fontWeight: 'bold' }}>⚠️ Referred to Lupon</span>;
+    case 'Dismissed':
+      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', fontWeight: 'bold' }}>✕ Dismissed</span>;
+    default:
+      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#e0f2fe', color: '#0369a1', fontWeight: 'bold' }}>🔵 {status || 'Open'}</span>;
+  }
+};
+
 
 // ── EXTENDED DATA REGISTRY WITH WORKFLOW METADATA ──
 const [feedbackList, setFeedbackList] = useState([
@@ -391,8 +406,6 @@ const [feedbackList, setFeedbackList] = useState([
   }
 ]);
 
-
-
   const settledBlotterCount = blotterList.filter(b => b.status === 'Settled / Resolved' || b.status === 'Settled').length;
   const cfaBlotterCount = blotterList.filter(b => b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)').length;
   const activeBlotterCount = blotterList.filter(b => b.status === 'Pending' || b.status === 'Open' || b.status === 'Under Mediation').length;
@@ -407,8 +420,8 @@ const [printModalOpen, setPrintModalOpen] = useState(false);
 const [selectedPrintData, setSelectedPrintData] = useState(null);
 
 const handleOpenPrint = (blotterItem) => {
-  setSelectedPrintData(blotterItem);
-  setPrintModalOpen(true);
+    setSelectedBlotter(blotterItem);
+    setIsPrintModalOpen(true);
 };
 
   // ── INDIGENCY PRINT MODAL STATES ──
@@ -1638,6 +1651,19 @@ const submitBlotterAction = async () => {
     const putRes = await db.put(updatedDoc);
     updatedDoc._rev = putRes.rev;
 
+    // Update local selected state
+    if (typeof setSelectedBlotter === 'function') {
+      setSelectedBlotter(updatedDoc);
+    }
+    localStorage.setItem('active_blotter_data', JSON.stringify(updatedDoc));
+
+    // Refresh the main blotters list
+    if (typeof setBlotters === 'function') {
+      setBlotters(prev => prev.map(item => (item._id === updatedDoc._id ? updatedDoc : item)));
+    } else if (typeof setBlotterList === 'function') {
+      setBlotterList(prev => prev.map(item => (item._id === updatedDoc._id ? updatedDoc : item)));
+    }
+
     try {
       await createAuditLog({
         action: 'UPDATE_BLOTTER_STATUS',
@@ -1646,19 +1672,13 @@ const submitBlotterAction = async () => {
         user: `${currentUser?.username || 'admin'} (admin)`,
         details: `Updated Blotter status to "${newStatus}" for Case Ref: ${doc.refNumber || doc._id}`
       });
-      console.log('✅ Admin Audit log saved successfully for blotter action');
     } catch (auditErr) {
-      console.warn('⚠️ Admin audit log creation failed:', auditErr);
+      console.warn('Audit log creation failed:', auditErr);
     }
-
-    if (typeof setSelectedBlotter === 'function') {
-      setSelectedBlotter(updatedDoc);
-    }
-    localStorage.setItem('active_blotter_data', JSON.stringify(updatedDoc));
 
     setActionModalOpen(false);
     setSelectedBlotterForAction(null);
-    console.log(`✅ Blotter status successfully updated to: ${updatedDoc.status}`);
+    alert(`Status successfully updated to: ${newStatus}`);
 
   } catch (err) {
     console.error('Failed to update blotter case status:', err);
@@ -2412,6 +2432,7 @@ const [blotterForm, setBlotterForm] = useState({
   isRespondentNonResident: false,
   respondent: '',
   respondentId: '',
+  respondentEmail: '', 
   witnesses: '',
   priority: 'Medium',
   actionTaken: 'Summoned Parties',
@@ -2742,8 +2763,8 @@ const filteredBlotters = sortedBlotters.filter((b) => {
   const rawDate = b.date || b.incidentDate || b.dateFiled || b.createdAt;
   let caseDate = null;
   if (rawDate && rawDate !== 'N/A' && rawDate !== 'Recently') {
-    const formattedDateStr = String(rawDate).split('T')[0];
-    caseDate = new Date(formattedDateStr);
+      const formattedDateStr = String(rawDate).split('T')[0];
+      caseDate = new Date(formattedDateStr);
   }
   const fromDate = dateFrom ? new Date(dateFrom) : null;
   const toDate = dateTo ? new Date(dateTo) : null;
@@ -2758,6 +2779,7 @@ const filteredBlotters = sortedBlotters.filter((b) => {
   );
 });
 
+ const [isPrintModalOpen, setIsPrintModalOpen] = React.useState(false);
 const [selectedBlotter, setSelectedBlotter] = useState(null);
 const [selectedBlotterId, setSelectedBlotterId] = useState(null);
 const [blotterVerifyQuery, setBlotterVerifyQuery] = useState('');
@@ -3990,6 +4012,7 @@ useEffect(() => {
   }
 }, [screen]);
 
+
 // ── POUCHDB SAVE / UPDATE HANDLER ──
 const handleSaveBusinessClearance = async (e) => {
   e.preventDefault();
@@ -4725,14 +4748,46 @@ const handleSaveBlotter = async (e) => {
     ? blotterForm.respondent.name || blotterForm.respondent.displayName 
     : (blotterForm.respondent || blotterForm.respondentName || '');
 
-  if (!compName || !respName) {
-    alert('⚠️ Please fill in the Complainant and Respondent fields.');
+  // Detailed Required Fields Validation with Auto-Focus
+  if (!blotterForm.date) {
+    alert('⚠️ Please select the Date of Incident.');
+    document.getElementById('blotter-date')?.focus();
+    return;
+  }
+
+  if (!blotterForm.time) {
+    alert('⚠️ Please enter the Time Matrix for the incident.');
+    document.getElementById('blotter-time')?.focus();
+    return;
+  }
+
+  if (!blotterForm.location || blotterForm.location.trim() === '') {
+    alert('⚠️ Please enter the Exact Location Address.');
+    document.getElementById('blotter-location')?.focus();
+    return;
+  }
+
+  if (!compName) {
+    alert('⚠️ Please select or input the Complainant (Nagrereklamo).');
+    document.getElementById('blotter-complainant')?.focus();
+    return;
+  }
+
+  if (!respName) {
+    alert('⚠️ Please select or input the Respondent (Inirereklamo).');
+    document.getElementById('blotter-respondent')?.focus();
+    return;
+  }
+
+  if (!blotterForm.narrative || blotterForm.narrative.trim() === '') {
+    alert('⚠️ Please provide the Incident Narrative Report Statement.');
+    document.getElementById('blotter-narrative')?.focus();
     return;
   }
 
   try {
     const trackingNo = blotterForm.trackingNo || `BLT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
-    
+
     // Complete payload mapped for both old & new table views
     const blotterPayload = {
       _id: trackingNo,
@@ -4747,25 +4802,26 @@ const handleSaveBlotter = async (e) => {
       incidentTime: blotterForm.incidentTime || blotterForm.time || '22:30',
       time: blotterForm.incidentTime || blotterForm.time || '22:30',
       priority: blotterForm.priority || 'Medium Priority',
-      incidentType: blotterForm.incidentType || blotterForm.type || 'Physical Altercation',
-      location: blotterForm.location || 'Zone 4, near Barangay Hall Plaza, Brgy. Bustrac, Nabua',
+      incidentType: blotterForm.incidentType || blotterForm.type || 'Noise Complaint',
+      location: blotterForm.location || '',
       isVAWC: !!blotterForm.isVawc,
       isVawc: !!blotterForm.isVawc,
-      
+
       // Parties Data (Dual-key mapping)
       complainant: compName,
       complainantName: compName,
       complainantId: blotterForm.complainantId || '',
       isComplainantNonResident: !!blotterForm.isComplainantNonResident,
-      
+
       respondent: respName,
       respondentName: respName,
+      respondentEmail: blotterForm.respondentEmail || blotterForm.email || '', // Respondent email
       respondentId: blotterForm.respondentId || '',
       isRespondentNonResident: !!blotterForm.isRespondentNonResident,
-      
-      witnesses: blotterForm.witnesses || 'Ana L. Garcia, Maria Santos',
+
+      witnesses: blotterForm.witnesses || '',
       narrative: blotterForm.narrative || '',
-      formalAction: blotterForm.formalAction || 'Summoned Parties',
+      formalAction: blotterForm.actionTaken || blotterForm.formalAction || 'Summoned Parties',
       status: blotterForm.status || 'Open',
       summonCount: blotterForm.summonCount || 0,
       nextHearingDate: blotterForm.nextHearingDate || '',
@@ -4794,15 +4850,42 @@ const handleSaveBlotter = async (e) => {
       });
     }
 
-    alert(`✓ Blotter Record successfully saved!\nTracking No: ${trackingNo}`);
+    // 4. Trigger Backend Email Notification Service
+    let emailStatusMessage = '';
+    const targetEmail = blotterForm.respondentEmail || blotterForm.email;
 
-    // 4. Navigate back to correct Blotter List / Ledger page
+    if (targetEmail && targetEmail.trim() !== '') {
+      try {
+        const response = await fetch('http://localhost:5000/api/blotter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            caseNumber: trackingNo,
+            respondentName: respName,
+            respondentEmail: targetEmail,
+            scheduleDate: blotterForm.nextHearingDate || blotterForm.date || 'TBA',
+            incidentType: blotterForm.incidentType || blotterForm.type || 'General Incident',
+            details: blotterForm.narrative || ''
+          })
+        });
+
+        const resData = await response.json();
+        if (resData.success && resData.emailSent) {
+          emailStatusMessage = `\n\n📧 Summons Notification Email successfully sent to ${targetEmail}!`;
+        }
+      } catch (emailErr) {
+        console.warn('Backend Email Service offline or unreachable:', emailErr);
+      }
+    }
+
+    alert(`✓ Blotter Record successfully saved!\nTracking No: ${trackingNo}${emailStatusMessage}`);
+
     if (typeof nav === 'function') {
-      nav('blotter-manage'); // Match this with your navigation page key
+      nav('blotter-manage');
     }
   } catch (err) {
     console.error('Error saving blotter record:', err);
-    alert('⚠️ An error occurred while saving the Blotter Record. Please try again.');
+    alert(' An error occurred while saving the Blotter Record. Please try again.');
   }
 };
 
@@ -4935,34 +5018,42 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
     }
   });
 
-    const handleSaveActivity = (e) => {
-    e.preventDefault();
-    if (!activityForm.title.trim() || !activityForm.description.trim()) {
-      alert('Please fill in the Title and Description.');
-      return;
-    }
+    const handleSaveActivity = async (e) => {
+  e.preventDefault();
+  if (!activityForm.title.trim() || !activityForm.description.trim()) {
+    alert('Please fill in the Title and Description.');
+    return;
+  }
 
-    const now = new Date().toISOString();
-    const payload = editingActivityId
-      ? {
-          ...activitiesList.find((a) => (a._id || a.id) === editingActivityId),
-          ...activityForm,
-          updatedAt: now,
-        }
-      : {
-          _id: `activity_${Date.now()}`,
-          type: 'activity',
-          ...activityForm,
-          createdAt: now,
-          updatedAt: now,
-        };
-
+  const now = new Date().toISOString();
+  
+  try {
     if (editingActivityId) {
-      setActivitiesList((prev) =>
-        prev.map((a) => ((a._id || a.id) === editingActivityId ? payload : a))
-      );
-    } else {
-      setActivitiesList((prev) => [payload, ...prev]);
+  const existingDoc = activitiesList.find((a) => (a._id || a.id) === editingActivityId);
+  const updatedPayload = {
+    ...existingDoc,
+    ...activityForm,
+    updatedAt: now,
+  };
+
+  const res = await localDb.put(updatedPayload);
+
+  const finalDoc = { ...updatedPayload, _rev: res.rev };
+  setActivitiesList((prev) =>
+    prev.map((a) => ((a._id || a.id) === editingActivityId ? finalDoc : a))
+  );
+} else {
+      const newPayload = {
+        _id: `activity_${Date.now()}`,
+        type: 'activity',
+        ...activityForm,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      await localDb.put(newPayload);
+
+      setActivitiesList((prev) => [newPayload, ...prev]);
     }
 
     setActivityForm({
@@ -4970,29 +5061,56 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
       category: 'Events',
       description: '',
       date: new Date().toISOString().split('T')[0],
+      time: '',
       location: '',
     });
     setEditingActivityId(null);
     setActivitySubScreen('list');
-  };
+  } catch (err) {
+    console.error('Error saving activity:', err);
+    alert('Failed to save activity to local database.');
+  }
+    };
 
   const handleEditActivity = (act) => {
-    setEditingActivityId(act._id || act.id);
-    setActivityForm({
-      title: act.title || '',
-      category: act.category || 'Events',
-      description: act.description || act.content || act.body || '',
-      date: act.date ? act.date.split('T')[0] : new Date().toISOString().split('T')[0],
-      location: act.location || '',
-    });
-    setActivitySubScreen('edit');
-  };
+  setEditingActivityId(act._id || act.id);
+  setActivityForm({
+    _id: act._id,       
+    _rev: act._rev,   
+    title: act.title || '',
+    category: act.category || 'Events',
+    description: act.description || act.content || act.body || '',
+    date: act.date ? act.date.split('T')[0] : new Date().toISOString().split('T')[0],
+    time: act.time || '',
+    location: act.location || '',
+  });
+  setActivitySubScreen('edit');
+};
+  
+  const formatTime12hr = (timeStr) => {
+  if (!timeStr) return '';
+  const [hours, minutes] = timeStr.split(':');
+  let h = parseInt(hours, 10);
+  const ampm = h >= 12 ? 'PM' : 'AM';
+  h = h % 12 || 12;
+  return `@ ${h}:${minutes} ${ampm}`;
+};
 
-  const handleDeleteActivity = (id) => {
-    if (window.confirm('Are you sure you want to delete this activity?')) {
-      setActivitiesList((prev) => prev.filter((a) => (a._id || a.id) !== id));
+    const handleDeleteActivity = async (id) => {
+  if (!window.confirm('Are you sure you want to delete this activity?')) return;
+
+  try {
+    const docToDelete = activitiesList.find((a) => (a._id || a.id) === id);
+    if (docToDelete && docToDelete._id) {
+      await localDb.remove(docToDelete._id, docToDelete._rev);
     }
-  };
+
+    setActivitiesList((prev) => prev.filter((a) => (a._id || a.id) !== id));
+  } catch (err) {
+    console.error('Error deleting activity:', err);
+    alert('Failed to delete activity.');
+  }
+};
   
     const [activityForm, setActivityForm] = useState({
     title: '',
@@ -5007,6 +5125,109 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
   useEffect(() => {
     localStorage.setItem('bustrac_activities', JSON.stringify(activitiesList));
   }, [activitiesList]);
+  
+    useEffect(() => {
+      async function loadActivities() {
+        try {
+          const result = await localDb.find({
+            selector: { type: 'activity' }
+          });
+          if (result.docs) {
+            setActivitiesList(result.docs);
+          }
+        } catch (err) {
+          console.error('Failed to load activities:', err);
+        }
+      }
+
+      if (screen === 'activities-manage') {
+        loadActivities();
+      }
+    }, [screen]);
+
+const saveSettings = async (updatedSettings) => {
+  try {
+    let existingRev = systemSettings?._rev;
+
+    try {
+      const docInDb = await localDb.get('setting_barangay_officials');
+      if (docInDb) {
+        existingRev = docInDb._rev;
+      }
+    } catch (getErr) {
+      if (getErr.status !== 404) {
+        console.warn('Unable to fetch existing settings rev:', getErr);
+      }
+    }
+
+    const payload = {
+      _id: 'setting_barangay_officials',
+      type: 'barangay_settings',
+      punongBarangay: updatedSettings.punongBarangay,
+      luponSecretary: updatedSettings.luponSecretary,
+      treasurer: updatedSettings.treasurer || '',
+      publicDomain: updatedSettings.publicDomain || '',
+      updatedAt: new Date().toISOString(),
+      ...(existingRev ? { _rev: existingRev } : {})
+    };
+
+    const response = await localDb.put(payload);
+
+    const savedPayload = { ...payload, _rev: response.rev };
+    setSystemSettings(savedPayload);
+
+    await createAuditLog({
+      action: 'UPDATE_OFFICIAL_SETTINGS',
+      category: 'SETTINGS',
+      targetId: 'setting_barangay_officials',
+      details: `Updated Officials: PB ${updatedSettings.punongBarangay}, Sec ${updatedSettings.luponSecretary}`,
+      user: currentUser?.name || currentUser?.username || 'Admin'
+    });
+
+    if (typeof forceSyncToRemote === 'function') {
+      forceSyncToRemote();
+    }
+
+    alert('Barangay settings saved successfully!');
+  } catch (err) {
+    console.error('Error saving settings to PouchDB:', err);
+    alert(`Failed to save settings: ${err.message || 'Database error'}`);
+  }
+};
+
+const [systemSettings, setSystemSettings] = useState(null);
+
+const [settingsForm, setSettingsForm] = useState({
+  punongBarangay: 'HON. ANNABELLE E. RULL',
+  luponSecretary: 'MRS. MELY M. PRESADO',
+  treasurer: '',
+  publicDomain: ''
+});
+
+  useEffect(() => {
+  async function fetchBarangaySettings() {
+    try {
+      const savedData = await localDb.get('setting_barangay_officials');
+      if (savedData) {
+        setSystemSettings(savedData);
+        setSettingsForm({
+          punongBarangay: savedData.punongBarangay || 'HON. ANNABELLE E. RULL',
+          luponSecretary: savedData.luponSecretary || 'MRS. MELY M. PRESADO',
+          treasurer: savedData.treasurer || '',
+          publicDomain: savedData.publicDomain || ''
+        });
+      }
+    } catch (err) {
+      if (err.status === 404) {
+        console.log('No saved settings found. Using defaults.');
+      } else {
+        console.warn('Using default official settings:', err.message);
+      }
+    }
+  }
+
+  fetchBarangaySettings();
+}, []);
 
   // ─────────────────────────────────────────────
   // RENDER
@@ -5015,422 +5236,440 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
     <div className="dashboard-shell-container">
       <div className={`app ${sidebarOpen ? 'sidebar-is-open' : 'sidebar-is-closed'}`}>
         {/* ════════════════ SIDEBAR ════════════════ */}
-        <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`} style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}>
-        <div 
-          className="sb-logo" 
-          style={{ 
-            cursor: sidebarOpen ? 'default' : 'pointer', 
-            transition: 'cursor 0.2s ease',
-            flexShrink: 0 
-          }} 
-          onClick={() => { if (!sidebarOpen) { setSidebarOpen(true); } }}
+        <aside 
+          className={`sidebar ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`} 
+          style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}
         >
-          {/* Close Button */}
-          <button 
-            type="button" 
-            className="sidebar-close-btn" 
-            onClick={(e) => { e.stopPropagation(); setSidebarOpen(false); }} 
-            aria-label="Collapse sidebar" 
-            title="Collapse sidebar"
+          {/* 1. SIDEBAR HEADER / LOGO */}
+          <div 
+            className="sb-logo" 
+            style={{ cursor: sidebarOpen ? 'default' : 'pointer', transition: 'cursor 0.2s ease', flexShrink: 0 }} 
+            onClick={() => { if (!sidebarOpen) setSidebarOpen(true); }}
           >
-            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-              <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-            </svg>
-          </button>
-
-          {/* Logo Image */}
-          <img src={logo} alt="Barangay Bustrac Official Seal" className="sb-logo-img" />
-
-          {/* Logo Text */}
-          <div>
-            <div className="sb-title">Bustrac Hub</div>
-            <div className="sb-sub">{role === 'admin' ? 'Administrator Portal' : 'Staff Portal'}</div>
-          </div>
-        </div>
-
-        {/* 2. SCROLLABLE NAVIGATION AREA */}
-        <nav className="sb-nav" style={{ flex: 1, overflowY: sidebarOpen ? 'auto' : 'hidden', paddingBottom: '16px' }} >
-          {/* OVERVIEW */}
-          <div className="sb-sec">Overview</div>
-          <button 
-            className={`nav-btn${screen === 'dashboard' ? ' active' : ''}`} 
-            onClick={() => nav('dashboard')} 
-            data-tooltip="Dashboard"
-          >
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 3h8v8H3z" />
-                <path d="M3 13h6v8H3z" />
-                <path d="M13 3h8v6h-8z" />
-                <path d="M13 13h8v8h-8z" />
-              </svg>
-            </span>
-            <span className="nav-label">Dashboard</span>
-          </button>
-
-          {/* RESIDENTS MANAGEMENT */}
-          <div className="sb-sec">Residents Management</div>
-          <div className="sb-nav-group">
+            {/* Close / Collapse Button */}
             <button 
               type="button" 
-              className={`nav-btn toggle-parent ${['residents', 'households', 'add-resident'].includes(screen) ? 'active-parent' : ''}`} 
-              onClick={() => {
-                if (!sidebarOpen) {
-                  setSidebarOpen(true);
-                  setIsResidentsOpen(true);
-                } else {
-                  setIsResidentsOpen(!isResidentsOpen);
-                }
-              }} 
-              aria-expanded={isResidentsOpen}
+              className="sidebar-close-btn" 
+              onClick={(e) => { e.stopPropagation(); setSidebarOpen(false); }} 
+              aria-label="Collapse sidebar" 
+              title="Collapse sidebar"
+            >
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
+                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                <line x1="9" y1="3" x2="9" y2="21" />
+              </svg>
+            </button>
+            
+            {/* Logo Image */}
+            <img src={logo} alt="Barangay Bustrac Official Seal" className="sb-logo-img" />
+            
+            {/* Logo Text */}
+            <div>
+              <div className="sb-title">Bustrac Hub</div>
+              <div className="sb-sub">{role === 'admin' ? 'Administrator Portal' : 'Staff Portal'}</div>
+            </div>
+          </div>
+
+          {/* 2. SCROLLABLE NAVIGATION AREA */}
+          <nav 
+            className="sb-nav" 
+            style={{ flex: 1, overflowY: sidebarOpen ? 'auto' : 'hidden', paddingBottom: '16px' }}
+          >
+            {/* OVERVIEW */}
+            <div className="sb-sec">Overview</div>
+            <button 
+              className={`nav-btn${screen === 'dashboard' ? ' active' : ''}`} 
+              onClick={() => nav('dashboard')} 
+              data-tooltip="Dashboard"
             >
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                  <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                  <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  <path d="M3 3h8v8H3z" />
+                  <path d="M3 13h6v8H3z" />
+                  <path d="M13 3h8v6h-8z" />
+                  <path d="M13 13h8v8h-8z" />
                 </svg>
               </span>
-              <span className="nav-label" style={{ flex: 1 }}>Residents Profile</span>
-              <span className="submenu-arrow" style={{ transform: isResidentsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
+              <span className="nav-label">Dashboard</span>
             </button>
 
-            {isResidentsOpen && (
-              <div className="sb-submenu-zone" style={{ paddingLeft: '14px' }}>
-                <button className={`nav-btn sub-btn${screen === 'residents' ? ' active' : ''}`} onClick={() => nav('residents')}>
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <path d="M14 2v6h6" />
-                      <path d="M12 18v-6" />
-                      <path d="M9 15h6" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Manage Ledger</span>
-                </button>
-                <button className={`nav-btn sub-btn${screen === 'households' ? ' active' : ''}`} onClick={() => nav('households')}>
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                      <path d="M9 22V12h6v10" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Manage Households</span>
-                </button>
-                <button className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`} onClick={() => nav('add-resident')}>
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Add Resident</span>
-                </button>
-              </div>
-            )}
-          </div>
+            {/* RESIDENTS MANAGEMENT */}
+            <div className="sb-sec">Residents Management</div>
+            <div className="sb-nav-group">
+              <button 
+                type="button" 
+                className={`nav-btn toggle-parent ${['residents', 'households', 'add-resident'].includes(screen) ? 'active-parent' : ''}`} 
+                onClick={() => { 
+                  if (!sidebarOpen) { 
+                    setSidebarOpen(true); 
+                    setIsResidentsOpen(true); 
+                  } else { 
+                    setIsResidentsOpen(!isResidentsOpen); 
+                  } 
+                }} 
+                aria-expanded={isResidentsOpen}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                    <circle cx="9" cy="7" r="4" />
+                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                  </svg>
+                </span>
+                <span className="nav-label" style={{ flex: 1, textAlign: 'left' }}>Residents Profile</span>
+                <span className="submenu-arrow" style={{ transform: isResidentsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
+              </button>
 
-          {/* CERTIFICATES */}
-          <div className="sb-sec">Certificates</div>
-          <button className={`nav-btn${screen === 'cert-req' ? ' active' : ''}`} onClick={() => nav('cert-req')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M12 18v-6" />
-                <path d="M9 15h6" />
-              </svg>
-            </span>
-            <span className="nav-label">Request & Approval</span>
-            {pendingRequestsCount > 0 && (
-              <span className="nb nb-amber">{pendingRequestsCount}</span>
-            )}
-          </button>
-          <button className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`} onClick={() => nav('cert-print')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
-                <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
-                <path d="M12 7V5" />
-                <path d="M10 19h4" />
-                <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
-              </svg>
-            </span>
-            <span className="nav-label">Issuance & Print</span>
-          </button>
-          
-          {/* Shortened Label para maiwasan ang wrapping */}
-          <button className={`nav-btn${screen === 'brgy_clearance' ? ' active' : ''}`} onClick={() => nav('brgy_clearance')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M12 18v-6" />
-                <path d="M9 15h6" />
-              </svg>
-            </span>
-            <span className="nav-label">Barangay Clearance</span>
-          </button>
-          
-          <button className={`nav-btn${screen === 'business_clearance' ? ' active' : ''}`} onClick={() => nav('business_clearance')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                <path d="M9 22V12h6v10" />
-                <path d="M8 6h.01" />
-                <path d="M16 6h.01" />
-                <path d="M12 6h.01" />
-                <path d="M12 10h.01" />
-                <path d="M8 10h.01" />
-                <path d="M16 10h.01" />
-              </svg>
-            </span>
-            <span className="nav-label">Business Clearance</span>
-          </button>
+              {isResidentsOpen && sidebarOpen && (
+                <div className="sb-submenu-zone" style={{ paddingLeft: '14px' }}>
+                  <button className={`nav-btn sub-btn${screen === 'residents' ? ' active' : ''}`} onClick={() => nav('residents')}>
+                    <span className="nav-ico">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                    </span>
+                    <span className="nav-label">Manage Ledger</span>
+                  </button>
+                  
+                  <button className={`nav-btn sub-btn${screen === 'households' ? ' active' : ''}`} onClick={() => nav('households')}>
+                    <span className="nav-ico">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        <path d="M9 22V12h6v10" />
+                      </svg>
+                    </span>
+                    <span className="nav-label">Manage Households</span>
+                  </button>
 
-          {/* AID DISTRIBUTION */}
-          <div className="sb-sec">Aid Distribution</div>
-          <div className="sb-nav-group">
-            <button 
-              type="button" 
-              className={`nav-btn toggle-parent ${['programs', 'aid-encode', 'aid-logs', 'add-beneficiary'].includes(screen) ? 'active-parent' : ''}`} 
-              onClick={() => {
-                if (!sidebarOpen) {
-                  setSidebarOpen(true);
-                  setIsAidOpen(true);
-                } else {
-                  setIsAidOpen(!isAidOpen);
-                }
-              }} 
-              aria-expanded={isAidOpen}
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                  <path d="M3.27 6.96L12 12.01l8.73-5.05" />
-                  <path d="M12 22.08V12" />
-                </svg>
-              </span>
-              <span className="nav-label" style={{ flex: 1 }}>Aid Distribution</span>
-              <span className="submenu-arrow" style={{ transform: isAidOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
-            </button>
-            {isAidOpen && (
-              <div className="sb-submenu-zone" style={{ paddingLeft: '14px' }}>
-                <button className={`nav-btn sub-btn${screen === 'programs' ? ' active' : ''}`} onClick={() => nav('programs')}>
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Programs</span>
-                </button>
-                <button className={`nav-btn sub-btn${screen === 'aid-encode' ? ' active' : ''}`} onClick={() => nav('aid-encode')}>
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 5v14M5 12h14" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Encode Distribution</span>
-                </button>
-                <button className={`nav-btn sub-btn${screen === 'aid-logs' ? ' active' : ''}`} onClick={() => nav('aid-logs')}>
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                      <path d="M14 2v6h6" />
-                      <path d="M12 18v-6" />
-                      <path d="M9 15h6" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Distribution Logs</span>
-                </button>
-                {role === 'admin' && (
-                  <button className={`nav-btn sub-btn${screen === 'add-beneficiary' ? ' active' : ''}`} onClick={() => nav('add-beneficiary')}>
+                  <button className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`} onClick={() => nav('add-resident')}>
                     <span className="nav-ico">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M12 5v14M5 12h14" />
                       </svg>
                     </span>
-                    <span className="nav-label">Add Beneficiary</span>
+                    <span className="nav-label">Add Resident</span>
                   </button>
-                )}
-              </div>
-            )}
-          </div>
+                </div>
+              )}
+            </div>
 
-          {/* BLOTTER */}
-          <div className="sb-sec">Blotter</div>
-          <button className={`nav-btn${screen === 'blotter-new' ? ' active' : ''}`} onClick={() => nav('blotter-new')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                <path d="M12 9v4" />
-                <path d="M12 17h.01" />
-              </svg>
-            </span>
-            <span className="nav-label">File Blotter Entry</span>
-          </button>
-          <button className={`nav-btn${screen === 'blotter-manage' ? ' active' : ''}`} onClick={() => nav('blotter-manage')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <path d="M14 2v6h6" />
-                <path d="M12 18v-6" />
-                <path d="M9 15h6" />
-              </svg>
-            </span>
-            <span className="nav-label">Manage Blotter</span>
-            {pendingBlotterCount > 0 && (
-              <span className="nb nb-red">{pendingBlotterCount}</span>
+            {/* CERTIFICATES */}
+            <div className="sb-sec">Certificates</div>
+            <button className={`nav-btn${screen === 'cert-req' ? ' active' : ''}`} onClick={() => nav('cert-req')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 18v-6" />
+                  <path d="M9 15h6" />
+                </svg>
+              </span>
+              <span className="nav-label">Request & Approval</span>
+              {pendingRequestsCount > 0 && (
+                <span className="nb nb-amber">{pendingRequestsCount}</span>
+              )}
+            </button>
+
+            <button className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`} onClick={() => nav('cert-print')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
+                  <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
+                  <path d="M12 7V5" />
+                  <path d="M10 19h4" />
+                  <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
+                </svg>
+              </span>
+              <span className="nav-label">Issuance & Print</span>
+            </button>
+
+            <button className={`nav-btn${screen === 'brgy_clearance' ? ' active' : ''}`} onClick={() => nav('brgy_clearance')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 18v-6" />
+                  <path d="M9 15h6" />
+                </svg>
+              </span>
+              <span className="nav-label">Barangay Clearance</span>
+            </button>
+
+            <button className={`nav-btn${screen === 'business_clearance' ? ' active' : ''}`} onClick={() => nav('business_clearance')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                  <path d="M9 22V12h6v10" />
+                </svg>
+              </span>
+              <span className="nav-label">Business Clearance</span>
+            </button>
+
+            {/* AID DISTRIBUTION */}
+            <div className="sb-sec">Aid Distribution</div>
+            <div className="sb-nav-group">
+              <button 
+                type="button" 
+                className={`nav-btn toggle-parent ${['programs', 'aid-encode', 'aid-logs', 'add-beneficiary'].includes(screen) ? 'active-parent' : ''}`} 
+                onClick={() => { 
+                  if (!sidebarOpen) { 
+                    setSidebarOpen(true); 
+                    setIsAidOpen(true); 
+                  } else { 
+                    setIsAidOpen(!isAidOpen); 
+                  } 
+                }} 
+                aria-expanded={isAidOpen}
+              >
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                    <path d="M3.27 6.96L12 12.01l8.73-5.05" />
+                    <path d="M12 22.08V12" />
+                  </svg>
+                </span>
+                <span className="nav-label" style={{ flex: 1, textAlign: 'left' }}>Aid Distribution</span>
+                <span className="submenu-arrow" style={{ transform: isAidOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
+              </button>
+
+              {isAidOpen && sidebarOpen && (
+                <div className="sb-submenu-zone" style={{ paddingLeft: '14px' }}>
+                  <button className={`nav-btn sub-btn${screen === 'programs' ? ' active' : ''}`} onClick={() => nav('programs')}>
+                    <span className="nav-ico">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                      </svg>
+                    </span>
+                    <span className="nav-label">Programs</span>
+                  </button>
+
+                  <button className={`nav-btn sub-btn${screen === 'aid-encode' ? ' active' : ''}`} onClick={() => nav('aid-encode')}>
+                    <span className="nav-ico">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 5v14M5 12h14" />
+                      </svg>
+                    </span>
+                    <span className="nav-label">Encode Distribution</span>
+                  </button>
+
+                  <button className={`nav-btn sub-btn${screen === 'aid-logs' ? ' active' : ''}`} onClick={() => nav('aid-logs')}>
+                    <span className="nav-ico">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <path d="M14 2v6h6" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                    </span>
+                    <span className="nav-label">Distribution Logs</span>
+                  </button>
+
+                  {role === 'admin' && (
+                    <button className={`nav-btn sub-btn${screen === 'add-beneficiary' ? ' active' : ''}`} onClick={() => nav('add-beneficiary')}>
+                      <span className="nav-ico">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 5v14M5 12h14" />
+                        </svg>
+                      </span>
+                      <span className="nav-label">Add Beneficiary</span>
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* PEACE & ORDER / INCIDENTS */}
+            <div className="sb-sec">Peace & Order</div>
+            <button className={`nav-btn${screen === 'blotter-new' ? ' active' : ''}`} onClick={() => nav('blotter-new')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                  <path d="M12 9v4" />
+                  <path d="M12 17h.01" />
+                </svg>
+              </span>
+              <span className="nav-label">File Incident / Complaint</span>
+            </button>
+
+            <button className={`nav-btn${screen === 'blotter-manage' ? ' active' : ''}`} onClick={() => nav('blotter-manage')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" />
+                  <path d="M12 18v-6" />
+                  <path d="M9 15h6" />
+                </svg>
+              </span>
+              <span className="nav-label">Manage Incident Cases</span>
+              {pendingBlotterCount > 0 && (
+                <span className="nb nb-red">{pendingBlotterCount}</span>
+              )}
+            </button>
+
+            {role === 'staff' && (
+              <button className={`nav-btn${screen === 'blotter-detail' ? ' active' : ''}`} onClick={() => nav('blotter-detail')}>
+                <span className="nav-ico">
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                  </svg>
+                </span>
+                <span className="nav-label">Summons & Hearings</span>
+              </button>
             )}
-          </button>
-          {role === 'staff' && (
-            <button className={`nav-btn${screen === 'blotter-detail' ? ' active' : ''}`} onClick={() => nav('blotter-detail')}>
+
+            {/* COMMUNITY */}
+            <div className="sb-sec">Community</div>
+            <button className={`nav-btn${screen === 'announcements' ? ' active' : ''}`} onClick={() => nav('announcements')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                </svg>
+              </span>
+              <span className="nav-label">Announcements</span>
+            </button>
+
+            <button className={`nav-btn${screen === 'feedback' ? ' active' : ''}`} onClick={() => nav('feedback')}>
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
               </span>
-              <span className="nav-label">Blotter Summon</span>
+              <span className="nav-label">Feedback</span>
+              {activeFeedbackCount > 0 && (
+                <span className="nb nb-red">{activeFeedbackCount}</span>
+              )}
             </button>
-          )}
 
-          {/* COMMUNITY */}
-          <div className="sb-sec">Community</div>
-          <button className={`nav-btn${screen === 'announcements' ? ' active' : ''}`} onClick={() => nav('announcements')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-              </svg>
-            </span>
-            <span className="nav-label">Announcements</span>
-          </button>
-          <button className={`nav-btn${screen === 'feedback' ? ' active' : ''}`} onClick={() => nav('feedback')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-              </svg>
-            </span>
-            <span className="nav-label">Feedback</span>
-            {activeFeedbackCount > 0 && (
-              <span className="nb nb-red">{activeFeedbackCount}</span>
+            <button className={`nav-btn${screen === 'activities-manage' ? ' active' : ''}`} onClick={() => nav('activities-manage')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </span>
+              <span className="nav-label">Manage Activities</span>
+            </button>
+
+            <button className={`nav-btn${screen === 'aid-advisories' ? ' active' : ''}`} onClick={() => nav('aid-advisories')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+              </span>
+              <span className="nav-label">Relief & Aid Advisories</span>
+            </button>
+
+            {/* ADMIN-ONLY SECTION */}
+            {role === 'admin' && (
+              <>
+                <div className="sb-sec">Admin Only</div>
+                <button className={`nav-btn${screen === 'conflicts' ? ' active' : ''}`} onClick={() => nav('conflicts')}>
+                  <span className="nav-ico">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                      <path d="M12 9v4" />
+                      <path d="M12 17h.01" />
+                    </svg>
+                  </span>
+                  <span className="nav-label">Conflict Resolution</span>
+                  {conflictsList?.length > 0 && (
+                    <span className="nb nb-red">{conflictsList.length}</span>
+                  )}
+                </button>
+
+                <button className={`nav-btn${screen === 'audit' ? ' active' : ''}`} onClick={() => nav('audit')}>
+                  <span className="nav-ico">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" />
+                    </svg>
+                  </span>
+                  <span className="nav-label">Audit Log</span>
+                </button>
+
+                <button className={`nav-btn${screen === 'officials' ? ' active' : ''}`} onClick={() => nav('officials')}>
+                  <span className="nav-ico">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                      <path d="M2 17l10 5 10-5" />
+                      <path d="M2 12l10 5 10-5" />
+                    </svg>
+                  </span>
+                  <span className="nav-label">Barangay Officials</span>
+                </button>
+
+                <button className={`nav-btn${screen === 'users' ? ' active' : ''}`} onClick={() => nav('users')}>
+                  <span className="nav-ico">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                      <circle cx="12" cy="7" r="4" />
+                    </svg>
+                  </span>
+                  <span className="nav-label">Manage Users</span>
+                </button>
+              </>
             )}
-          </button>
-          
-          <button className={`nav-btn${screen === 'activities-manage' ? ' active' : ''}`} onClick={() => nav('activities-manage')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-              </svg>
-            </span>
-            <span className="nav-label">Manage Activities</span>
-          </button>
-          
-                    <button className={`nav-btn${screen === 'aid-advisories' ? ' active' : ''}`} onClick={() => nav('aid-advisories')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-              </svg>
-            </span>
-            <span className="nav-label">Relief & Aid Advisories</span>
-          </button>
 
-          {/* ADMIN-ONLY SECTION */}
-          {role === 'admin' && (
-            <>
-              <div className="sb-sec">Admin Only</div>
-              <button className={`nav-btn${screen === 'conflicts' ? ' active' : ''}`} onClick={() => nav('conflicts')}>
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                    <path d="M12 9v4" />
-                    <path d="M12 17h.01" />
-                  </svg>
-                </span>
-                <span className="nav-label">Conflict Resolution</span>
-                <span className="nb nb-red">{conflictsList.length}</span>
-              </button>
-              <button className={`nav-btn${screen === 'audit' ? ' active' : ''}`} onClick={() => nav('audit')}>
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" />
-                  </svg>
-                </span>
-                <span className="nav-label">Audit Log</span>
-              </button>
-              <button className={`nav-btn${screen === 'users' ? ' active' : ''}`} onClick={() => nav('users')}>
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                    <circle cx="12" cy="7" r="4" />
-                  </svg>
-                </span>
-                <span className="nav-label">Manage Users</span>
-              </button>
-            </>
-          )}
+            {/* REPORTS */}
+            <div className="sb-sec">Reports</div>
+            <button className={`nav-btn${screen === 'reports' ? ' active' : ''}`} onClick={() => nav('reports')}>
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M3 3h18v18H3z" />
+                  <path d="M3 9h18" />
+                  <path d="M9 21V9" />
+                </svg>
+              </span>
+              <span className="nav-label">Generate Reports</span>
+            </button>
+          </nav>
 
-          {/* REPORTS */}
-          <div className="sb-sec">Reports</div>
-          <button className={`nav-btn${screen === 'reports' ? ' active' : ''}`} onClick={() => nav('reports')}>
-            <span className="nav-ico">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                <path d="M3 3h18v18H3z" />
-                <path d="M3 9h18" />
-                <path d="M9 21V9" />
-              </svg>
-            </span>
-            <span className="nav-label">Generate Reports</span>
-          </button>
-        </nav>
-
-       <div
-        className="sb-foot"
-        onClick={() => {
-          if (typeof setScreen === 'function') {
-            setScreen('profile');
-          } else if (typeof setShowUserMenu === 'function') {
-            setShowUserMenu(prev => !prev);
-          }
-        }}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            if (typeof setScreen === 'function') {
-              setScreen('profile');
-            }
-          }
-        }}
-        role="button"
-        tabIndex={0}
-      >
-        <div className="sb-ava">{initials}</div>
-
-          <div className="sb-info" style={{ flex: 1, minWidth: 0 }}>
-          <div className="sb-uname" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-            {displayName}
+          {/* 3. SIDEBAR FOOTER (USER PROFILE & SYNC STATUS) */}
+          <div 
+            className="sb-foot" 
+            onClick={() => {
+              if (typeof setScreen === 'function') {
+                setScreen('profile');
+              } else if (typeof setShowUserMenu === 'function') {
+                setShowUserMenu(prev => !prev);
+              }
+            }} 
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                if (typeof setScreen === 'function') setScreen('profile');
+              }
+            }} 
+            role="button" 
+            tabIndex={0}
+          >
+            <div className="sb-ava">{initials}</div>
+            <div className="sb-info" style={{ flex: 1, minWidth: 0 }}>
+              <div className="sb-uname" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {displayName}
+              </div>
+              <div className="sb-urole">
+                {role === 'admin' ? 'Administrator' : 'Staff'}
+              </div>
+            </div>
+            <div 
+              className="online-dot" 
+              title={
+                syncState === 'offline' 
+                  ? 'Offline — changes saved locally' 
+                  : syncState === 'syncing' 
+                    ? 'Connecting and syncing' 
+                    : 'Online — changes synced'
+              } 
+              style={{
+                background: syncState === 'offline' ? 'var(--red)' : syncState === 'syncing' ? 'var(--amber)' : 'var(--green)',
+                boxShadow: syncState === 'offline' ? '0 0 0 2px var(--red-bg)' : syncState === 'syncing' ? '0 0 0 2px var(--amber-bg)' : '0 0 0 2px var(--green-bg)',
+              }} 
+            />
           </div>
-          <div className="sb-urole">
-            {role === 'admin' ? 'Administrator' : 'Staff'}
-          </div>
-        </div>
-
-        <div
-          className="online-dot"
-          title={
-            syncState === 'offline'
-              ? 'Offline — changes saved locally'
-              : syncState === 'syncing'
-              ? 'Connecting and syncing'
-              : 'Online — changes synced'
-          }
-          style={{
-            background: syncState === 'offline' ? 'var(--red)' : syncState === 'syncing' ? 'var(--amber)' : 'var(--green)',
-            boxShadow: syncState === 'offline' ? '0 0 0 2px var(--red-bg)' : syncState === 'syncing' ? '0 0 0 2px var(--amber-bg)' : '0 0 0 2px var(--green-bg)',
-          }}
-        />
-      </div>
         </aside>
         
         {/* ════════════════ MAIN CONTENT ════════════════ */}
@@ -7887,14 +8126,22 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                               </div>
                               <div className="fg" style={{ marginBottom: '10px' }}>
                                 <label className="fl">SECRETARY</label>
-                                <select className="fc">
-                                  <option>MRS. MELY M. PRESADO</option>
+                                <select 
+                                  className="fc" 
+                                  value={businessForm.secretary || settingsForm.luponSecretary || ''} 
+                                  onChange={(e) => setBusinessForm({ ...businessForm, secretary: e.target.value })}
+                                >
+                                  <option>{settingsForm.luponSecretary || 'Barangay Secretary'}</option>
                                 </select>
                               </div>
                               <div className="fg" style={{ marginBottom: '10px' }}>
                                 <label className="fl">PUNONG BARANGAY</label>
-                                <select className="fc">
-                                  <option>HON. ANNABELLE E. RULL</option>
+                                <select 
+                                  className="fc" 
+                                  value={businessForm.captain || settingsForm.punongBarangay || ''} 
+                                  onChange={(e) => setBusinessForm({ ...businessForm, captain: e.target.value })}
+                                >
+                                  <option>{settingsForm.punongBarangay || 'Punong Barangay'}</option>
                                 </select>
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
@@ -8998,94 +9245,96 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                       </div>
 
                       {/* Legal Parties Involved */}
-                      <div className="fp" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px', margin: 0 }}>
-                        <div className="fp-t">Legal Parties Involved</div>
-
-                        {/* Complainant sa Tulong ni ResidentCombobox */}
-                        <div className="fg" style={{ marginTop: '8px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                            <label className="fl" style={{ margin: 0 }}>Complainant (Nagrereklamo) <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <label style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                              <input 
-                                type="checkbox" 
-                                checked={blotterForm.isComplainantNonResident} 
-                                onChange={(e) => setBlotterForm({ ...blotterForm, isComplainantNonResident: e.target.checked, complainant: '' })} 
-                              /> Non-resident
-                            </label>
+                        <div className="fp" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', borderRadius: '8px', margin: 0 }}>
+                          <div className="fp-t">Legal Parties Involved</div>
+                          
+                          {/* Complainant sa Tulong ni ResidentCombobox */}
+                          <div className="fg" style={{ marginTop: '8px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <label className="fl" style={{ margin: 0 }}>Complainant (Nagrereklamo) <span style={{ color: 'var(--red)' }}>*</span></label>
+                              <label style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                <input type="checkbox" checked={blotterForm.isComplainantNonResident} onChange={(e) => setBlotterForm({ ...blotterForm, isComplainantNonResident: e.target.checked, complainant: '' })} /> Non-resident
+                              </label>
+                            </div>
+                            {blotterForm.isComplainantNonResident ? (
+                              <input className="fc" required placeholder="Enter full name of non-resident complainant" value={blotterForm.complainant} onChange={(e) => setBlotterForm({ ...blotterForm, complainant: e.target.value })} />
+                            ) : (
+                              <ResidentCombobox residents={residentsList} value={blotterForm.complainantId} placeholder="Search resident name, ID, or purok..." onChange={(selected) => { setBlotterForm({ ...blotterForm, complainant: selected ? selected.name : '', complainantId: selected ? selected.id : '', }); }} />
+                            )}
                           </div>
 
-                          {blotterForm.isComplainantNonResident ? (
-                            <input 
-                              className="fc" 
-                              required 
-                              placeholder="Enter full name of non-resident complainant" 
-                              value={blotterForm.complainant} 
-                              onChange={(e) => setBlotterForm({ ...blotterForm, complainant: e.target.value })} 
-                            />
-                          ) : (
-                            <ResidentCombobox
-                              residents={residentsList}
-                              value={blotterForm.complainantId}
-                              placeholder="Search resident name, ID, or purok..."
-                              onChange={(selected) => {
-                                setBlotterForm({
-                                  ...blotterForm,
-                                  complainant: selected ? selected.name : '',
-                                  complainantId: selected ? selected.id : '',
-                                });
-                              }}
-                            />
-                          )}
-                        </div>
+                          {/* Respondent Field with Auto-Filled Email */}
+                          <div className="fg" style={{ marginTop: '12px' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                              <label className="fl" style={{ margin: 0 }}>
+                                Respondent (Inirereklamo) <span style={{ color: 'var(--red)' }}>*</span>
+                              </label>
+                              <label style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={blotterForm.isRespondentNonResident}
+                                  onChange={(e) => setBlotterForm({
+                                    ...blotterForm,
+                                    isRespondentNonResident: e.target.checked,
+                                    respondent: '',
+                                    respondentEmail: ''
+                                  })}
+                                />
+                                Non-resident
+                              </label>
+                            </div>
 
-                        {/* Respondent sa Tulong ni ResidentCombobox */}
-                        <div className="fg" style={{ marginTop: '12px' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                            <label className="fl" style={{ margin: 0 }}>Respondent (Inirereklamo) <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <label style={{ fontSize: '11px', color: '#64748b', display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer' }}>
-                              <input 
-                                type="checkbox" 
-                                checked={blotterForm.isRespondentNonResident} 
-                                onChange={(e) => setBlotterForm({ ...blotterForm, isRespondentNonResident: e.target.checked, respondent: '' })} 
-                              /> Non-resident
-                            </label>
+                            {blotterForm.isRespondentNonResident ? (
+                              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                                <input
+                                  id="blotter-respondent"
+                                  className="fc"
+                                  required
+                                  placeholder="Full name of non-resident respondent"
+                                  value={blotterForm.respondent}
+                                  onChange={(e) => setBlotterForm({ ...blotterForm, respondent: e.target.value })}
+                                />
+                                <input
+                                  className="fc"
+                                  type="email"
+                                  placeholder="Respondent Email (for Summons)"
+                                  value={blotterForm.respondentEmail || ''}
+                                  onChange={(e) => setBlotterForm({ ...blotterForm, respondentEmail: e.target.value })}
+                                />
+                              </div>
+                            ) : (
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                                <ResidentCombobox
+                                  residents={residentsList}
+                                  value={blotterForm.respondentId}
+                                  placeholder="Search resident name, ID, or purok..."
+                                  onChange={(selected) => {
+                                    const autoEmail = selected ? (selected.email || selected.contactEmail || '') : '';
+                                    setBlotterForm({
+                                      ...blotterForm,
+                                      respondent: selected ? selected.name : '',
+                                      respondentId: selected ? selected.id : '',
+                                      respondentEmail: autoEmail || blotterForm.respondentEmail || ''
+                                    });
+                                  }}
+                                />
+                                <input
+                                  className="fc"
+                                  type="email"
+                                  placeholder="Respondent Email (Auto-filled if available from Resident Profile)"
+                                  value={blotterForm.respondentEmail || ''}
+                                  onChange={(e) => setBlotterForm({ ...blotterForm, respondentEmail: e.target.value })}
+                                />
+                              </div>
+                            )}
                           </div>
 
-                          {blotterForm.isRespondentNonResident ? (
-                            <input 
-                              className="fc" 
-                              required 
-                              placeholder="Enter full name of non-resident respondent" 
-                              value={blotterForm.respondent} 
-                              onChange={(e) => setBlotterForm({ ...blotterForm, respondent: e.target.value })} 
-                            />
-                          ) : (
-                            <ResidentCombobox
-                              residents={residentsList}
-                              value={blotterForm.respondentId}
-                              placeholder="Search resident name, ID, or purok..."
-                              onChange={(selected) => {
-                                setBlotterForm({
-                                  ...blotterForm,
-                                  respondent: selected ? selected.name : '',
-                                  respondentId: selected ? selected.id : '',
-                                });
-                              }}
-                            />
-                          )}
+                          {/* Witnesses */}
+                          <div className="fg" style={{ marginTop: '12px' }}>
+                            <label className="fl">Witnesses Block (Optional)</label>
+                            <input className="fc" placeholder="Comma-separated names" value={blotterForm.witnesses} onChange={(e) => setBlotterForm({ ...blotterForm, witnesses: e.target.value })} />
+                          </div>
                         </div>
-
-                        {/* Witnesses */}
-                        <div className="fg" style={{ marginTop: '12px' }}>
-                          <label className="fl">Witnesses Block (Optional)</label>
-                          <input 
-                            className="fc" 
-                            placeholder="Comma-separated names" 
-                            value={blotterForm.witnesses} 
-                            onChange={(e) => setBlotterForm({ ...blotterForm, witnesses: e.target.value })} 
-                          />
-                        </div>
-                      </div>
                     </div>
 
                     {/* RIGHT COLUMN: Case Narrative & Action */}
@@ -9200,26 +9449,15 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                           <button 
                             type="button" 
                             className="btn btn-p" 
-                            disabled={!isBlotterFormValid} 
                             onClick={handleSaveBlotter} 
-                            style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center', opacity: !isBlotterFormValid ? 0.5 : 1, cursor: !isBlotterFormValid ? 'not-allowed' : 'pointer' }}
+                            style={{ flex: 2, display: 'flex', alignItems: 'center', gap: '6px', justifyContent: 'center', cursor: 'pointer' }}
                           >
                             Save Blotter Case Record
                           </button>
-                          <button 
-                            type="button" 
-                            className="btn" 
-                            onClick={handleClearBlotterForm} 
-                            style={{ flex: 1, background: 'rgba(71, 85, 105, 0.6)', color: '#e2e8f0', borderRadius: '6px' }}
-                          >
+                          <button type="button" className="btn" onClick={handleClearBlotterForm} style={{ flex: 1, background: 'rgba(71, 85, 105, 0.6)', color: '#e2e8f0', borderRadius: '6px' }}>
                             Clear
                           </button>
-                          <button 
-                            type="button" 
-                            className="btn btn-g" 
-                            style={{ flex: 1 }} 
-                            onClick={() => nav('blotter-manage')}
-                          >
+                          <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => nav('blotter-manage')}>
                             Cancel
                           </button>
                         </div>
@@ -9234,229 +9472,244 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                 SCREEN: MANAGE BLOTTER
                 ════════════════════════════════════════ */}
                 {screen === 'blotter-manage' && (
-                  <div className="screen active">
-                    <div className="tw">
-                      
-                      {/* ── SEARCH, FILTERS & ACTIONS ROW ── */}
-                      <div className="tb" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                        
-                        {/* Search Bar */}
-                        <div className="sb-box" style={{ flex: '1 1 220px' }}>
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <circle cx="11" cy="11" r="8" />
-                            <path d="M21 21l-4.35-4.35" />
-                          </svg>
-                          <input 
-                            placeholder="Search case #, complainant, respondent..." 
-                            value={blotterSearch} 
-                            onChange={(e) => setBlotterSearch(e.target.value)} 
-                          />
-                        </div>
-
-                        {/* Type Filter */}
-                        <select className="fc" style={{ width: '150px' }} value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-                          <option value="All Types">All Types</option>
-                          <option value="Noise Complaint">Noise Complaint</option>
-                          <option value="Physical Altercation">Physical Altercation</option>
-                          <option value="Property Dispute">Property Dispute</option>
-                          <option value="Domestic Concern">Domestic Concern</option>
-                          <option value="Theft">Theft</option>
-                          <option value="Other">Other</option>
-                        </select>
-
-                        {/* Status Filter */}
-                        <select className="fc" style={{ width: '150px' }} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-                          <option value="All Status">All Status</option>
-                          <option value="Pending">Pending</option>
-                          <option value="Open">Open</option>
-                          <option value="Under Mediation">Under Mediation</option>
-                          <option value="Resolved">Resolved</option>
-                          <option value="Referred to Higher Authority">Referred</option>
-                        </select>
-
-                        {/* Date Filters */}
-                        <input type="date" className="fc" style={{ width: '135px' }} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} title="From Date" />
-                        <input type="date" className="fc" style={{ width: '135px' }} value={dateTo} onChange={(e) => setDateTo(e.target.value)} title="To Date" />
-
-                        {/* VAWC Filter */}
-                        <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', background: 'var(--surface2)', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                          <input type="checkbox" checked={filterVawc} onChange={(e) => setFilterVawc(e.target.checked)} />
-                          <span>VAWC Only</span>
-                        </label>
-
-                        {/* Spacer to push buttons to the far right */}
-                        <div style={{ flex: '1 1 auto' }} />
-
-                        {/* Action Buttons */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <button className="btn btn-g" onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M6 9V2h12v7" />
-                              <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-                              <path d="M6 14h12v8H6z" />
-                            </svg>
-                            Export / Print Log
-                          </button>
-                          
-                          <button className="btn btn-p" onClick={() => nav('blotter-new')} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                              <line x1="12" y1="5" x2="12" y2="19" />
-                              <line x1="5" y1="12" x2="19" y2="12" />
-                            </svg>
-                            File New Entry
-                          </button>
-                        </div>
-
+                <div className="screen active">
+                  <div className="tw">
+                    {/* ── SEARCH, FILTERS & ACTIONS ROW ── */}
+                    <div className="tb" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
+                      {/* Search Bar */}
+                      <div className="sb-box" style={{ flex: '1 1 220px' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="11" cy="11" r="8" />
+                          <path d="M21 21l-4.35-4.35" />
+                        </svg>
+                        <input 
+                          placeholder="Search case #, complainant, respondent..." 
+                          value={blotterSearch} 
+                          onChange={(e) => setBlotterSearch(e.target.value)} 
+                        />
                       </div>
 
-                      {/* ── MAIN LEDGER TABLE ── */}
-                      <table>
-                        <thead>
+                      {/* Type Filter */}
+                      <select className="fc" style={{ width: '150px' }} value={filterType} onChange={(e) => setFilterType(e.target.value)}>
+                        <option value="All Types">All Types</option>
+                        <option value="Noise Complaint">Noise Complaint</option>
+                        <option value="Physical Altercation">Physical Altercation</option>
+                        <option value="Property Dispute">Property Dispute</option>
+                        <option value="Domestic Concern">Domestic Concern</option>
+                        <option value="Theft">Theft</option>
+                        <option value="Other">Other</option>
+                      </select>
+
+                      {/* Status Filter */}
+                      <select className="fc" style={{ width: '165px' }} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
+                        <option value="All Status">All Status</option>
+                        <option value="Pending">Pending</option>
+                        <option value="Open">Open</option>
+                        <option value="Under Mediation">Under Mediation / Summons</option>
+                        <option value="Resolved">Resolved / Settled</option>
+                        <option value="Referred to Higher Authority">Referred / CFA</option>
+                      </select>
+
+                      {/* Date Filters */}
+                      <input type="date" className="fc" style={{ width: '135px' }} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} title="From Date" />
+                      <input type="date" className="fc" style={{ width: '135px' }} value={dateTo} onChange={(e) => setDateTo(e.target.value)} title="To Date" />
+
+                      {/* VAWC Filter */}
+                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', background: 'var(--surface2)', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                        <input type="checkbox" checked={filterVawc} onChange={(e) => setFilterVawc(e.target.checked)} />
+                        <span>VAWC Only</span>
+                      </label>
+
+                      {/* Spacer */}
+                      <div style={{ flex: '1 1 auto' }} />
+
+                      {/* Action Buttons */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <button className="btn btn-g" onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M6 9V2h12v7" />
+                            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                            <path d="M6 14h12v8H6z" />
+                          </svg>
+                          Export / Print Log
+                        </button>
+                        <button className="btn btn-p" onClick={() => nav('blotter-new')} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                            <line x1="12" y1="5" x2="12" y2="19" />
+                            <line x1="5" y1="12" x2="19" y2="12" />
+                          </svg>
+                          File New Entry
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* ── MAIN LEDGER TABLE ── */}
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>Case #</th>
+                          <th>Type</th>
+                          <th>Complainant</th>
+                          <th>Respondent</th>
+                          <th>Location</th>
+                          <th>Date</th>
+                          <th>Status</th>
+                          <th>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {filteredBlotters.length === 0 ? (
                           <tr>
-                            <th>Case #</th>
-                            <th>Type</th>
-                            <th>Complainant</th>
-                            <th>Respondent</th>
-                            <th>Location</th>
-                            <th>Date</th>
-                            <th>Status</th>
-                            <th>Actions</th>
+                            <td colSpan="8" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
+                              Walang nahanap na tugmang record sa blotter log data storage.
+                            </td>
                           </tr>
-                        </thead>
-                        <tbody>
-                          {filteredBlotters.length === 0 ? (
-                            <tr>
-                              <td colSpan="8" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
-                                Walang nahanap na tugmang record sa blotter log data storage.
+                        ) : (
+                          filteredBlotters.map((b) => {
+                          let currentSummon = Number(b.summonCount || 0);
+                          
+                          if (currentSummon === 0 && b.status) {
+                            const statusLower = b.status.toLowerCase();
+                            if (statusLower.includes('1st summon')) currentSummon = 1;
+                            else if (statusLower.includes('2nd summon')) currentSummon = 2;
+                            else if (statusLower.includes('3rd summon')) currentSummon = 3;
+                          }
+
+                          const isSettled = b.status === 'Settled / Resolved' || b.status === 'Resolved' || b.status === 'Settled';
+                          const isCfaIssued = b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)' || b.status === 'Referred to Higher Authority';
+
+                          return (
+                            <tr key={b._id || b.id}>
+                              <td style={mono10}>{b.id || b.trackingNo || b.refNumber || b._id}</td>
+                              <td>{b.type || b.incidentType ? (b.type || b.incidentType).replace('_', ' ') : 'N/A'}</td>
+                              <td><strong>{b.complainant || b.complainantName || 'N/A'}</strong></td>
+                              <td>{b.respondent || b.respondentName || 'Under Investigation'}</td>
+                              <td><strong>{b.location || b.purok || 'Brgy. Bustrac'}</strong></td>
+                              <td style={{ fontSize: '11px' }}>{b.date || b.incidentDate || 'N/A'}</td>
+                              <td>
+                                <span className={`badge ${isSettled ? 'g' : isCfaIssued ? 'r' : 'a'}`}>
+                                  {b.status}
+                                </span>
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                  <button 
+                                    className="btn btn-g btn-sm" 
+                                    onClick={() => {
+                                      const caseId = b._id || b.id;
+                                      setSelectedBlotterId(caseId);
+                                      if (typeof setSelectedBlotter === 'function') setSelectedBlotter(b);
+                                      if (typeof handleViewBlotter === 'function') handleViewBlotter(b);
+                                      else nav('blotter-detail');
+                                    }}
+                                  >
+                                    View
+                                  </button>
+
+                                  {!isSettled && !isCfaIssued && (
+                                    <>
+                                      {currentSummon === 0 && (
+                                        <button 
+                                          className="btn btn-primary btn-sm" 
+                                          onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}
+                                        >
+                                          1st Summon
+                                        </button>
+                                      )}
+
+                                      {currentSummon === 1 && (
+                                        <button 
+                                          className="btn btn-warning btn-sm" 
+                                          onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}
+                                        >
+                                          2nd Summon
+                                        </button>
+                                      )}
+
+                                      {currentSummon === 2 && (
+                                        <button 
+                                          className="btn btn-warning btn-sm" 
+                                          onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}
+                                        >
+                                          3rd Summon
+                                        </button>
+                                      )}
+
+                                      <button 
+                                        className="btn btn-success btn-sm" 
+                                        onClick={() => handleBlotterAction(b._id || b.id, 'settled')}
+                                      >
+                                        Settled
+                                      </button>
+
+                                      {currentSummon >= 3 && (
+                                        <button 
+                                          className="btn btn-danger btn-sm" 
+                                          style={{ backgroundColor: '#dc2626', color: '#fff' }} 
+                                          onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}
+                                        >
+                                          Escalate / Issue CFA
+                                        </button>
+                                      )}
+                                    </>
+                                  )}
+
+                                  {(isSettled || isCfaIssued) && (
+                                    <button 
+                                      className="btn btn-sm" 
+                                      style={{ 
+                                        backgroundColor: isCfaIssued ? '#7f1d1d' : '#047857', 
+                                        color: '#ffffff', 
+                                        fontWeight: 600, 
+                                        display: 'inline-flex', 
+                                        alignItems: 'center', 
+                                        gap: '5px' 
+                                      }} 
+                                      onClick={() => handleOpenPrint(b)}
+                                    >
+                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                        <path d="M6 9V2h12v7" />
+                                        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                                        <path d="M6 14h12v8H6z" />
+                                      </svg>
+                                      {isCfaIssued ? 'Print CFA' : 'Print Certificate'}
+                                    </button>
+                                  )}
+                                </div>
                               </td>
                             </tr>
-                          ) : (
-                            filteredBlotters.map((b) => {
-                              const currentSummon = Number(b.summonCount || 0);
-                              const isSettled = b.status === 'Settled / Resolved' || b.status === 'Resolved';
-                              const isCfaIssued = b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)' || b.status === 'Referred to Higher Authority';
-
-                              return (
-                                <tr key={b._id || b.id}>
-                                  <td style={mono10}>{b.id || b.trackingNo || b.refNumber || b._id}</td>
-                                  <td>{b.type || b.incidentType ? (b.type || b.incidentType).replace('_', ' ') : 'N/A'}</td>
-                                  <td><strong>{b.complainant || b.complainantName || 'N/A'}</strong></td>
-                                  <td>{b.respondent || b.respondentName || 'Under Investigation'}</td>
-                                  
-                                  {/* UPDATE LOCATION DISPLAY HERE */}
-                                  <td>
-                                    <strong>{b.location || b.purok || 'Brgy. Bustrac'}</strong>
-                                  </td>
-                                  
-                                  <td style={{ fontSize: '11px' }}>{b.date || b.incidentDate || 'N/A'}</td>
-                                  <td>
-                                    <span className={`badge ${ isSettled ? 'g' : isCfaIssued ? 'r' : 'a' }`}>
-                                      {b.status}
-                                    </span>
-                                  </td>
-                                  <td>
-                                  {/* Dynamic Action Buttons (View, Summon, Settled, Print, etc.) */}
-                                  <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                    <button 
-                                      className="btn btn-g btn-sm" 
-                                      onClick={() => {
-                                        const caseId = b._id || b.id;
-                                        setSelectedBlotterId(caseId);
-                                        if (typeof setSelectedBlotter === 'function') setSelectedBlotter(b);
-                                        if (typeof handleViewBlotter === 'function') handleViewBlotter(b);
-                                        else nav('blotter-detail');
-                                      }}
-                                    >
-                                      View
-                                    </button>
-
-                                    {!isSettled && !isCfaIssued && (
-                                      <>
-                                        {currentSummon === 0 && (
-                                          <button className="btn btn-primary btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}>
-                                            1st Summon
-                                          </button>
-                                        )}
-                                        {currentSummon === 1 && (
-                                          <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}>
-                                            2nd Summon
-                                          </button>
-                                        )}
-                                        {currentSummon === 2 && (
-                                          <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}>
-                                            3rd Summon
-                                          </button>
-                                        )}
-                                        <button className="btn btn-success btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'settled')}>
-                                          Settled
-                                        </button>
-                                        {currentSummon >= 3 && (
-                                          <button className="btn btn-danger btn-sm" style={{ backgroundColor: '#dc2626', color: '#fff' }} onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}>
-                                            Escalate / Issue CFA
-                                          </button>
-                                        )}
-                                      </>
-                                    )}
-
-                                    {/* BUTTON PARA SA PRINT CERTIFICATE O CFA KAPAG SETTLED O ESCALATED NA */}
-                                    {(isSettled || isCfaIssued) && (
-                                      <button 
-                                        className="btn btn-sm" 
-                                        style={{ 
-                                          backgroundColor: isCfaIssued ? '#7f1d1d' : '#047857', 
-                                          color: '#ffffff',
-                                          fontWeight: 600,
-                                          display: 'inline-flex',
-                                          alignItems: 'center',
-                                          gap: '5px'
-                                        }}
-                                        onClick={() => handleOpenPrint(b)}
-                                      >
-                                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <path d="M6 9V2h12v7" />
-                                          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-                                          <path d="M6 14h12v8H6z" />
-                                        </svg>
-                                        {isCfaIssued ? 'Print CFA' : 'Print Certificate'}
-                                      </button>
-                                    )}
-                                  </div>
-                                </td>
-                                </tr>
-                              );
-                            })
-                          )}
-                        </tbody>
-                      </table>
-
-                      {/* ── RECORD COUNT & FILTER RESET ── */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', padding: '0 4px' }}>
-                        <span style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 500 }}>
-                          Showing <strong style={{ color: 'var(--text)' }}>{filteredBlotters.length}</strong> of <strong style={{ color: 'var(--text)' }}>{blotterList.length}</strong> records
-                          {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && ' (filtered)'}
-                        </span>
-                        
-                        {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && (
-                          <button 
-                            className="btn btn-sm btn-g" 
-                            onClick={() => {
-                              setBlotterSearch('');
-                              setFilterType('All Types');
-                              setFilterStatus('All Status');
-                              setDateFrom('');
-                              setDateTo('');
-                              setFilterVawc(false);
-                            }}
-                            style={{ fontSize: '12px', padding: '4px 10px' }}
-                          >
-                            Clear Filters
-                          </button>
+                          );
+                        })
                         )}
-                      </div>
+                      </tbody>
+                    </table>
 
+                    {/* ── RECORD COUNT & FILTER RESET ── */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', padding: '0 4px' }}>
+                      <span style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 500 }}>
+                        Showing <strong style={{ color: 'var(--text)' }}>{filteredBlotters.length}</strong> of <strong style={{ color: 'var(--text)' }}>{blotterList.length}</strong> records
+                        {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && ' (filtered)'}
+                      </span>
+                      {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && (
+                        <button 
+                          className="btn btn-sm btn-g" 
+                          onClick={() => {
+                            setBlotterSearch('');
+                            setFilterType('All Types');
+                            setFilterStatus('All Status');
+                            setDateFrom('');
+                            setDateTo('');
+                            setFilterVawc(false);
+                          }} 
+                          style={{ fontSize: '12px', padding: '4px 10px' }}
+                        >
+                          Clear Filters
+                        </button>
+                      )}
                     </div>
                   </div>
-                )}
+                </div>
+              )}
 
             {/* ════════════════════════════════════════
                 SCREEN: BLOTTER DETAIL (DYNAMIC LOGIC ROUTE)
@@ -9499,6 +9752,16 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                             <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                               Case Information
                             </div>
+                            <div style={{ 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '6px', 
+                            fontSize: '12px',
+                            fontWeight: 700 
+                          }}>
+                            <span style={{ color: 'var(--muted)' }}>Current Status:</span>
+                            {getStatusBadge(currentCase?.status || 'Open')}
+                          </div>
                             <div className="fg2">
                               <div className="fg">
                                 <label className="fl">Case Number</label>
@@ -9622,30 +9885,21 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                           </div>
 
                           {/* Summons & Hearing Panel */}
-                          <div className="fp" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 16, flex: 1, display: 'flex', flexDirection: 'column' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 800, color: 'var(--text)', marginBottom: 4 }}>
-                              <span>Send Official Summons</span>
-                            </div>
-                            <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14 }}>
-                              Current Summon Count: <strong>{currentCase.summonCount || 0} / 3</strong>
-                            </div>
-                            <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-                              <div className="fg">
-                                <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4 }}>
-                                  Appearance Date
-                                </label>
-                                <input className="fc" type="text" value={currentCase.nextHearingDate || currentCase.summonDate || 'N/A'} readOnly />
-                              </div>
-                            </div>
-                            <button 
-                              type="button" 
-                              className="btn btn-p" 
-                              onClick={() => sendSummons && sendSummons(currentCase)} 
-                              style={{ width: '100%', padding: '10px 14px', marginTop: 'auto', cursor: 'pointer' }}
-                            >
-                              Log & Send Summons Notice
-                            </button>
+                          <SummonsPanel 
+                            currentCase={currentCase} 
+                            db={db} 
+                            setBlotterList={setBlotterList} 
+                          />
+
+                          {/* Status Update Action Bar */}
+                          <div className="fp" style={{ marginTop: '16px', padding: '16px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12 }}>
+                          <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px', color: 'var(--text)' }}>
+                            Case Resolution Actions
                           </div>
+                          <CaseStatusActions currentCase={currentCase} db={db} setBlotterList={setBlotterList} />
+                        </div>
+                          
+
                         </div>
                       </div>
 
@@ -10289,7 +10543,7 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                   </div>
                 )}
             
-                        {/* ════════════════════════════════════════
+            {/* ════════════════════════════════════════
                 SCREEN: MANAGE ACTIVITIES
                 ════════════════════════════════════════ */}
             {screen === 'activities-manage' && (
@@ -10344,31 +10598,46 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                         .slice()
                         .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
                         .map((act) => (
-                          <div 
-                            key={act._id || act.id} 
+                          <div
+                            key={act._id || act.id}
                             className="card"
-                            style={{ 
-                              display: 'flex', 
-                              justifyContent: 'space-between', 
+                            style={{
+                              display: 'flex',
+                              justify: 'space-between',
                               alignItems: 'flex-start',
                               gap: '16px',
-                              padding: '16px 20px'
+                              padding: '16px 20px',
                             }}
                           >
                             <div style={{ flex: 1 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
                                 <span className="badge b" style={{ fontSize: '10px' }}>
                                   {act.category || 'Events'}
                                 </span>
-                                <span style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-                                  {act.date}
+
+                                {/* DATE & TIME */}
+                                <span style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                                    <line x1="16" y1="2" x2="16" y2="6" />
+                                    <line x1="8" y1="2" x2="8" y2="6" />
+                                    <line x1="3" y1="10" x2="21" y2="10" />
+                                  </svg>
+                                  {act.date} {act.time ? formatTime12hr(act.time) : ''}
                                 </span>
+
+                                {/* LOCATION WITH SVG ICON */}
                                 {act.location && (
-                                  <span style={{ fontSize: '11px', color: 'var(--accent)' }}>
-                                    📍 {act.location}
+                                  <span style={{ fontSize: '11px', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                                      <circle cx="12" cy="10" r="3" />
+                                    </svg>
+                                    {act.location}
                                   </span>
                                 )}
                               </div>
+
                               <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>
                                 {act.title}
                               </div>
@@ -10376,14 +10645,12 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                                 {act.description}
                               </div>
                             </div>
+
                             <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
                               <button className="btn btn-g btn-sm" onClick={() => handleEditActivity(act)}>
                                 Edit
                               </button>
-                              <button 
-                                className="btn btn-d btn-sm" 
-                                onClick={() => handleDeleteActivity(act._id || act.id)}
-                              >
+                              <button className="btn btn-d btn-sm" onClick={() => handleDeleteActivity(act._id || act.id)}>
                                 Delete
                               </button>
                             </div>
@@ -10397,23 +10664,25 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                 {(activitySubScreen === 'new' || activitySubScreen === 'edit') && (
                   <div className="fp" style={{ maxWidth: '640px', margin: '0 auto', padding: '24px' }}>
                     <form onSubmit={handleSaveActivity}>
+                      {/* TITLE */}
                       <div className="fg">
                         <label className="fl">Activity Title <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <input
-                          className="fc"
-                          required
-                          placeholder="e.g. Barangay Assembly, Clean-up Drive, Medical Mission"
-                          value={activityForm.title}
-                          onChange={(e) => setActivityForm({ ...activityForm, title: e.target.value })}
+                        <input 
+                          className="fc" 
+                          required 
+                          placeholder="e.g. Barangay Assembly, Clean-up Drive, Medical Mission" 
+                          value={activityForm.title} 
+                          onChange={(e) => setActivityForm({ ...activityForm, title: e.target.value })} 
                         />
                       </div>
 
+                      {/* CATEGORY & LOCATION (Side-by-Side) */}
                       <div className="fg2" style={{ marginTop: '12px' }}>
                         <div className="fg">
                           <label className="fl">Category</label>
-                          <select
-                            className="fc"
-                            value={activityForm.category}
+                          <select 
+                            className="fc" 
+                            value={activityForm.category} 
                             onChange={(e) => setActivityForm({ ...activityForm, category: e.target.value })}
                           >
                             <option value="Events">Events</option>
@@ -10426,39 +10695,53 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                           </select>
                         </div>
                         <div className="fg">
-                          <label className="fl">Date <span style={{ color: 'var(--red)' }}>*</span></label>
-                          <input
-                            className="fc"
-                            type="date"
-                            required
-                            value={activityForm.date}
-                            onChange={(e) => setActivityForm({ ...activityForm, date: e.target.value })}
+                          <label className="fl">Location</label>
+                          <input 
+                            className="fc" 
+                            placeholder="e.g. Barangay Covered Court, Purok 3" 
+                            value={activityForm.location} 
+                            onChange={(e) => setActivityForm({ ...activityForm, location: e.target.value })} 
                           />
                         </div>
                       </div>
 
-                      <div className="fg" style={{ marginTop: '12px' }}>
-                        <label className="fl">Location</label>
-                        <input
-                          className="fc"
-                          placeholder="e.g. Barangay Covered Court, Purok 3"
-                          value={activityForm.location}
-                          onChange={(e) => setActivityForm({ ...activityForm, location: e.target.value })}
-                        />
+                      {/* DATE & TIME (Side-by-Side) */}
+                      <div className="fg2" style={{ marginTop: '12px' }}>
+                        <div className="fg">
+                          <label className="fl">Date <span style={{ color: 'var(--red)' }}>*</span></label>
+                          <input 
+                            className="fc" 
+                            type="date" 
+                            required 
+                            value={activityForm.date} 
+                            onChange={(e) => setActivityForm({ ...activityForm, date: e.target.value })} 
+                          />
+                        </div>
+                        <div className="fg">
+                          <label className="fl">Time (Optional)</label>
+                          <input 
+                            className="fc" 
+                            type="time" 
+                            value={activityForm.time || ''} 
+                            onChange={(e) => setActivityForm({ ...activityForm, time: e.target.value })} 
+                          />
+                        </div>
                       </div>
 
+                      {/* DESCRIPTION */}
                       <div className="fg" style={{ marginTop: '12px' }}>
                         <label className="fl">Description / Details <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <textarea
-                          className="fc"
-                          required
-                          rows={5}
-                          placeholder="Describe the activity, schedule, and any instructions for residents..."
-                          value={activityForm.description}
-                          onChange={(e) => setActivityForm({ ...activityForm, description: e.target.value })}
+                        <textarea 
+                          className="fc" 
+                          required 
+                          rows={4} 
+                          placeholder="Describe the activity, schedule, and any instructions for residents..." 
+                          value={activityForm.description} 
+                          onChange={(e) => setActivityForm({ ...activityForm, description: e.target.value })} 
                         />
                       </div>
 
+                      {/* BUTTONS */}
                       <div className="fa" style={{ marginTop: '20px', justifyContent: 'flex-end' }}>
                         <button type="button" className="btn btn-g" onClick={() => setActivitySubScreen('list')} style={{ marginRight: '10px' }}>
                           Cancel
@@ -10966,6 +11249,82 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                   </div>
                 </div>
               )}
+                
+                {role === 'admin' && screen === 'officials' && (
+                <div className="screen active">
+                  <div style={{ maxWidth: '600px', margin: '0 auto' }}>
+                    <div className="card" style={{ padding: '24px' }}>
+                      <h3 style={{ margin: '0 0 16px', fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
+                        Barangay Officials & System Configuration
+                      </h3>
+                      
+                      <div className="fg" style={{ marginTop: '12px' }}>
+                        <label className="fl">Punong Barangay (Lupon Chairman)</label>
+                        <input 
+                          className="fc" 
+                          value={settingsForm.punongBarangay || ''} 
+                          onChange={(e) => setSettingsForm({...settingsForm, punongBarangay: e.target.value})} 
+                          placeholder="e.g. HON. ANNABELLE E. RULL" 
+                        />
+                      </div>
+                      
+                      <div className="fg" style={{ marginTop: '16px' }}>
+                        <label className="fl">Barangay Secretary / Lupon Secretary</label>
+                        <input 
+                          className="fc" 
+                          value={settingsForm.luponSecretary || ''} 
+                          onChange={(e) => setSettingsForm({...settingsForm, luponSecretary: e.target.value})} 
+                          placeholder="e.g. MRS. MELY M. PRESADO" 
+                        />
+                      </div>
+
+                      <div className="fg" style={{ marginTop: '16px' }}>
+                        <label className="fl">Barangay Treasurer (optional)</label>
+                        <input 
+                          className="fc" 
+                          value={settingsForm.treasurer || ''} 
+                          onChange={(e) => setSettingsForm({...settingsForm, treasurer: e.target.value})} 
+                          placeholder="e.g. JUAN DELA CRUZ"
+                        />
+                      </div>
+
+                      {/* Dynamic Verification Domain para sa QR Scanner */}
+                      <div className="fg" style={{ marginTop: '16px' }}>
+                        <label className="fl">Public Verification URL (for Live Tunnel/Domain)</label>
+                        <input 
+                          className="fc" 
+                          value={settingsForm.publicDomain || ''} 
+                          onChange={(e) => setSettingsForm({...settingsForm, publicDomain: e.target.value})} 
+                          placeholder="e.g. https://brave-ducks-love.loca.lt" 
+                        />
+                        <small style={{ color: 'var(--muted)', fontSize: '11px', marginTop: '4px', display: 'block' }}>
+                          Ipasok dito ang inyong Localtunnel / Ngrok URL para mabuksan ang QR Verification sa Mobile Phone.
+                        </small>
+                      </div>
+
+                      <button 
+                        className="btn btn-p" 
+                        style={{ marginTop: '24px', width: '100%' }} 
+                        onClick={() => saveSettings(settingsForm)}
+                      >
+                        Save Official Settings
+                      </button>
+                    </div>
+
+                    {/* Preview ng Current Saved Settings */}
+                    <div className="card" style={{ marginTop: '16px', padding: '20px', background: 'var(--surface2)' }}>
+                      <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', marginBottom: '12px' }}>
+                        Currently Active Configuration
+                      </div>
+                      <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
+                        <div><strong>Punong Barangay:</strong> {systemSettings?.punongBarangay || settingsForm.punongBarangay || 'Not set'}</div>
+                        <div><strong>Secretary:</strong> {systemSettings?.luponSecretary || settingsForm.luponSecretary || 'Not set'}</div>
+                        <div><strong>Public URL:</strong> {systemSettings?.publicDomain || 'Localhost (Default)'}</div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
 
             {/* ════════════════════════════════════════
                 SCREEN: GENERATE REPORTS
@@ -11054,37 +11413,209 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
           </footer>
         </div>{/* /main */}
 
-        {showCtcModal && (
-        <div
-          style={{
-            position: 'fixed',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+        {/* ═══ 1. GENERAL PRINT MODAL (FOR ALL CERTIFICATES / PERMITS) ═══ */}
+      {showPrintModal && selectedPrintCert && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.85)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          zIndex: 99999,
+          backdropFilter: 'blur(6px)',
+          padding: '20px',
+        }}>
+          <div style={{
+            background: 'var(--surface, #1e293b)',
+            color: 'var(--text, #f8fafc)',
+            borderRadius: '12px',
+            width: '100%',
+            maxWidth: '900px',
+            maxHeight: '92vh',
             display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            zIndex: 9999,
-            backdropFilter: 'blur(3px)',
-          }}
-        >
-          <div
-            style={{
-              background: 'var(--surface)',
-              border: '1px solid var(--border)',
-              borderRadius: '10px',
-              width: '100%',
-              maxWidth: '480px',
-              padding: '20px',
-              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
-            }}
-          >
-            {/* Modal Header */}
+            flexDirection: 'column',
+            padding: '20px',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+            border: '1px solid var(--border, #334155)',
+          }}>
+            {/* Dynamic Print Preview gamit ang A4PreviewWrapper */}
+            <A4PreviewWrapper>
+              <div id="printable-certificate-card" data-print-mode={printMode}>
+                {(() => {
+                  const typeStr = String(
+                    selectedPrintCert.certificateType ||
+                    selectedPrintCert.type ||
+                    selectedPrintCert.clearanceType ||
+                    selectedPrintCert.certType || ''
+                  ).toLowerCase();
+
+                  if (typeStr.includes('business') || typeStr.includes('permit') || selectedPrintCert.businessName) {
+                    return <BusinessPermit data={selectedPrintCert} />;
+                  } else if (typeStr.includes('indigency')) {
+                    return <IndigencyTemplate data={selectedPrintCert} />;
+                  } else if (typeStr.includes('residency') || typeStr.includes('resident')) {
+                    return <ResidencyCertificate data={selectedPrintCert} />;
+                  } else {
+                    return <BarangayClearance data={selectedPrintCert} />;
+                  }
+                })()}
+              </div>
+            </A4PreviewWrapper>
+
+            {/* Modal Action Controls */}
+            <div className="no-print" style={{
+              display: 'flex',
+              justify: 'flex-end',
+              gap: '10px',
+              marginTop: '16px',
+              paddingTop: '12px',
+              borderTop: '1px solid var(--border, #334155)',
+              flexShrink: 0,
+            }}>
+              <button
+                type="button"
+                className="btn btn-g"
+                onClick={() => setShowPrintModal(false)}
+                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn btn-p"
+                onClick={handlePrintDocument}
+                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                  <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                  <rect x="6" y="14" width="12" height="8"></rect>
+                </svg>
+                Print Document
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 2. INDIVIDUAL BARANGAY CLEARANCE PRINT MODAL ═══ */}
+      {showClearancePrintModal && selectedClearanceCert && (
+        <div className="clearance-print-overlay" style={{
+          position: 'fixed',
+          inset: 0,
+          background: 'rgba(0, 0, 0, 0.85)',
+          display: 'flex',
+          alignItems: 'center',
+          justify: 'center',
+          zIndex: 9999,
+          backdropFilter: 'blur(6px)',
+          padding: '20px',
+        }}>
+          <div style={{
+            background: 'var(--surface, #1e293b)',
+            borderRadius: '12px',
+            width: '100%',
+            maxWidth: '880px',
+            maxHeight: '92vh',
+            display: 'flex',
+            flexDirection: 'column',
+            padding: '20px',
+            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+            border: '1px solid var(--border, #334155)',
+          }}>
+            {/* Clean Reusable A4 Preview Wrapper */}
+            <A4PreviewWrapper>
+              <div id="printable-certificate-card">
+                <BarangayClearance data={selectedClearanceCert} />
+              </div>
+            </A4PreviewWrapper>
+
+            {/* Action Buttons */}
+            <div className="no-print" style={{
+              display: 'flex',
+              justify: 'flex-end',
+              gap: '10px',
+              marginTop: '16px',
+              paddingTop: '12px',
+              borderTop: '1px solid var(--border, #334155)',
+              flexShrink: 0,
+            }}>
+              <button
+                type="button"
+                className="btn btn-g"
+                onClick={() => setShowClearancePrintModal(false)}
+                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18"></line>
+                  <line x1="6" y1="6" x2="18" y2="18"></line>
+                </svg>
+                Close
+              </button>
+              <button
+                type="button"
+                className="btn btn-p"
+                onClick={() => {
+                  setTimeout(() => {
+                    window.print();
+                    setTimeout(() => setShowClearancePrintModal(false), 500);
+                  }, 200);
+                }}
+                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+              >
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                  <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                  <rect x="6" y="14" width="12" height="8"></rect>
+                </svg>
+                Print Certificate
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ═══ 3. ADD NEW CTC RECORD MODAL ═══ */}
+      {showCtcModal && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          display: 'flex',
+          alignItems: 'center',
+          justify: 'center',
+          zIndex: 9999,
+          backdropFilter: 'blur(3px)',
+        }}>
+          <div style={{
+            background: 'var(--surface)',
+            border: '1px solid var(--border)',
+            borderRadius: '10px',
+            width: '100%',
+            maxWidth: '480px',
+            padding: '20px',
+            boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)',
+          }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text)' }}>
-                 Add New CTC Record
+              <h3 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="12" y1="18" x2="12" y2="12"></line>
+                  <line x1="9" y1="15" x2="15" y2="15"></line>
+                </svg>
+                Add New CTC Record
               </h3>
               <button
                 type="button"
@@ -11095,83 +11626,40 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
               </button>
             </div>
 
-            {/* Modal Form */}
             <form onSubmit={handleSaveCtc}>
-              {/* RBI ID NO. & CTC NUMBER */}
               <div className="fg2" style={{ marginBottom: '12px' }}>
                 <div className="fg" style={{ marginBottom: 0 }}>
                   <label className="fl">RBI ID NO.</label>
-                  <input
-                    type="text"
-                    className="fc"
-                    placeholder="e.g. RBI-2026-001"
-                    value={ctcForm.rbiNo}
-                    onChange={updateCtcField('rbiNo')}
-                  />
+                  <input type="text" className="fc" placeholder="e.g. RBI-2026-001" value={ctcForm.rbiNo} onChange={updateCtcField('rbiNo')} />
                 </div>
                 <div className="fg" style={{ marginBottom: 0 }}>
                   <label className="fl">CTC NUMBER *</label>
-                  <input
-                    type="text"
-                    className="fc"
-                    required
-                    placeholder="e.g. CTC-12345678"
-                    value={ctcForm.ctcNo}
-                    onChange={updateCtcField('ctcNo')}
-                  />
+                  <input type="text" className="fc" required placeholder="e.g. CTC-12345678" value={ctcForm.ctcNo} onChange={updateCtcField('ctcNo')} />
                 </div>
               </div>
 
-              {/* FULL NAME */}
               <div className="fg" style={{ marginBottom: '12px' }}>
                 <label className="fl">FULL NAME / RESIDENT *</label>
-                <input
-                  type="text"
-                  className="fc"
-                  required
-                  placeholder="LAST NAME, FIRST NAME MIDDLE NAME"
-                  value={ctcForm.ctcName}
-                  onChange={updateCtcField('ctcName')}
-                />
+                <input type="text" className="fc" required placeholder="LAST NAME, FIRST NAME MIDDLE NAME" value={ctcForm.ctcName} onChange={updateCtcField('ctcName')} />
               </div>
 
-              {/* AMOUNT PAID & DATE ISSUED */}
               <div className="fg2" style={{ marginBottom: '12px' }}>
                 <div className="fg" style={{ marginBottom: 0 }}>
                   <label className="fl">AMOUNT PAID (₱) *</label>
-                  <input
-                    type="number"
-                    className="fc"
-                    required
-                    placeholder="0.00"
-                    value={ctcForm.amtPaid}
-                    onChange={updateCtcField('amtPaid')}
-                  />
+                  <input type="number" className="fc" required placeholder="0.00" value={ctcForm.amtPaid} onChange={updateCtcField('amtPaid')} />
                 </div>
                 <div className="fg" style={{ marginBottom: 0 }}>
                   <label className="fl">DATE ISSUED</label>
-                  <input
-                    type="date"
-                    className="fc"
-                    value={ctcForm.dateIssued}
-                    onChange={updateCtcField('dateIssued')}
-                  />
+                  <input type="date" className="fc" value={ctcForm.dateIssued} onChange={updateCtcField('dateIssued')} />
                 </div>
               </div>
 
-              {/* ISSUED BY THIS BARANGAY CHECKBOX */}
               <div style={{ padding: '10px 12px', background: 'var(--surface2)', borderRadius: '6px', border: '1px solid var(--border)', marginBottom: '12px' }}>
                 <label style={{ fontSize: '12px', fontWeight: 600, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--text)' }}>
-                  <input
-                    type="checkbox"
-                    checked={ctcForm.isIssuedByBarangay}
-                    onChange={handleBarangayToggle}
-                  />
-                  ISSUED BY THIS BARANGAY
+                  <input type="checkbox" checked={ctcForm.isIssuedByBarangay} onChange={handleBarangayToggle} /> ISSUED BY THIS BARANGAY
                 </label>
               </div>
 
-              {/* PLACE ISSUED */}
               <div className="fg" style={{ marginBottom: '16px' }}>
                 <label className="fl">PLACE ISSUED</label>
                 <input
@@ -11185,7 +11673,6 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
                 />
               </div>
 
-              {/* Modal Actions */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '20px' }}>
                 <button type="button" className="btn btn-g" onClick={() => setShowCtcModal(false)}>
                   Cancel
@@ -11198,724 +11685,355 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
           </div>
         </div>
       )}
-         
-         {/* ═══ BAGONG BLOTTER FORM MODAL ═══ */}
-{showBlotterModal && (
-  <div
-    style={{
-      position: 'fixed',
-      top: 0,
-      left: 0,
-      right: 0,
-      bottom: 0,
-      backgroundColor: 'rgba(0, 0, 0, 0.65)',
-      display: 'flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      zIndex: 9999,
-      backdropFilter: 'blur(4px)',
-      padding: '20px'
-    }}
-    onClick={() => setShowBlotterModal(false)}
-  >
-    <div
-      style={{
-        background: 'var(--surface, #1e293b)',
-        color: 'var(--text, #f8fafc)',
-        borderRadius: '12px',
-        width: '100%',
-        maxWidth: '520px',
-        padding: '24px',
-        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
-        border: '1px solid var(--border, #334155)',
-        position: 'relative'
-      }}
-      onClick={(e) => e.stopPropagation()} // Pigilan ang pag-close kapag cliniclick ang loob
-    >
-      {/* Modal Header */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
-        <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
-          📑 Mag-encode ng Bagong Blotter Record
-        </h3>
-        <button
-          type="button"
+
+      {/* ═══ 4. BAGONG BLOTTER FORM MODAL ═══ */}
+      {showBlotterModal && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            right: 0,
+            bottom: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.65)',
+            display: 'flex',
+            alignItems: 'center',
+            justify: 'center',
+            zIndex: 9999,
+            backdropFilter: 'blur(4px)',
+            padding: '20px',
+          }}
           onClick={() => setShowBlotterModal(false)}
-          style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '20px' }}
         >
-          ✕
-        </button>
-      </div>
+          <div
+            style={{
+              background: 'var(--surface, #1e293b)',
+              color: 'var(--text, #f8fafc)',
+              borderRadius: '12px',
+              width: '100%',
+              maxWidth: '520px',
+              padding: '24px',
+              boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.7)',
+              border: '1px solid var(--border, #334155)',
+              position: 'relative',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                  <polyline points="14 2 14 8 20 8"></polyline>
+                  <line x1="16" y1="13" x2="8" y2="13"></line>
+                  <line x1="16" y1="17" x2="8" y2="17"></line>
+                </svg>
+                Mag-encode ng Bagong Blotter Record
+              </h3>
+              <button type="button" onClick={() => setShowBlotterModal(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '20px' }}>
+                ✕
+              </button>
+            </div>
+            <BlotterForm
+              onSuccess={(newDoc) => {
+                setShowBlotterModal(false);
+                if (typeof fetchBlotterRecords === 'function') fetchBlotterRecords();
+              }}
+            />
+          </div>
+        </div>
+      )}
 
-      {/* Blotter Form Component */}
-      <BlotterForm
-        onSuccess={(newDoc) => {
-          setShowBlotterModal(false);
-          // Opsyonal: magpakita ng alert o i-reload ang blotter list
-          if (typeof fetchBlotterRecords === 'function') {
-            fetchBlotterRecords(); // Tawagin kung may refresh function ka
-          }
-        }}
-      />
-    </div>
-  </div>
-)}
-
-        {showPrintModal && selectedPrintCert && (
-        <div style={{ 
-          position: 'fixed', 
-          top: 0, 
-          left: 0, 
-          right: 0, 
-          bottom: 0, 
-          backgroundColor: 'rgba(0, 0, 0, 0.85)', 
-          display: 'flex', 
-          alignItems: 'center', 
-          justifyContent: 'center', 
-          zIndex: 999999, 
-          backdropFilter: 'blur(6px)', 
-          padding: '20px' 
+      {/* ═══ 5. BLOTTER ACTION MODAL / DIALOG ═══ */}
+      {actionModalOpen && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
+          backgroundColor: 'rgba(0, 0, 0, 0.65)',
+          backdropFilter: 'blur(4px)',
+          display: 'flex',
+          alignItems: 'center',
+          justify: 'center',
+          zIndex: 9999,
+          padding: '16px',
         }}>
-          <div style={{ 
-            background: 'var(--surface, #1e293b)', 
-            color: 'var(--text, #f8fafc)', 
-            borderRadius: '12px', 
-            width: '100%', 
-            maxWidth: '900px', 
-            maxHeight: '90vh', 
-            display: 'flex', 
-            flexDirection: 'column', 
-            padding: '20px', 
-            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', 
-            border: '1px solid var(--border, #334155)' 
+          <div className="card" style={{
+            width: '100%',
+            maxWidth: '480px',
+            background: 'var(--surface, #1a1d24)',
+            border: '1px solid var(--border, #2a2f3d)',
+            borderRadius: '16px',
+            padding: '24px',
+            boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5)',
           }}>
-            {/* Scrollable Document Container */}
-            <div style={{ 
-              flex: 1, 
-              overflowY: 'auto', 
-              overflowX: 'hidden',
-              padding: '20px', 
-              background: 'var(--surface2, #0f172a)', 
-              borderRadius: '8px', 
-              display: 'flex', 
-              justifyContent: 'center',
-              alignItems: 'flex-start' /* Changed to flex-start to prevent vertical centering issues */
-            }}>
-              <div style={{ width: '210mm', minHeight: '297mm', position: 'relative' }}>
-                <div 
-                  id="printable-certificate-card" 
-                  data-print-mode={printMode}
-                  style={{ 
-                    width: '210mm', 
-                    minHeight: '297mm', 
-                    background: '#ffffff', 
-                    color: '#000000',
-                    boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)',
-                    transform: 'scale(0.55)',
-                    transformOrigin: 'top left', /* Predictable scaling from top-left */
-                    position: 'absolute',
-                    top: 0,
-                    left: 0
-                  }}
-                >
-                  {/* Dynamic Rendering Depende sa Certificate Type */}
-                  {(() => {
-                    const typeStr = String(
-                      selectedPrintCert.certificateType || selectedPrintCert.type || selectedPrintCert.clearanceType || selectedPrintCert.certType || ''
-                    ).toLowerCase();
-                    if (typeStr.includes('business') || typeStr.includes('permit') || selectedPrintCert.businessName) {
-                      return <BusinessPermit data={selectedPrintCert} />;
-                    } else if (typeStr.includes('indigency')) {
-                      return <IndigencyTemplate data={selectedPrintCert} />;
-                    } else if (typeStr.includes('residency') || typeStr.includes('resident')) {
-                      return <ResidencyCertificate data={selectedPrintCert} />;
-                    } else {
-                      return <BarangayClearance data={selectedPrintCert} />;
-                    }
-                  })()}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '12px', borderBottom: '1px solid var(--border, #2a2f3d)' }}>
+              <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
+                {actionType === '1st_summon' && ' Issue 1st Summon'}
+                {actionType === '2nd_summon' && ' Issue 2nd Summon'}
+                {actionType === '3rd_summon' && ' Issue 3rd Summon'}
+                {actionType === 'settled' && ' Mark Case as Settled'}
+                {actionType === 'escalate_cfa' && ' Escalate / Issue CFA'}
+              </h3>
+              <button onClick={() => setActionModalOpen(false)} disabled={actionSaving} style={{ background: 'transparent', border: 'none', color: 'var(--muted)', fontSize: '18px', cursor: 'pointer' }}>
+                ✕
+              </button>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              {actionType.includes('summon') && (
+                <div className="fg">
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text)', marginBottom: '6px' }}>
+                    Hearing / Summon Date & Time <span style={{ color: 'var(--red, #ef4444)' }}>*</span>
+                  </label>
+                  <input
+                    type="datetime-local"
+                    className="fc"
+                    value={scheduleDate}
+                    onChange={(e) => setScheduleDate(e.target.value)}
+                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '13px' }}
+                  />
                 </div>
+              )}
+
+              <div className="fg">
+                <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text)', marginBottom: '6px' }}>
+                  {actionType === 'settled' ? 'Settlement / Resolution Agreement Details' : actionType === 'escalate_cfa' ? 'Reason for Escalation / Referral Notes' : 'Official Remarks / Hearing Instructions'}
+                </label>
+                <textarea
+                  className="fc"
+                  rows="4"
+                  placeholder={actionType === 'settled' ? 'Isulat ang napagkasunduang kasunduan...' : 'Maglagay ng karagdagang paalala...'}
+                  value={actionNotes}
+                  onChange={(e) => setActionNotes(e.target.value)}
+                  style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '13px', resize: 'vertical' }}
+                />
+              </div>
+
+              <div style={{ fontSize: '11px', color: 'var(--muted)', background: 'var(--surface2, #20242e)', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"></polygon>
+                </svg>
+                <span><strong>Real-Time Sync:</strong> Ang aksyong ito ay awtomatikong magse-save at mag-a-update sa Resident UI.</span>
               </div>
             </div>
 
-            <div className="no-print" style={{ 
-              display: 'flex', 
-              justifyContent: 'flex-end', 
-              gap: '10px', 
-              marginTop: '16px', 
-              paddingTop: '12px', 
-              borderTop: '1px solid var(--border, #334155)',
-              flexShrink: 0 
-            }}>
-              <button 
-                type="button" 
-                className="btn btn-g" 
-                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }} 
-                onClick={() => setShowPrintModal(false)}
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '24px' }}>
+              <button
+                type="button"
+                className="btn"
+                onClick={() => setActionModalOpen(false)}
+                disabled={actionSaving}
+                style={{ padding: '10px', borderRadius: '8px', background: 'var(--border)', color: 'var(--text)', border: 'none', fontWeight: 700, fontSize: '13px', cursor: 'pointer' }}
               >
-                Close
+                Cancel
               </button>
-              <button 
-                type="button" 
-                className="btn btn-p" 
-                onClick={handlePrintDocument} 
-                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              <button
+                type="button"
+                className="btn"
+                onClick={submitBlotterAction}
+                disabled={actionSaving}
+                style={{
+                  padding: '10px',
+                  borderRadius: '8px',
+                  background: actionType === 'escalate_cfa' ? '#dc2626' : actionType === 'settled' ? '#059669' : 'var(--primary, #3b82f6)',
+                  color: '#ffffff',
+                  border: 'none',
+                  fontWeight: 700,
+                  fontSize: '13px',
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justify: 'center',
+                  gap: '6px',
+                }}
               >
-                 Print Document
+                {actionSaving ? 'Saving...' : 'Confirm & Save'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-        {/* ═══ BARANGAY CLEARANCE PRINT MODAL (MISSING!) ═══ */}
-       {showClearancePrintModal && selectedClearanceCert && (
-        <div className="clearance-print-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0, 0, 0, 0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, backdropFilter: 'blur(6px)', padding: '20px' }}>
-          <div style={{ background: 'var(--surface)', borderRadius: '12px', width: '100%', maxWidth: '880px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', padding: '20px', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', border: '1px solid var(--border)' }}>
+      {/* ═══ 6. VIEW PROGRAM DETAILS MODAL ═══ */}
+      {viewingProgram && (
+        <div
+          className="modal-overlay"
+          style={{ position: 'fixed', top: 0, left: 0, width: '100vw', height: '100vh', background: 'rgba(0, 0, 0, 0.75)', backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999 }}
+          onClick={() => setViewingProgram(null)}
+        >
+          <div
+            className="modal-card"
+            style={{ background: '#1e293b', border: '1px solid rgba(79, 142, 247, 0.3)', borderRadius: '12px', width: '90%', maxWidth: '550px', padding: '24px', color: '#f8fafc', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+              <div>
+                <span className={`badge ${viewingProgram.status === 'Completed' ? 't' : 'r'}`} style={{ marginBottom: '6px', display: 'inline-block' }}>
+                  {viewingProgram.status}
+                </span>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#f1f5f9' }}>
+                  {viewingProgram.title}
+                </h3>
+                <div style={{ fontSize: '12px', color: '#94a3b8', fontFamily: 'var(--mono)', marginTop: '2px' }}>
+                  ID: {viewingProgram.id}
+                </div>
+              </div>
+              <button className="btn btn-g btn-sm" onClick={() => setViewingProgram(null)} style={{ padding: '4px 10px', fontSize: '14px', borderRadius: '50%' }}>
+                ✕
+              </button>
+            </div>
 
-            <div className="certificate-preview-wrapper" style={{ flex: 1, overflowY: 'auto', padding: '20px', background: 'var(--surface2)', borderRadius: '8px', display: 'flex', justifyContent: 'center' }}>
-              <div style={{ width: '210mm', minHeight: '297mm', transform: 'scale(0.55)', transformOrigin: 'top center', marginBottom: '-40%', boxShadow: '0 10px 30px rgba(0, 0, 0, 0.5)', background: '#ffffff', color: '#000000' }}>
-                <BarangayClearance data={selectedClearanceCert} />
+            <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '8px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
+                <span style={{ color: '#94a3b8' }}>Distribution Capacity:</span> <strong>{viewingProgram.current || 0} / {viewingProgram.target} Beneficiaries</strong>
+              </div>
+              <div style={{ margin: '8px 0', background: '#334155', borderRadius: '4px', height: '10px', overflow: 'hidden' }}>
+                <div style={{ width: `${Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}%`, height: '100%', background: viewingProgram.status === 'Completed' ? '#10b981' : '#3b82f6' }} />
+              </div>
+              <div style={{ textAlign: 'right', fontSize: '12px', fontWeight: 'bold', color: '#10b981' }}>
+                {Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}% Capacity Reached
               </div>
             </div>
-            
-            {/* Action Buttons */}
-            <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border)' }}>
-              <button type="button" className="btn btn-g" onClick={() => setShowClearancePrintModal(false)}>
-                Close
+
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px', marginBottom: '20px' }}>
+              <div>
+                <label style={{ color: '#94a3b8', display: 'block' }}>Date Created / Label</label>
+                <div style={{ fontWeight: 600 }}>{viewingProgram.dateLabel || 'N/A'}</div>
+              </div>
+              <div>
+                <label style={{ color: '#94a3b8', display: 'block' }}>Category / Type</label>
+                <div style={{ fontWeight: 600 }}>{viewingProgram.category || 'Aid Distribution'}</div>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px' }}>
+              <button className="btn btn-g" onClick={() => { nav('aid-logs'); setViewingProgram(null); }}>
+                View Distribution Logs
               </button>
-              <button type="button" className="btn btn-p" onClick={() => {
-                setTimeout(() => {
-                  window.print();
-                  setTimeout(() => setShowClearancePrintModal(false), 500);
-                }, 200);
-              }}>
-                🖨️ Print Certificate
+              <button className="btn btn-p" onClick={() => setViewingProgram(null)}>
+                Close
               </button>
             </div>
           </div>
         </div>
-              )
-              }
-                 {/* ── BLOTTER ACTION MODAL / DIALOG ── */}
-                  {actionModalOpen && (
-                    <div
-                      style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.65)',
-                        backdropFilter: 'blur(4px)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        zIndex: 9999,
-                        padding: '16px',
-                      }}
-                    >
-                      <div
-                        className="card"
-                        style={{
-                          width: '100%',
-                          maxWidth: '480px',
-                          background: 'var(--surface, #1a1d24)',
-                          border: '1px solid var(--border, #2a2f3d)',
-                          borderRadius: '16px',
-                          padding: '24px',
-                          boxShadow: '0 20px 25px -5px rgba(0,0,0,0.5), 0 8px 10px -6px rgba(0,0,0,0.5)',
-                        }}
-                      >
-                        {/* Modal Header */}
-                        <div
-                          style={{
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center',
-                            marginBottom: '20px',
-                            paddingBottom: '12px',
-                            borderBottom: '1px solid var(--border, #2a2f3d)',
-                          }}
-                        >
-                          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
-                            {actionType === '1st_summon' && ' Issue 1st Summon'}
-                            {actionType === '2nd_summon' && ' Issue 2nd Summon'}
-                            {actionType === '3rd_summon' && ' Issue 3rd Summon'}
-                            {actionType === 'settled' && '🤝 Mark Case as Settled'}
-                            {actionType === 'escalate_cfa' && '📄 Escalate / Issue CFA'}
-                          </h3>
-                          <button
-                            onClick={() => setActionModalOpen(false)}
-                            disabled={actionSaving}
-                            style={{
-                              background: 'transparent',
-                              border: 'none',
-                              color: 'var(--muted)',
-                              fontSize: '18px',
-                              cursor: 'pointer',
-                              padding: '4px 8px',
-                            }}
-                          >
-                            ✕
-                          </button>
-                        </div>
+      )}
 
-                        {/* Modal Body */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                          {/* Hearing Schedule Input (Iniaatas kapag Summon Action) */}
-                          {actionType.includes('summon') && (
-                            <div className="fg">
-                              <label
-                                style={{
-                                  display: 'block',
-                                  fontSize: '12px',
-                                  fontWeight: 700,
-                                  color: 'var(--text)',
-                                  marginBottom: '6px',
-                                }}
-                              >
-                                Hearing / Summon Date & Time <span style={{ color: 'var(--red, #ef4444)' }}>*</span>
-                              </label>
-                              <input
-                                type="datetime-local"
-                                className="fc"
-                                value={scheduleDate}
-                                onChange={(e) => setScheduleDate(e.target.value)}
-                                style={{
-                                  width: '100%',
-                                  padding: '10px 12px',
-                                  borderRadius: '8px',
-                                  border: '1px solid var(--border)',
-                                  background: 'var(--bg)',
-                                  color: 'var(--text)',
-                                  fontSize: '13px',
-                                }}
-                              />
-                            </div>
-                          )}
+      {/* ═══ 7. BUSINESS CLEARANCE EDIT MODAL ═══ */}
+      {isBusinessModalOpen && (
+        <div
+          className="modal-overlay"
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.75)', display: 'flex', alignItems: 'center', justify: 'center', zIndex: 99999, backdropFilter: 'blur(4px)', padding: '20px' }}
+          onClick={() => setIsBusinessModalOpen(false)}
+        >
+          <div
+            className="modal-card width-lg"
+            style={{ background: 'var(--surface, #1e293b)', color: 'var(--text, #f8fafc)', borderRadius: '12px', width: '100%', maxWidth: '800px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', border: '1px solid var(--border, #334155)', overflow: 'hidden' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-card, #ffffff)', color: 'var(--text-main, inherit)' }}>
+              <div>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-main, inherit)' }}>
+                  {businessModalMode === 'edit' ? 'Edit Business Clearance' : 'New Business Clearance'}
+                </h3>
+                <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted, #64748b)' }}>
+                  Update business details, owner information, and OR reference
+                </p>
+              </div>
+              <button type="button" className="btn-close" onClick={() => setIsBusinessModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-main, var(--muted))', fontSize: '20px', cursor: 'pointer' }}>
+                ✕
+              </button>
+            </div>
 
-                          {/* Action Remarks / Settlement Notes */}
-                          <div className="fg">
-                            <label
-                              style={{
-                                display: 'block',
-                                fontSize: '12px',
-                                fontWeight: 700,
-                                color: 'var(--text)',
-                                marginBottom: '6px',
-                              }}
-                            >
-                              {actionType === 'settled'
-                                ? 'Settlement / Resolution Agreement Details'
-                                : actionType === 'escalate_cfa'
-                                ? 'Reason for Escalation / Referral Notes'
-                                : 'Official Remarks / Hearing Instructions'}
-                            </label>
-                            <textarea
-                              className="fc"
-                              rows="4"
-                              placeholder={
-                                actionType === 'settled'
-                                  ? 'Isulat ang napagkasunduang kasunduan ng magkabilang panig...'
-                                  : 'Maglagay ng karagdagang paalala o detalye...'
-                              }
-                              value={actionNotes}
-                              onChange={(e) => setActionNotes(e.target.value)}
-                              style={{
-                                width: '100%',
-                                padding: '10px 12px',
-                                borderRadius: '8px',
-                                border: '1px solid var(--border)',
-                                background: 'var(--bg)',
-                                color: 'var(--text)',
-                                fontSize: '13px',
-                                resize: 'vertical',
-                              }}
-                            />
-                          </div>
+            <div className="modal-body" style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <form onSubmit={handleSaveBusinessClearance} id="business-clearance-form">
+                <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+                  1. Business Information
+                </div>
+                <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                  <div className="fg">
+                    <label className="fl">BC ID No.</label>
+                    <input type="text" className="fc" value={businessForm.bcIdNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, bcIdNo: e.target.value }))} placeholder="e.g. BC-2026-001" />
+                  </div>
+                  <div className="fg">
+                    <label className="fl">Business Name *</label>
+                    <input type="text" className="fc" required value={businessForm.businessName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessName: e.target.value }))} placeholder="e.g. Macabangon General Store" />
+                  </div>
+                  <div className="fg">
+                    <label className="fl">Nature / Type of Business</label>
+                    <input type="text" className="fc" value={businessForm.natureOfBusiness || ''} onChange={(e) => setBusinessForm(p => ({ ...p, natureOfBusiness: e.target.value }))} placeholder="e.g. Retail / Sari-sari Store" />
+                  </div>
+                  <div className="fg">
+                    <label className="fl">Business Address</label>
+                    <input type="text" className="fc" value={businessForm.businessAddress || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessAddress: e.target.value }))} placeholder="Zone / Street Address" />
+                  </div>
+                </div>
 
-                          {/* Informational Warning Note */}
-                          <div
-                            style={{
-                              fontSize: '11px',
-                              color: 'var(--muted)',
-                              background: 'var(--surface2, #20242e)',
-                              padding: '10px 12px',
-                              borderRadius: '8px',
-                              border: '1px solid var(--border)',
-                            }}
-                          >
-                            ⚡ <strong>Real-Time Sync:</strong> Ang aksyong ito ay awtomatikong magse-save sa PouchDB at mag-a-update sa status timeline ng Resident UI.
-                          </div>
-                        </div>
+                <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+                  2. Owner / Applicant Details
+                </div>
+                <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
+                  <div className="fg">
+                    <label className="fl">First Name *</label>
+                    <input type="text" className="fc" required value={businessForm.firstName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, firstName: e.target.value }))} />
+                  </div>
+                  <div className="fg">
+                    <label className="fl">Middle Name</label>
+                    <input type="text" className="fc" value={businessForm.middleName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, middleName: e.target.value }))} />
+                  </div>
+                  <div className="fg">
+                    <label className="fl">Last Name *</label>
+                    <input type="text" className="fc" required value={businessForm.lastName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, lastName: e.target.value }))} />
+                  </div>
+                </div>
 
-                        {/* Modal Actions */}
-                        <div
-                          style={{
-                            display: 'grid',
-                            gridTemplateColumns: '1fr 1fr',
-                            gap: '12px',
-                            marginTop: '24px',
-                          }}
-                        >
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={() => setActionModalOpen(false)}
-                            disabled={actionSaving}
-                            style={{
-                              padding: '10px',
-                              borderRadius: '8px',
-                              background: 'var(--border)',
-                              color: 'var(--text)',
-                              border: 'none',
-                              fontWeight: 700,
-                              fontSize: '13px',
-                              cursor: 'pointer',
-                            }}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            className="btn"
-                            onClick={submitBlotterAction}
-                            disabled={actionSaving}
-                            style={{
-                              padding: '10px',
-                              borderRadius: '8px',
-                              background:
-                                actionType === 'escalate_cfa'
-                                  ? '#dc2626'
-                                  : actionType === 'settled'
-                                  ? '#059669'
-                                  : 'var(--primary, #3b82f6)',
-                              color: '#ffffff',
-                              border: 'none',
-                              fontWeight: 700,
-                              fontSize: '13px',
-                              cursor: 'pointer',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              gap: '6px',
-                            }}
-                          >
-                            {actionSaving ? 'Saving...' : 'Confirm & Save'}
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
+                <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
+                  3. Official Receipt & Fee
+                </div>
+                <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                  <div className="fg">
+                    <label className="fl">O.R. Number *</label>
+                    <input type="text" className="fc" required value={businessForm.orNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orNo: e.target.value }))} placeholder="e.g. 1234567" />
+                  </div>
+                  <div className="fg">
+                    <label className="fl">Clearance Fee (₱)</label>
+                    <input type="number" className="fc" value={businessForm.clearanceFee || ''} onChange={(e) => setBusinessForm(p => ({ ...p, clearanceFee: e.target.value }))} placeholder="0.00" />
+                  </div>
+                  <div className="fg">
+                    <label className="fl">OR Date Issued</label>
+                    <input type="date" className="fc" value={businessForm.orDateIssued || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orDateIssued: e.target.value }))} />
+                  </div>
+                </div>
+              </form>
+            </div>
 
-                  {/* INDIVIDUAL BARANGAY CLEARANCE PRINT MODAL & PORTAL */}
-                  {showClearancePrintModal && selectedClearanceCert && (
-                    <>
-                      {/* 1. SCREEN MODAL PREVIEW (Nakikita lang sa Monitor) */}
-                      <div className="modal-overlay">
-                        <div className="modal-card width-lg">
-                          <div className="modal-header">
-                            <h3>Barangay Clearance Preview</h3>
-                            <button className="btn-close" onClick={() => setShowClearancePrintModal(false)}>✕</button>
-                          </div>
-                          <div className="modal-body" style={{ maxHeight: '70vh', overflowY: 'auto' }}>
-                            <BarangayClearance data={selectedClearanceCert} />
-                          </div>
-                          <div className="modal-footer">
-                            <button className="btn btn-g" onClick={() => setShowClearancePrintModal(false)}>Cancel</button>
-                            <button 
-                              className="btn btn-p" 
-                              onClick={() => {
-                                setTimeout(() => window.print(), 150);
-                              }}
-                            >
-                              Print Now
-                            </button>
-                          </div>
-                        </div>
-                      </div>
+            <div className="modal-footer" style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+              <button type="button" className="btn btn-g" onClick={() => setIsBusinessModalOpen(false)}>
+                Cancel
+              </button>
+              <button type="submit" form="business-clearance-form" className="btn btn-p">
+                Save Record
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
-                      {/* 2. DEDICATED PRINT PORTAL (Inilalabas sa Modal at idinidikit diretso sa Body) */}
-                      {createPortal(
-                        <div id="printable-clearance-container">
-                          <BarangayClearance data={selectedClearanceCert} />
-                        </div>,
-                        document.body
-                      )}
-                    </>
-                  )}
-                  {printingCert && createPortal(
-                    <div id="printable-certificate-card" className="direct-print-only">
-                      <BusinessPermit data={printingCert} />
-                    </div>,
-                    document.body
-                  )}
-                  {/* ── VIEW PROGRAM DETAILS MODAL ── */}
-                  {viewingProgram && (
-                    <div 
-                      className="modal-overlay" 
-                      style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        width: '100vw',
-                        height: '100vh',
-                        background: 'rgba(0, 0, 0, 0.75)',
-                        backdropFilter: 'blur(4px)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justify: 'center',
-                        zIndex: 99999
-                      }}
-                      onClick={() => setViewingProgram(null)}
-                    >
-                      <div 
-                        className="modal-card" 
-                        style={{
-                          background: '#1e293b',
-                          border: '1px solid rgba(79, 142, 247, 0.3)',
-                          borderRadius: '12px',
-                          width: '90%',
-                          maxWidth: '550px',
-                          padding: '24px',
-                          color: '#f8fafc',
-                          boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)'
-                        }}
-                        onClick={(e) => e.stopPropagation()} // Pigilan ang pag-close kapag cliniclick ang loob ng modal
-                      >
-                        {/* Header */}
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
-                          <div>
-                            <span className={`badge ${viewingProgram.status === 'Completed' ? 't' : 'r'}`} style={{ marginBottom: '6px', display: 'inline-block' }}>
-                              {viewingProgram.status}
-                            </span>
-                            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#f1f5f9' }}>
-                              {viewingProgram.title}
-                            </h3>
-                            <div style={{ fontSize: '12px', color: '#94a3b8', fontFamily: 'var(--mono)', marginTop: '2px' }}>
-                              ID: {viewingProgram.id}
-                            </div>
-                          </div>
-                          <button 
-                            className="btn btn-g btn-sm" 
-                            onClick={() => setViewingProgram(null)}
-                            style={{ padding: '4px 10px', fontSize: '14px', borderRadius: '50%' }}
-                          >
-                            ✕
-                          </button>
-                        </div>
-
-                        {/* Progress & Target Stats */}
-                        <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '8px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
-                          <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
-                            <span style={{ color: '#94a3b8' }}>Distribution Capacity:</span>
-                            <strong>{viewingProgram.current || 0} / {viewingProgram.target} Beneficiaries</strong>
-                          </div>
-                          <div style={{ margin: '8px 0', background: '#334155', borderRadius: '4px', height: '10px', overflow: 'hidden' }}>
-                            <div style={{ 
-                              width: `${Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}%`, 
-                              height: '100%', 
-                              background: viewingProgram.status === 'Completed' ? '#10b981' : '#3b82f6' 
-                            }} />
-                          </div>
-                          <div style={{ textAlign: 'right', fontSize: '12px', fontWeight: 'bold', color: '#10b981' }}>
-                            {Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}% Capacity Reached
-                          </div>
-                        </div>
-
-                        {/* Details & Info Grid */}
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px', marginBottom: '20px' }}>
-                          <div>
-                            <label style={{ color: '#94a3b8', display: 'block' }}>Date Created / Label</label>
-                            <div style={{ fontWeight: 600 }}>{viewingProgram.dateLabel || 'N/A'}</div>
-                          </div>
-                          <div>
-                            <label style={{ color: '#94a3b8', display: 'block' }}>Category / Type</label>
-                            <div style={{ fontWeight: 600 }}>{viewingProgram.category || 'Aid Distribution'}</div>
-                          </div>
-                        </div>
-
-                        {/* Action Footer */}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px' }}>
-                          <button 
-                            className="btn btn-g" 
-                            onClick={() => {
-                              nav('aid-logs'); // Lilipat sa Logs kung kailangan tingnan ang records
-                              setViewingProgram(null);
-                            }}
-                          >
-                            View Distribution Logs
-                          </button>
-                          <button 
-                            className="btn btn-p" 
-                            onClick={() => setViewingProgram(null)}
-                          >
-                            Close
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {/* ═══ BUSINESS CLEARANCE EDIT MODAL ═══ */}
-                  {isBusinessModalOpen && (
-                    <div 
-                      className="modal-overlay" 
-                      style={{
-                        position: 'fixed',
-                        top: 0,
-                        left: 0,
-                        right: 0,
-                        bottom: 0,
-                        backgroundColor: 'rgba(0, 0, 0, 0.75)',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justify: 'center',
-                        zIndex: 99999,
-                        backdropFilter: 'blur(4px)',
-                        padding: '20px'
-                      }}
-                      onClick={() => setIsBusinessModalOpen(false)}
-                    >
-                      <div 
-                        className="modal-card width-lg" 
-                        style={{
-                          background: 'var(--surface, #1e293b)',
-                          color: 'var(--text, #f8fafc)',
-                          borderRadius: '12px',
-                          width: '100%',
-                          maxWidth: '800px',
-                          maxHeight: '90vh',
-                          display: 'flex',
-                          flexDirection: 'column',
-                          boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
-                          border: '1px solid var(--border, #334155)',
-                          overflow: 'hidden'
-                        }}
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        {/* Modal Header */}
-                        <div 
-                          className="modal-header" 
-                          style={{ 
-                            padding: '16px 20px', 
-                            borderBottom: '1px solid var(--border)', 
-                            display: 'flex', 
-                            justifyContent: 'space-between', 
-                            alignItems: 'center',
-                            backgroundColor: 'var(--bg-card, var(--card-bg, #ffffff))', // Dynamic background depende sa active theme
-                            color: 'var(--text-main, var(--foreground, inherit))'
-                          }}
-                        >
-                          <div>
-                            <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-main, inherit)' }}>
-                              {businessModalMode === 'edit' ? 'Edit Business Clearance' : 'New Business Clearance'}
-                            </h3>
-                            <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted, #64748b)' }}>
-                              Update business details, owner information, and OR reference
-                            </p>
-                          </div>
-                          <button 
-                            type="button" 
-                            className="btn-close" 
-                            onClick={() => setIsBusinessModalOpen(false)} 
-                            style={{ 
-                              background: 'none', 
-                              border: 'none', 
-                              color: 'var(--text-main, var(--muted))', 
-                              fontSize: '20px', 
-                              cursor: 'pointer' 
-                            }}
-                          >
-                            ✕
-                          </button>
-                        </div>
-
-                        {/* Modal Body - Scrollable Form */}
-                        <div className="modal-body" style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                          <form onSubmit={handleSaveBusinessClearance} id="business-clearance-form">
-                            {/* Section 1: Business Details */}
-                            <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
-                              1. Business Information
-                            </div>
-                            <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl">BC ID No.</label>
-                                <input type="text" className="fc" value={businessForm.bcIdNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, bcIdNo: e.target.value }))} placeholder="e.g. BC-2026-001" />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Business Name *</label>
-                                <input type="text" className="fc" required value={businessForm.businessName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessName: e.target.value }))} placeholder="e.g. Macabangon General Store" />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Nature / Type of Business</label>
-                                <input type="text" className="fc" value={businessForm.natureOfBusiness || ''} onChange={(e) => setBusinessForm(p => ({ ...p, natureOfBusiness: e.target.value }))} placeholder="e.g. Retail / Sari-sari Store" />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Business Address</label>
-                                <input type="text" className="fc" value={businessForm.businessAddress || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessAddress: e.target.value }))} placeholder="Zone / Street Address" />
-                              </div>
-                            </div>
-
-                            {/* Section 2: Owner / Applicant Details */}
-                            <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
-                              2. Owner / Applicant Details
-                            </div>
-                            <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl">First Name *</label>
-                                <input type="text" className="fc" required value={businessForm.firstName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, firstName: e.target.value }))} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Middle Name</label>
-                                <input type="text" className="fc" value={businessForm.middleName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, middleName: e.target.value }))} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Last Name *</label>
-                                <input type="text" className="fc" required value={businessForm.lastName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, lastName: e.target.value }))} />
-                              </div>
-                            </div>
-
-                            {/* Section 3: Payment & OR Reference */}
-                            <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
-                              3. Official Receipt & Fee
-                            </div>
-                            <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
-                              <div className="fg">
-                                <label className="fl">O.R. Number *</label>
-                                <input type="text" className="fc" required value={businessForm.orNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orNo: e.target.value }))} placeholder="e.g. 1234567" />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Clearance Fee (₱)</label>
-                                <input type="number" className="fc" value={businessForm.clearanceFee || ''} onChange={(e) => setBusinessForm(p => ({ ...p, clearanceFee: e.target.value }))} placeholder="0.00" />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">OR Date Issued</label>
-                                <input type="date" className="fc" value={businessForm.orDateIssued || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orDateIssued: e.target.value }))} />
-                              </div>
-                            </div>
-                          </form>
-                        </div>
-
-                        {/* Modal Actions */}
-                        <div className="modal-footer" style={{ padding: '16px 20px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                          <button type="button" className="btn btn-g" onClick={() => setIsBusinessModalOpen(false)}>
-                            Cancel
-                          </button>
-                          <button type="submit" form="business-clearance-form" className="btn btn-p">
-                            Save Record
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                  {/* Print Modal Component Call */}
-                  <BlotterCertificatePrintModal
-                    isOpen={printModalOpen}
-                    onClose={() => {
-                      setPrintModalOpen(false);
-                      setSelectedPrintData(null);
-                    }}
-                    blotterData={selectedPrintData}
-                  />
+      {/* ═══ 8. BLOTTER CERTIFICATE PRINT MODAL CALL ═══ */}
+      <BlotterCertificatePrintModal
+        isOpen={isPrintModalOpen}
+        onClose={() => {
+          setIsPrintModalOpen(false);
+          setSelectedBlotter(null);
+        }}
+        blotterData={selectedBlotter ? {
+          ...selectedBlotter,
+          captainName: systemSettings?.punongBarangay || settingsForm.punongBarangay,
+          secretaryName: systemSettings?.luponSecretary || settingsForm.luponSecretary,
+          publicDomain: systemSettings?.publicDomain
+        } : null}
+      />
                 </div>{/* /app */}
               </div>/* /dashboard-shell-container */
             );

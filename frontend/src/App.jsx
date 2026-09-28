@@ -6,24 +6,18 @@ import ResidentUI from './pages/ResidentUI';
 import DashboardPortal from './pages/DashboardPortal';
 import ProtectedRoute from './pages/ProtectedRoute';
 import Register from './pages/Register';
-
-// 1. Import setupPouchDBSync and resolveDbConflicts from db.js
 import { setupPouchDBSync, resolveDbConflicts } from './services/db';
+import VerifyDocument from './pages/VerifyDocument';
+
 
 export default function App() {
-  // 2. Start Live Synchronization when App mounts
   useEffect(() => {
-    // Initialize two-way sync in the background
     const syncHandler = setupPouchDBSync();
-
-    // Automatically check and resolve any offline conflicts on startup
     resolveDbConflicts();
 
-    // Cleanup: Cancel replication when the application unmounts
     return () => {
       if (syncHandler && typeof syncHandler.cancel === 'function') {
         syncHandler.cancel();
-        console.log('PouchDB sync handler safely cancelled.');
       }
     };
   }, []);
@@ -34,29 +28,31 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LogIn />} />
         <Route path="/register" element={<Register />} />
-        <Route 
-          path="/resident" 
+
+        <Route path="/verify" element={<VerifyDocument />} />
+        <Route
+          path="/resident"
           element={
             <ProtectedRoute allowedRoles={['resident']}>
               <ResidentUI />
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/staff" 
+        <Route
+          path="/staff"
           element={
             <ProtectedRoute allowedRoles={['staff']}>
               <DashboardPortal role="staff" />
             </ProtectedRoute>
-          } 
+          }
         />
-        <Route 
-          path="/admin" 
+        <Route
+          path="/admin"
           element={
             <ProtectedRoute allowedRoles={['admin']}>
               <DashboardPortal role="admin" />
             </ProtectedRoute>
-          } 
+          }
         />
         <Route path="*" element={<LogIn />} />
       </Routes>

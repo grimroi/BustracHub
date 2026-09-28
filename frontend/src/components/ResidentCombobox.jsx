@@ -1,5 +1,5 @@
 // src/components/ResidentCombobox.jsx
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
 export const formatPurok = (purok) => {
   if (!purok) return 'Purok 1';
@@ -8,39 +8,31 @@ export const formatPurok = (purok) => {
 };
 
 export default function ResidentCombobox({
+  db,
   residents = [],
   value,
   onChange,
   placeholder = 'Search by name, resident ID, or purok...',
-  maxVisible = 30,
+  maxVisible = 10,
 }) {
   const [query, setQuery] = useState('');
+  const [options, setOptions] = useState([]);
+  const [loading, setLoading] = useState(false);
   const [open, setOpen] = useState(false);
-  const [highlight, setHighlight] = useState(0);
+  const [selectedResident, setSelectedResident] = useState(null);
   const wrapRef = useRef(null);
 
-  // Ligtas na pag-check kung array ang residents
-  const safeResidents = Array.isArray(residents) ? residents : [];
+  // Hanapin ang selected resident sa local array kung walang async lookup
+  useEffect(() => {
+    if (value && Array.isArray(residents) && residents.length > 0) {
+      const found = residents.find((r) => r.id === value || r._id === value);
+      if (found) setSelectedResident(found);
+    } else if (!value) {
+      setSelectedResident(null);
+    }
+  }, [value, residents]);
 
-  const selected = useMemo(
-    () => safeResidents.find((r) => r.id === value) || null,
-    [safeResidents, value]
-  );
-
-  const matches = useMemo(() => {
-    const q = query.toLowerCase().trim();
-    if (!q) return safeResidents;
-    return safeResidents.filter(
-      (r) =>
-        (r.name || '').toLowerCase().includes(q) ||
-        (r.id || '').toLowerCase().includes(q) ||
-        String(r.purok || '').toLowerCase().includes(q)
-    );
-  }, [safeResidents, query]);
-
-  const filtered = useMemo(() => matches.slice(0, maxVisible), [matches, maxVisible]);
-
-  // Close kapag nag-click outside
+  // Close dropdown sa click-outside
   useEffect(() => {
     const onDown = (e) => {
       if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false);
@@ -49,42 +41,74 @@ export default function ResidentCombobox({
     return () => document.removeEventListener('mousedown', onDown);
   }, []);
 
-  const pick = (res) => {
+  // Debounced Search Query (PouchDB async search if DB is provided)
+  useEffect(() => {
+    const q = query.trim();
+    if (!q || q.length < 2) {
+      setOptions([]);
+      return;
+    }
+
+    const timer = setTimeout(async () => {
+      setLoading(true);
+      try {
+        if (db && typeof db.find === 'function') {
+          // Server/DB-side querying with index limit
+          const res = await db.find({
+            selector: {
+              type: 'resident',
+              $or: [
+                { name: { $regex: `(?i)${q}` } },
+                { full_name: { $regex: `(?i)${q}` } },
+                { purok: { $regex: `(?i)${q}` } },
+                { id: { $regex: `(?i)${q}` } }
+              ]
+            },
+            limit: maxVisible
+          });
+          setOptions(res.docs || []);
+        } else if (Array.isArray(residents)) {
+          // Fallback sa local array filter kapag hindi naipasa ang db prop
+          const filtered = residents.filter((r) =>
+            (r.name || r.full_name || '').toLowerCase().includes(q.toLowerCase()) ||
+            (r.id || '').toLowerCase().includes(q.toLowerCase()) ||
+            String(r.purok || '').toLowerCase().includes(q.toLowerCase())
+          ).slice(0, maxVisible);
+          setOptions(filtered);
+        }
+      } catch (err) {
+        console.error('Resident Search error:', err);
+      } finally {
+        setLoading(false);
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [query, db, residents, maxVisible]);
+
+  const handlePick = (res) => {
+    setSelectedResident(res);
     onChange(res);
     setQuery('');
     setOpen(false);
   };
 
-  const onKeyDown = (e) => {
-    if (e.key === 'ArrowDown') {
-      e.preventDefault();
-      setOpen(true);
-      setHighlight((h) => Math.min(h + 1, filtered.length - 1));
-    } else if (e.key === 'ArrowUp') {
-      e.preventDefault();
-      setHighlight((h) => Math.max(h - 1, 0));
-    } else if (e.key === 'Enter' && open) {
-      e.preventDefault();
-      if (filtered[highlight]) pick(filtered[highlight]);
-    } else if (e.key === 'Escape') setOpen(false);
+  const handleClear = () => {
+    setSelectedResident(null);
+    onChange(null);
   };
 
-  if (selected) {
+  if (selectedResident) {
     return (
       <div className="res-combo" ref={wrapRef}>
-        <div className="res-combo-selected">
+        <div className="res-combo-selected" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface2)', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border)' }}>
           <div>
-            <strong>{selected.name}</strong>
-            <span className="res-combo-meta">
-              {selected.id} • {formatPurok(selected.purok)}
+            <strong>{selectedResident.name || selectedResident.full_name}</strong>
+            <span className="res-combo-meta" style={{ fontSize: '11px', color: 'var(--muted)', marginLeft: '8px' }}>
+              {selectedResident.id || selectedResident._id} • {formatPurok(selectedResident.purok)}
             </span>
           </div>
-          <button
-            type="button"
-            className="res-combo-clear"
-            onClick={() => onChange(null)}
-            aria-label="Clear selected resident"
-          >
+          <button type="button" className="btn-sm" onClick={handleClear} style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', fontWeight: 'bold' }}>
             ✕
           </button>
         </div>
@@ -93,59 +117,38 @@ export default function ResidentCombobox({
   }
 
   return (
-    <div className="res-combo" ref={wrapRef}>
-      <div className="res-combo-inputwrap">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <circle cx="11" cy="11" r="8" />
-          <line x1="21" y1="21" x2="16.65" y2="16.65" />
-        </svg>
-        <input
-          type="text"
-          role="combobox"
-          aria-autocomplete="list"
-          aria-expanded={open}
-          className="fc"
-          value={query}
-          placeholder={placeholder}
-          onChange={(e) => {
-            setQuery(e.target.value);
-            setOpen(true);
-            setHighlight(0);
-          }}
-          onFocus={() => setOpen(true)}
-          onKeyDown={onKeyDown}
-        />
-      </div>
+    <div className="res-combo" ref={wrapRef} style={{ position: 'relative', width: '100%' }}>
+      <input
+        type="text"
+        className="fc"
+        value={query}
+        placeholder={placeholder}
+        onFocus={() => setOpen(true)}
+        onChange={(e) => {
+          setQuery(e.target.value);
+          setOpen(true);
+        }}
+      />
 
-      {open && (
-        <div className="res-combo-panel" role="listbox">
-          {filtered.length === 0 ? (
-            <div className="res-combo-empty">No matching resident found.</div>
-          ) : (
-            <>
-              <ul>
-                {filtered.map((res, i) => (
-                  <li key={res.id} role="option" aria-selected={i === highlight}>
-                    <button
-                      type="button"
-                      className={`res-combo-option${i === highlight ? ' active' : ''}`}
-                      onMouseEnter={() => setHighlight(i)}
-                      onClick={() => pick(res)}
-                    >
-                      <span className="res-combo-name">{res.name}</span>
-                      <span className="res-combo-sub">
-                        {res.id} • {formatPurok(res.purok)}
-                      </span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-              {matches.length > maxVisible && (
-                <div className="res-combo-more">
-                  Showing {maxVisible} of {matches.length.toLocaleString()} matches — type more to narrow down
+      {open && query.trim().length >= 2 && (
+        <div className="res-combo-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#1e293b', border: '1px solid #334155', borderRadius: '6px', zIndex: 1000, maxHeight: '220px', overflowY: 'auto', boxShadow: '0 8px 16px rgba(0,0,0,0.4)', marginTop: '4px' }}>
+          {loading ? (
+            <div style={{ padding: '10px', fontSize: '12px', color: '#94a3b8' }}>🔍 Searching residents database...</div>
+          ) : options.length > 0 ? (
+            options.map((res) => (
+              <div
+                key={res._id || res.id}
+                style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #334155', fontSize: '13px' }}
+                onClick={() => handlePick(res)}
+              >
+                <div style={{ fontWeight: 'bold', color: '#f8fafc' }}>{res.name || res.full_name}</div>
+                <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                  ID: {res.id || res._id} | {formatPurok(res.purok)} | Email: {res.email || 'None'}
                 </div>
-              )}
-            </>
+              </div>
+            ))
+          ) : (
+            <div style={{ padding: '10px', fontSize: '12px', color: '#94a3b8' }}>No resident found.</div>
           )}
         </div>
       )}
