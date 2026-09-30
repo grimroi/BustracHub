@@ -76,13 +76,36 @@ if (typeof window !== 'undefined') {
 }
 
 export const forceSyncToRemote = async () => {
+  if (!remoteDb) return;
+
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     return;
   }
+
   try {
-    await localDb.replicate.to(remoteDb);
+    if (typeof localDb.setMaxListeners === 'function') {
+      localDb.setMaxListeners(50);
+    }
+
+    const syncInstance = localDb.sync(remoteDb, {
+      live: false,
+      retry: false
+    });
+
+    return new Promise((resolve) => {
+      syncInstance
+        .on('complete', (info) => {
+          syncInstance.removeAllListeners();
+          resolve(info);
+        })
+        .on('error', (err) => {
+          syncInstance.removeAllListeners();
+          console.warn('Sync error (continuing operation):', err);
+          resolve(null);
+        });
+    });
   } catch (err) {
-    console.warn('Immediate push sync warning:', err);
+    console.warn('Force sync error:', err);
   }
 };
 

@@ -7,50 +7,42 @@ export interface BusinessPermitData {
   bcIdNo?: string;
   businessName?: string;
   ownerName?: string;
-  fullName?: string;
   applicantName?: string;
   firstName?: string;
   lastName?: string;
-  nationality?: string;
+  middleName?: string;
+  natureOfBusiness?: string;
+  businessAddress?: string;
+  address?: string;
+  orNo?: string;
+  orNumber?: string;
+  clearanceFee?: string | number;
+  amountPaid?: string | number;
+  dateIssued?: string;
+  regDate?: string;
+  photoUrl?: string;
+  captain?: string;
+  punongBarangay?: string;
+  secretary?: string;
+  status?: string;
+  printMode?: string;
+  isDuplicate?: boolean;
   contactNo?: string;
-  contactNos?: string;
   civilStatus?: string;
   occupation?: string;
-  address?: string;
+  nationality?: string;
   purok?: string;
-  businessAddress?: string;
+  applicantAddress?: string;
   purpose?: string;
   clearanceYear?: string | number;
   clearanceExpires?: string;
   kindOfTransaction?: string;
-  regDate?: string;
   issuedAt?: string;
-  dateIssued?: string;
   createdAt?: string;
-  issueDate?: string;
-  punongBarangay?: string;
-  orNo?: string;
-  orNumber?: string;
-  amountPaid?: number | string;
-  photoUrl?: string;
-  ctcNo?: string;
-  ctcNumber?: string;
-  ctcDateIssued?: string;
-  ctcPlaceIssued?: string;
-  status?: string;
-  issuanceMeta?: {
-    orNumber?: string;
-    amountPaid?: number | string;
-    dateIssued?: string;
-    remarks?: string;
-    purpose?: string;
-    noDerogatoryRecord?: boolean;
-    ctcNumber?: string;
-    ctcAmountPaid?: number | string;
-    ctcDateIssued?: string;
-  };
-  printMode?: string;
-  isDuplicate?: boolean;
+  garbageFee?: string | number;
+  age?: number | string;
+  sex?: string;
+  birthdate?: string;
 }
 
 interface BusinessPermitProps {
@@ -60,265 +52,218 @@ interface BusinessPermitProps {
 export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
   if (!data) return null;
 
-  const meta = data.issuanceMeta || {};
-
-  const bcIdNo = data.bcIdNo || '0156';
+  // Extract and format data with defaults
+  const bcIdNo = data.bcIdNo || data.orNo || '065012';
+  const orNo = data.orNo || data.orNumber || '065012';
+  const amount = data.clearanceFee || data.amountPaid || '100.00';
+  const dateIssued = data.dateIssued || data.regDate || new Date().toISOString().split('T')[0];
+  
   const ownerName = (
-    data.ownerName ||
-    data.fullName ||
-    data.applicantName ||
-    `${data.lastName || ''}, ${data.firstName || ''}`.replace(/^,\s*/, '').trim() ||
-    'DELA CRUZ, JUAN'
+    data.ownerName || 
+    data.applicantName || 
+    `${data.lastName || ''}, ${data.firstName || ''} ${data.middleName || ''}`.trim()
   ).toUpperCase();
-  const businessName = (data.businessName || 'BUSTRAC SARI-SARI STORE').toUpperCase();
-  const address = (
-    data.address ||
-    (data.purok ? `${data.purok.toUpperCase()}, BUSTRAC, NABUA, CAMARINES SUR` : 'ZONE 5, BUSTRAC, NABUA, CAMARINES SUR')
+
+  const businessName = (data.businessName || 'N/A').toUpperCase();
+  const natureOfBusiness = (data.natureOfBusiness || 'N/A').toUpperCase();
+  const businessAddress = (
+    data.businessAddress || 
+    data.address || 
+    data.applicantAddress || 
+    'N/A'
   ).toUpperCase();
-  const nationality = (data.nationality || 'FILIPINO').toUpperCase();
-  const contactNo = data.contactNo || data.contactNos || 'N/A';
-  const civilStatus = (data.civilStatus || 'SINGLE').toUpperCase();
-  const occupation = (data.occupation || 'BUSINESS OWNER').toUpperCase();
-
-  // Financial & OR Details
-  const orNo = meta.orNumber || data.orNumber || data.orNo || 'N/A';
-  const rawAmt = meta.amountPaid !== undefined ? meta.amountPaid : (data.amountPaid || '0.00');
-  const amountPaid = typeof rawAmt === 'number' ? rawAmt.toFixed(2) : Number(rawAmt || 0).toFixed(2);
-
-  // Dates Formatting
-  const certDate = meta.dateIssued || data.issuedAt || data.dateIssued || data.issueDate || data.regDate || data.createdAt || new Date();
-  const dateObj = new Date(certDate);
-  const formattedDate = !isNaN(dateObj.getTime()) ? dateObj.toISOString().split('T')[0] : String(certDate);
-  const clearanceYear = data.clearanceYear || (!isNaN(dateObj.getTime()) ? dateObj.getFullYear() : '2026');
-  const clearanceExpires = data.clearanceExpires || 'DECEMBER 31';
-  const kindOfTransaction = data.kindOfTransaction || 'Renewal';
-  const printedDate = new Date().toLocaleDateString('en-US');
-
-  // Watermark Condition Check
+  
+  const captain = data.captain || data.punongBarangay || 'HON. ANNABELLE E. RULL';
+  const secretary = data.secretary || 'MRS. MELY M. PRESADO';
+  
   const isDuplicateMode = data.printMode === 'copy' || data.isDuplicate || data.status === 'Released';
 
+  // Calculate age if birthdate provided
+  const age = data.age || (data.birthdate || data.regDate ? 
+    new Date().getFullYear() - new Date(data.birthdate || data.regDate).getFullYear() : 'N/A');
+  
+  const sex = data.sex || 'M';
+  const citizenship = (data.nationality || 'Filipino').toUpperCase();
+  const civilStatus = (data.civilStatus || 'Single').toUpperCase();
+
   return (
-    <div
-      style={{
-        border: '2px solid #000',
-        padding: '30px 40px',
-        background: '#fff',
-        minHeight: '270mm',
-        display: 'flex',
-        flexDirection: 'column',
-        justifyContent: 'space-between',
-        boxSizing: 'border-box',
-        fontFamily: 'Arial, Helvetica, sans-serif',
-        color: '#000000',
-        fontSize: '11px',
-        lineHeight: '1.4',
-        position: 'relative',
-        overflow: 'hidden',
-      }}
-    >
-      {/* ═══ REPRINT / DUPLICATE WATERMARK OVERLAY ═══ */}
+    <div style={{
+      border: '1px solid #000',
+      padding: '0',
+      background: '#fff',
+      minHeight: '270mm',
+      fontFamily: 'Arial, Helvetica, sans-serif',
+      color: '#000',
+      fontSize: '11px',
+      lineHeight: '1.3',
+      position: 'relative',
+      boxSizing: 'border-box',
+    }}>
+      {/* DUPLICATE WATERMARK */}
       {isDuplicateMode && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '40%',
-            left: '50%',
-            transform: 'translate(-50%, -50%) rotate(-35deg)',
-            fontSize: '52px',
-            fontWeight: 'bold',
-            color: 'rgba(220, 38, 38, 0.18)',
-            border: '8px dashed rgba(220, 38, 38, 0.25)',
-            padding: '10px 30px',
-            borderRadius: '12px',
-            pointerEvents: 'none',
-            whiteSpace: 'nowrap',
-            zIndex: 10,
-            textTransform: 'uppercase',
-            letterSpacing: '4px',
-          }}
-        >
+        <div style={{
+          position: 'absolute',
+          top: '40%',
+          left: '50%',
+          transform: 'translate(-50%, -50%) rotate(-35deg)',
+          fontSize: '48px',
+          fontWeight: 'bold',
+          color: 'rgba(220, 38, 38, 0.15)',
+          border: '6px dashed rgba(220, 38, 38, 0.25)',
+          padding: '10px 30px',
+          zIndex: 10,
+          pointerEvents: 'none',
+          whiteSpace: 'nowrap',
+        }}>
           DUPLICATE COPY
         </div>
       )}
 
-      <div>
-        {/* Header Section with Logos */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '15px' }}>
-          <div style={{ width: '80px', height: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <img src={nabuaLogo} alt="Municipality of Nabua Seal" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+      {/* Header Logos */}
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '15px 20px 10px' }}>
+        <div style={{ width: '70px', height: '70px' }}>
+          <img src={nabuaLogo} alt="Nabua Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        </div>
+        <div style={{ textAlign: 'center', flex: 1 }}>
+          <p style={{ margin: 0, fontSize: '11px', fontWeight: 'bold' }}>Republic of the Philippines</p>
+          <p style={{ margin: 0, fontSize: '11px', fontWeight: 'bold' }}>Province of Camarines Sur</p>
+          <p style={{ margin: 0, fontSize: '11px', fontWeight: 'bold' }}>Municipality of Nabua</p>
+          <p style={{ margin: '3px 0 0', fontSize: '13px', fontWeight: 'bold', letterSpacing: '0.5px' }}>BARANGAY BUSTRAC</p>
+          <p style={{ margin: '2px 0 0', fontSize: '12px', fontWeight: 'bold' }}>OFFICE OF THE PUNONG BARANGAY</p>
+        </div>
+        <div style={{ width: '70px', height: '70px' }}>
+          <img src={bustracLogo} alt="Bustrac Logo" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        </div>
+      </div>
+
+      {/* Yellow Title Banner */}
+      <div style={{ backgroundColor: '#FFCC00', textAlign: 'center', padding: '6px 0', margin: '0 20px', border: '1.5px solid #000' }}>
+        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: '900', letterSpacing: '1px', color: '#000' }}>
+          BARANGAY CLEARANCE
+        </h2>
+      </div>
+
+      {/* Main Content - 3 Column Layout */}
+      <div style={{ padding: '20px', display: 'flex', gap: '15px' }}>
+        {/* LEFT COLUMN - Document Details */}
+        <div style={{ width: '140px', fontSize: '9px', lineHeight: '1.4' }}>
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{bcIdNo}</div>
+            <div>OR Number</div>
           </div>
-          <div style={{ textAlign: 'center', flex: 1, padding: '0 10px' }}>
-            <p style={{ margin: 0, fontSize: '11px', fontWeight: 'bold' }}>REPUBLIC OF THE PHILIPPINES</p>
-            <p style={{ margin: 0, fontSize: '11px', fontWeight: 'bold' }}>PROVINCE OF CAMARINES SUR</p>
-            <p style={{ margin: 0, fontSize: '11px', fontWeight: 'bold' }}>MUNICIPALITY OF NABUA</p>
-            <p style={{ margin: '2px 0 0 0', fontSize: '12px', fontWeight: 'bold', letterSpacing: '0.5px' }}>
-              BARANGAY BUSTRAC
-            </p>
-            <p style={{ margin: '4px 0 0 0', fontSize: '14px', fontWeight: 'bold', textTransform: 'uppercase' }}>
-              OFFICE OF THE PUNONG BARANGAY
-            </p>
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>₱{typeof amount === 'number' ? amount.toFixed(2) : amount}</div>
+            <div>Clearance Amount</div>
           </div>
-          <div style={{ width: '80px', height: '80px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <img src={bustracLogo} alt="Barangay Bustrac Seal" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+          <div style={{ marginBottom: '12px' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{dateIssued}</div>
+            <div>Date Issued</div>
+          </div>
+          <div style={{ marginBottom: '15px' }}>
+            <div style={{ fontWeight: 'bold' }}>(c) Six Months Validity</div>
+            <div>Validity of this CLEARANCE from the Date of Issuance</div>
+          </div>
+          <div style={{ borderTop: '1px solid #000', margin: '15px 0', paddingTop: '10px' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '10px' }}>
+              OFFICIAL DOCUMENT<br/>
+              -Not Valid Without Seal-
+            </div>
+          </div>
+          <div style={{ fontSize: '9px', marginTop: '10px' }}>
+            Date Printed: {new Date().toLocaleDateString('en-US')}<br/>
+            System Generated
+          </div>
+          
+          {/* Thumb Mark Boxes */}
+          <div style={{ marginTop: '25px', textAlign: 'center' }}>
+            <div style={{ fontSize: '9px', marginBottom: '3px' }}>Applicant's Thumb Mark</div>
+            <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+              <div style={{ border: '1px solid #000', width: '35px', height: '45px' }}></div>
+              <div style={{ border: '1px solid #000', width: '35px', height: '45px' }}></div>
+            </div>
+            <div style={{ fontSize: '8px', marginTop: '3px' }}>LEFT &nbsp;&nbsp;&nbsp;&nbsp; RIGHT</div>
           </div>
         </div>
 
-        {/* Yellow Document Title Banner */}
-        <div
-          style={{
-            backgroundColor: '#FFCC00',
-            border: '1.5px solid #000',
-            textAlign: 'center',
-            padding: '6px 0',
-            marginBottom: '20px',
-          }}
-        >
-          <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 900, letterSpacing: '1px', color: '#000' }}>
-            BARANGAY BUSINESS CLEARANCE
-          </h2>
-        </div>
+        {/* CENTER COLUMN - Main Content */}
+        <div style={{ flex: 1, fontSize: '10px' }}>
+          <p style={{ fontWeight: 'bold', marginBottom: '8px', fontSize: '11px' }}>TO WHOM IT MAY CONCERN:</p>
+          <p style={{ margin: '0 0 8px 0', textAlign: 'justify', lineHeight: '1.4' }}>
+            This is to certify that as per record, the person whose name, photo and signature appearing herein has requested a CLEARANCE from this office with the following detail/s:
+          </p>
 
-        {/* Top Info Grid: Photo & Applicant Details */}
-        <div style={{ display: 'flex', gap: '20px', marginBottom: '20px', alignItems: 'flex-start' }}>
-          {/* Left: Photo Placeholder */}
-          <div
-            style={{
-              width: '120px',
-              height: '130px',
-              border: '1px solid #000',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center', // Inayos mula 'justify' papuntang 'justifyContent'
-              textAlign: 'center',
-              padding: '8px',
-              fontSize: '10px',
-              fontWeight: 'bold',
-              boxSizing: 'border-box',
-              background: '#fcfcfc',
-            }}
-          >
+          {/* Photo Box (Right aligned in center column) */}
+          <div style={{ float: 'right', width: '100px', height: '120px', border: '1px solid #000', marginLeft: '10px', marginBottom: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#f5f5f5' }}>
             {data.photoUrl ? (
-              <img src={data.photoUrl} alt="Applicant" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+              <img src={data.photoUrl} alt="Photo" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
             ) : (
-              '[ PHOTO PLACEHOLDER ]'
+              <span style={{ fontSize: '8px', color: '#666', textAlign: 'center' }}>PHOTO<br/>PLACEHOLDER</span>
             )}
           </div>
 
-          {/* Center: Applicant Metadata */}
-          <div style={{ flex: 1, fontSize: '11px', lineHeight: '1.5' }}>
-            <div style={{ fontWeight: 'bold', fontSize: '13px' }}>{ownerName}</div>
-            <div style={{ fontSize: '9px', fontStyle: 'italic', marginBottom: '6px' }}>(Owner/Proprietor)</div>
-            <div><strong>{address}</strong></div>
-            <div><strong>Nationality:</strong> {nationality}</div>
-            <div><strong>Contact:</strong> {contactNo}</div>
-            <div><strong>Civil Status:</strong> {civilStatus}</div>
-            <div><strong>Occupation:</strong> {occupation}</div>
+          <div style={{ fontSize: '10px', lineHeight: '1.6' }}>
+            <div><strong>Last Name:</strong> {data.lastName || 'PRESADO'}</div>
+            <div><strong>First Name:</strong> {data.firstName || 'MELY'}</div>
+            <div><strong>Middle Name:</strong> {data.middleName || 'MONTEJO'}</div>
+            <div><strong>Marital Status:</strong> {civilStatus} &nbsp;&nbsp;&nbsp; <strong>Sex:</strong> {sex}</div>
+            <div><strong>Birthdate:</strong> {data.birthdate || data.regDate || dateIssued}</div>
+            <div><strong>Age:</strong> {age}</div>
+            <div><strong>Citizenship:</strong> {citizenship}</div>
+            <div><strong>Lot No. Subd. Purok/Zone:</strong> {data.purok || data.applicantAddress || 'ZONE 4'}</div>
+            <div><strong>Barangay/City-Municipality/Province:</strong> BUSTRAC, NABUA, CAMARINES SUR</div>
           </div>
 
-          {/* Right: Business Control Metadata */}
-          <div style={{ width: '160px', textAlign: 'right', fontSize: '11px', lineHeight: '1.4' }}>
-            <div style={{ fontWeight: 900, fontSize: '14px' }}>{bcIdNo}</div>
-            <div style={{ fontSize: '9px', fontWeight: 'bold', marginBottom: '6px' }}>BUSINESS ID NO.:</div>
-            <div style={{ fontWeight: 'bold' }}>{clearanceYear}</div>
-            <div style={{ fontSize: '9px', fontWeight: 'bold', marginBottom: '6px' }}>CLEARANCE YEAR</div>
-            <div style={{ fontWeight: 'bold' }}>{clearanceExpires}</div>
-            <div style={{ fontSize: '9px', fontWeight: 'bold', marginBottom: '6px' }}>CLEARANCE EXPIRES</div>
-            <div style={{ fontWeight: 'bold' }}>{kindOfTransaction}</div>
-            <div style={{ fontSize: '9px', fontWeight: 'bold' }}>KIND OF TRANSACTION</div>
-          </div>
-        </div>
-
-        {/* Salutation & Body Terms */}
-        <div style={{ fontSize: '11px', lineHeight: '1.5', textAlign: 'justify' }}>
-          <p style={{ fontWeight: 'bold', margin: '0 0 10px 0' }}>TO WHOM IT MAY CONCERN:</p>
-          <p style={{ margin: '0 0 8px 0' }}>
-            This is to certify that the BUSINESS OWNER/OPERATOR/PROPRIETOR has been cleared of any liabilities and obligations. And granted/permitted to operate business in this barangay:
-          </p>
-          <p style={{ margin: '0 0 8px 0' }}>
-            That the business as applied will not pollute the environment nor affect the health, convenience and safety of our residents.
-          </p>
-          <p style={{ margin: '0 0 8px 0' }}>
-            That the Barangay Council has no objection in the proposed operation of the said business provided that the applicant will follow all Barangay and Municipal Laws and Ordinances concerning the proper operation of their business.
-          </p>
-          <p style={{ margin: '0 0 20px 0' }}>
-            This BUSINESS CLEARANCE is issued upon request of the interested party in applying or renewing his/her business clearance to operate said establishment in compliance of Article (4) Section (152) of the 1991 Local Government Code of the Philippines and whatever legal purpose this official clearance may serve.
-          </p>
-        </div>
-
-        {/* Middle Section: Business Entity & Payment / Seal Grid */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginTop: '10px' }}>
-          {/* Left: Highlighted Business Name & Details */}
-          <div style={{ flex: 1, paddingRight: '20px' }}>
-            <div style={{ textAlign: 'center', marginTop: '10px' }}>
-              <div style={{ fontWeight: 900, fontSize: '15px', letterSpacing: '0.5px' }}>{businessName}</div>
-              <div style={{ fontSize: '11px', marginTop: '2px' }}>{address}</div>
-            </div>
-
-            {/* Applicant Signature Block */}
-            <div style={{ textAlign: 'center', marginTop: '45px' }}>
-              <div style={{ fontWeight: 'bold', fontSize: '12px', borderBottom: '1px solid #000', display: 'inline-block', padding: '0 20px' }}>
-                {ownerName}
-              </div>
-              <div style={{ fontSize: '10px', marginTop: '2px' }}>Name and Signature of Applicant</div>
-            </div>
-
-            {/* Punong Barangay Signature Block */}
-            <div style={{ textAlign: 'center', marginTop: '35px' }}>
-              <div style={{ fontWeight: 900, fontSize: '13px' }}>
-                {data.punongBarangay || 'HON. ANNABELLE E. RULL'}
-              </div>
-              <div style={{ fontSize: '10px' }}>Punong Barangay</div>
-            </div>
+          <div style={{ clear: 'both', marginTop: '10px' }}>
+            <p style={{ margin: '10px 0 5px' }}><strong>PURPOSE:</strong> {data.purpose || 'FOR MICRO FINANCE PURPOSE'}</p>
+            <p style={{ margin: '0 0 10px' }}><strong>REMARKS:</strong> No Derogatory Record</p>
+            <p style={{ margin: '10px 0', textAlign: 'justify', lineHeight: '1.4' }}>
+              This certification is issued upon the request of the above subject for the purpose stated.
+            </p>
+            <p style={{ margin: '15px 0 0', fontWeight: 'bold' }}>
+              DATE ISSUED: {dateIssued}
+            </p>
           </div>
 
-          {/* Right: Payment Details & Seal Placeholder */}
-          <div style={{ width: '220px', textAlign: 'center' }}>
-            <div style={{ fontSize: '10px', fontWeight: 'bold', marginBottom: '8px' }}>
-              Paid under the following<br />O.R. Details:
+          {/* Claimant Signature */}
+          <div style={{ marginTop: '40px', textAlign: 'center' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '11px', borderBottom: '1px solid #000', display: 'inline-block', padding: '0 30px', marginBottom: '3px' }}>
+              {ownerName}
             </div>
-            <div style={{ fontWeight: 'bold', fontSize: '12px' }}>{orNo}</div>
-            <div style={{ fontSize: '9px', marginBottom: '8px' }}>O.R. No.</div>
-            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{formattedDate}</div>
-            <div style={{ fontSize: '9px', marginBottom: '8px' }}>O.R. Date Issued</div>
-            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>₱{amountPaid}</div>
-            <div style={{ fontSize: '9px', marginBottom: '15px' }}>Amount Paid</div>
+            <div style={{ fontSize: '9px' }}>Signature Over Printed Name of Claimant</div>
+          </div>
 
-            {/* Seal / QR Placeholder Box */}
-            <div
-              style={{
-                border: '1px dashed #000',
-                height: '110px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center', // Inayos mula 'justify' papuntang 'justifyContent'
-                padding: '10px',
-                fontSize: '9px',
-                fontWeight: 'bold',
-                color: '#333',
-                background: '#fafafa',
-              }}
-            >
-              [ SEAL / QR / BARCODE PLACEHOLDER ]
+          {/* Secretary Signature */}
+          <div style={{ marginTop: '30px', textAlign: 'center' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '10px', backgroundColor: '#e0e0e0', padding: '2px 8px', display: 'inline-block' }}>
+              {secretary}
             </div>
+            <div style={{ fontSize: '9px', marginTop: '2px' }}>Barangay Secretary</div>
+          </div>
+
+          {/* Captain Signature */}
+          <div style={{ marginTop: '20px', textAlign: 'center' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '10px' }}>{captain}</div>
+            <div style={{ fontSize: '9px', marginTop: '2px' }}>Punong Barangay</div>
           </div>
         </div>
       </div>
 
-      {/* Footer Legal Terms */}
-      <div style={{ borderTop: '1px solid #000', paddingTop: '8px', marginTop: '15px', fontSize: '8px', lineHeight: '1.3' }}>
-        <p style={{ margin: '0 0 4px 0' }}>
-          This clearance shall be posted conspicuously at the place where the business is/are being conducted and shall be presented and or surrendered to competent authorities upon demand. NOT TRANSFERABLE AND NOT VALID WITHOUT OFFICIAL SEAL AND BUSINESS CLEARANCE PAYMENT. In case of closure of business, please notify this barangay for further clearance and certification.
-        </p>
-        <p style={{ fontWeight: 'bold', margin: '0 0 6px 0' }}>
-          ERASURE AND/OR ALTERATION WILL INVALIDATE THIS CLEARANCE.
-        </p>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
-          <span style={{ fontWeight: 'bold', fontStyle: 'italic', margin: '0 auto' }}>
-            — NOT VALID WITHOUT OFFICIAL SEAL —
-          </span>
-          <span style={{ fontSize: '8px', color: '#555' }}>
-            System Generated: Date Printed: {printedDate}
-          </span>
+      {/* Footer Section */}
+      <div style={{ position: 'absolute', bottom: '30px', left: '20px', right: '20px', borderTop: '1px solid #ddd', paddingTop: '10px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end' }}>
+          <div style={{ fontSize: '9px' }}>
+            <div style={{ fontWeight: 'bold' }}>OR: {orNo}</div>
+            <div>[BARCODE PLACEHOLDER] &nbsp; [QR CODE PLACEHOLDER]</div>
+            <div style={{ fontWeight: 'bold', fontStyle: 'italic', marginTop: '2px' }}>Paid Document</div>
+          </div>
+          <div style={{ fontSize: '8px', color: '#666', textAlign: 'right', maxWidth: '250px' }}>
+            This file is a transcription/template based on the supplied image and is not an official government document.
+          </div>
+        </div>
+        
+        {/* Bottom Yellow Banner */}
+        <div style={{ backgroundColor: '#FFCC00', textAlign: 'center', padding: '6px 0', marginTop: '15px', border: '1.5px solid #000', fontWeight: '900', fontSize: '14px', letterSpacing: '1px', color: '#000', textTransform: 'uppercase' }}>
+          MAUNLAD NA BARANGAY!
         </div>
       </div>
     </div>

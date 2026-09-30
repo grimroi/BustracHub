@@ -23,6 +23,9 @@ import { SummonsPanel } from '../components/SummonsPanel';
 import { CaseStatusActions } from '../components/CaseStatusActions';
 import A4PreviewWrapper from '../components/A4PreviewWrapper';
 import BlotterCertificatePrintModal from '../components/BlotterCertificatePrintModal';
+import BusinessClearanceTemplate from '../components/certificates/templates/BusinessClearanceTemplate';
+import "../styles/Certificates.css";
+
 
 const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
 
@@ -329,11 +332,149 @@ export const mapDocToBlotter = (doc) => {
     rawDoc: doc
   };
 };
+// ── Helper: Kunin ang next Business ID at i-increment ang sequence (TOTOONG SAVE) ──
+const getNextBusinessSequence = async () => {
+  try {
+    let seqDoc;
+    try {
+      seqDoc = await db.get('seq_business_clearance');
+    } catch (err) {
+      if (err.name === 'not_found') {
+        // Start at 155 para ang next ay maging 0156
+        seqDoc = { _id: 'seq_business_clearance', lastNumber: 155 }; 
+      } else {
+        throw err;
+      }
+    }
+    const nextNumber = (seqDoc.lastNumber || 155) + 1;
+    await db.put({ ...seqDoc, lastNumber: nextNumber });
+    return String(nextNumber).padStart(4, '0');
+  } catch (err) {
+    console.error('Failed to get business sequence:', err);
+    // Fallback kung may error sa DB
+    return String(Date.now()).slice(-4); 
+  }
+};
+
 
 // ─────────────────────────────────────────────
 // COMPONENT
 // ─────────────────────────────────────────────
 export default function DashboardPortal({ role = 'staff' }) {
+const businessFormRef = useRef(null);
+const [isSavingClearance, setIsSavingClearance] = useState(false);
+const [isSavingBusiness, setIsSavingBusiness] = useState(false);
+const [showBusinessPrintModal, setShowBusinessPrintModal] = useState(false);
+const [selectedBusinessCert, setSelectedBusinessCert] = useState(null);
+const handlePrintBusinessClearance = (record) => {
+  if (!record) {
+    console.error('No record provided for printing');
+    return;
+  }
+
+  // Format owner name
+  const ownerName = (
+    record.ownerName ||
+    `${record.lastName || ''}, ${record.firstName || ''} ${record.middleName || ''}`.trim() ||
+    `${record.firstName || ''} ${record.lastName || ''}`.trim()
+  ).toUpperCase();
+
+  const certData = {
+    ...record,
+    certType: 'Business Clearance',
+    certificateType: 'Business Clearance',
+    type: 'business_clearance',
+    ownerName: ownerName,
+    applicantName: ownerName,
+    fullName: ownerName,
+    firstName: record.firstName || '',
+    lastName: record.lastName || '',
+    middleName: record.middleName || '',
+    businessName: record.businessName || '',
+    natureOfBusiness: record.natureOfBusiness || '',
+    businessAddress: record.businessAddress || '',
+    contactNo: record.contactNo || '',
+    civilStatus: record.civilStatus || '',
+    occupation: record.occupation || '',
+    nationality: record.nationality || 'Filipino',
+    address: record.applicantAddress || '',
+    purok: record.purok || record.applicantAddress || '',
+    applicantAddress: record.applicantAddress || '',
+    bcIdNo: record.bcIdNo || '',
+    orNo: record.orNo || '',
+    orNumber: record.orNo || '',
+    clearanceFee: record.clearanceFee || '0.00',
+    amount: record.clearanceFee || '0.00',
+    amountPaid: record.clearanceFee || '0.00',
+    garbageFee: record.garbageFee || '0.00',
+    dateIssued: record.orDateIssued || record.regDate || new Date().toISOString().split('T')[0],
+    issuedAt: record.orDateIssued || record.regDate || new Date().toISOString(),
+    regDate: record.regDate || new Date().toISOString().split('T')[0],
+    createdAt: record.createdAt || new Date().toISOString(),
+    secretary: record.secretary || settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
+    captain: record.captain || settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
+    punongBarangay: record.captain || settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
+    photoUrl: record.photoUrl || null,
+    purpose: record.natureOfBusiness || 'Business Clearance Registration',
+    clearanceYear: record.regDate ? new Date(record.regDate).getFullYear() : new Date().getFullYear(),
+    clearanceExpires: 'DECEMBER 31',
+    kindOfTransaction: 'Renewal',
+    status: record.status || 'Issued',
+    printMode: 'original',
+    isDuplicate: false,
+  };
+
+  // I-set ang Modal State para lumabas ang Preview Overlay
+  setSelectedBusinessCert(certData);
+  setShowBusinessPrintModal(true);
+};
+
+const handlePrintBusinessDocument = async () => {
+  if (!selectedBusinessCert) {
+    console.warn('Walang napiling business certificate para i-print.');
+    return;
+  }
+
+  try {
+    if (selectedBusinessCert._id && selectedBusinessCert.type === 'business_clearance') {
+      const latestDoc = await db.get(selectedBusinessCert._id);
+      const updatedDoc = {
+        ...latestDoc,
+        status: 'Issued',
+        printedAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
+
+      await db.put(updatedDoc);
+
+      try {
+        await createAuditLog({
+          action: 'PRINT_BUSINESS_CLEARANCE',
+          module: 'BUSINESS_CLEARANCE',
+          recordId: updatedDoc.bcIdNo || updatedDoc._id,
+          user: `${currentUser?.username || 'admin'} (${role})`,
+          details: `Printed Business Clearance for ${updatedDoc.businessName || 'Business'}`,
+        });
+      } catch (auditErr) {
+        console.warn('Bumagsak ang audit log sa business clearance print:', auditErr);
+      }
+
+      if (typeof forceSyncToRemote === 'function') {
+        await forceSyncToRemote();
+      }
+    }
+
+    // Patakbuhin ang browser print dialog
+    setTimeout(() => {
+      window.print();
+    }, 300);
+  } catch (err) {
+    console.error('Bumagsak ang DB update (magpapatuloy pa rin sa pag-print):', err);
+    setTimeout(() => {
+      window.print();
+    }, 300);
+  }
+};
   const [blotterList, setBlotterList] = useState(() => {
   try {
     const saved = localStorage.getItem('bustrac_blotter');
@@ -473,6 +614,18 @@ const initials = displayName
 
   const [syncState, setSyncState] = useState(navigator.onLine ? 'synced' : 'offline');
   
+    const [toasts, setToasts] = useState([]);
+
+  const showToast = (message, type = 'success') => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, message, type }]);
+    
+    // Auto-dismiss after 4 seconds
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
+
   useEffect(() => {
   const handleOnline = () => {
   setSyncState('syncing');
@@ -491,6 +644,25 @@ const initials = displayName
     window.removeEventListener('offline', handleOffline);
   };
   }, []);
+
+  // ── POUCHDB PERFORMANCE INDEXING ──
+useEffect(() => {
+  const setupIndexes = async () => {
+    try {
+      // Check kung may function na createIndex bago tawagin
+      if (typeof db?.createIndex === 'function') {
+        await db.createIndex({ index: { fields: ['type', 'status', 'createdAt'] } });
+        await db.createIndex({ index: { fields: ['clearanceNo', 'type'] } });
+        console.log(' PouchDB indexes created successfully.');
+      }
+    } catch (err) {
+      // Silent fail lang, hindi ito critical dahil gumagana ang allDocs
+      console.warn('PouchDB index creation skipped:', err.message);
+    }
+  };
+  setupIndexes();
+}, []);
+  
 
   // ── Staff: Blotter Case / Summons State ──
   const [staffCase, setStaffCase] = useState({
@@ -1002,7 +1174,7 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   const staffSaveComplaintChanges = () => {
     const { compName, respName, narrative, incidentType, status, location } = staffCase;
     if (!compName || !respName || !narrative) {
-      alert('Please fill in all required fields (names and narrative)');
+      showToast('Please fill in all required fields (names and narrative)');
       return;
     }
     alert(
@@ -1116,7 +1288,7 @@ const submitAddResident = async (e) => {
     !householdNo?.trim() ||
     !rbiNo?.trim()
   ) {
-    alert('Please fill in all required fields, including RBI ID.');
+    showToast('Please fill in all required fields, including RBI ID.');
     return;
   }
 
@@ -1270,7 +1442,7 @@ const submitAddResident = async (e) => {
     details: `Added new resident record: ${fullName} (${normalizedRbiId})`,
   });
 
-  alert(`Resident added successfully!\n\nResident ID: ${newResidentId}\nRBI ID: ${normalizedRbiId}\nName: ${fullName}`);
+  showToast(`Resident added successfully!\n\nResident ID: ${newResidentId}\nRBI ID: ${normalizedRbiId}\nName: ${fullName}`);
   setResidentForm(EMPTY_RESIDENT);
   nav('residents');
 };
@@ -1280,7 +1452,7 @@ const submitAddResident = async (e) => {
   const { head, address, purok } = householdForm;
 
   if (!head || !address || !purok) {
-    alert('Please fill in all required fields.');
+    showToast('Please fill in all required fields.');
     return;
   }
 
@@ -1320,7 +1492,7 @@ const submitEditHousehold = async (e) => {
   try {
     const { head, address, purok } = householdForm;
     if (!head || !address || !purok) {
-      alert('Please fill in all required fields.');
+      showToast('Please fill in all required fields.');
       return;
     }
 
@@ -1469,7 +1641,7 @@ const saveComplaintChanges = () => {
   const { caseNum, compName, respName, narrative, incidentType, caseStatus, location } = complaint;
   
   if (!compName || !respName || !narrative) {
-    alert('⚠️ Please fill in all required fields (names and narrative)');
+    showToast(' Please fill in all required fields (names and narrative)');
     return;
   }
 
@@ -1958,6 +2130,8 @@ const [clearanceSearch, setClearanceSearch] = useState('');
 const [showClearancePrintModal, setShowClearancePrintModal] = useState(false);
 const [selectedClearanceCert, setSelectedClearanceCert] = useState(null);
 
+const [editingClearanceId, setEditingClearanceId] = useState(null);
+
 // Form State matching legacy fields in modern structure
 const [clearanceForm, setClearanceForm] = useState({
   _id: '',
@@ -2008,42 +2182,110 @@ const fetchClearances = async () => {
   }
 };
 
-// Save or Update Clearance Record
-const handleSaveClearance = async (e) => {
-  e.preventDefault();
-  if (!clearanceForm.fullName.trim() || !clearanceForm.purpose.trim()) {
-    alert('Please fill in the Resident Full Name and Purpose.');
-    return;
-  }
-
+// ── Helper: Kunin ang next ID at i-increment ang sequence (TOTOONG SAVE) ──
+const getNextClearanceSequence = async () => {
   try {
-    const payload = {
-      ...clearanceForm,
-      _id: clearanceForm._id || `brgy_clearance_${Date.now()}`,
-      type: 'barangay_clearance',
-      updatedAt: new Date().toISOString(),
-      createdAt: clearanceForm.createdAt || new Date().toISOString(),
-    };
-
-    if (typeof db !== 'undefined' && db.put) {
-      await db.put(payload);
+    let seqDoc;
+    try {
+      seqDoc = await db.get('seq_brgy_clearance');
+    } catch (err) {
+      if (err.name === 'not_found') {
+        seqDoc = { _id: 'seq_brgy_clearance', lastNumber: 0 };
+      } else {
+        throw err;
+      }
     }
-
-    await fetchClearances();
-    alert(clearanceForm._id ? '✓ Barangay Clearance updated successfully!' : '✓ Barangay Clearance issued successfully!');
-    
-    // Reset Form
-    resetClearanceForm();
+    const nextNumber = (seqDoc.lastNumber || 0) + 1;
+    await db.put({ ...seqDoc, lastNumber: nextNumber });
+    return `BC-2026-${String(nextNumber).padStart(4, '0')}`;
   } catch (err) {
-    console.error('Failed to save barangay clearance:', err);
-    alert('Error saving record to local database.');
+    console.error('Failed to get next sequence:', err);
+    return `BC-2026-${String(Date.now()).slice(-4)}`;
   }
 };
 
-const resetClearanceForm = () => {
-  const nextNo = `BC-2026-${String(clearanceList.length + 1).padStart(4, '0')}`;
+// ── Helper: Peek lang (hindi nag-i-increment) para sa preview sa form ──
+const peekNextClearanceNo = async () => {
+  try {
+    const seqDoc = await db.get('seq_brgy_clearance');
+    return `BC-2026-${String((seqDoc.lastNumber || 0) + 1).padStart(4, '0')}`;
+  } catch (err) {
+    if (err.name === 'not_found') return 'BC-2026-0001';
+    console.warn('Peek sequence failed:', err);
+    return `BC-2026-${String(clearanceList.length + 1).padStart(4, '0')}`;
+  }
+};
+
+
+
+// ── Helper: Peek lang (hindi nag-i-increment) para sa preview sa form ──
+const peekNextBusinessSequence = async () => {
+  try {
+    const seqDoc = await db.get('seq_business_clearance');
+    return String((seqDoc.lastNumber || 155) + 1).padStart(4, '0');
+  } catch (err) {
+    if (err.name === 'not_found') return '0156';
+    console.warn('Peek business sequence failed:', err);
+    return '0156'; // Safe fallback
+  }
+};
+
+// Save or Update Clearance Record
+  const handleSaveClearance = async (e) => {
+    e.preventDefault();
+    if (!clearanceForm.fullName.trim() || !clearanceForm.purpose.trim()) {
+      showToast('Please fill in the Resident Full Name and Purpose.', 'error'); // ⬅️ Toast Error
+      return;
+    }
+    setIsSavingClearance(true); 
+    try {
+      const isEditing = Boolean(editingClearanceId);
+      const docId = isEditing ? editingClearanceId : `brgy_clearance_${Date.now()}`;
+      const newClearanceNo = isEditing ? clearanceForm.clearanceNo : await getNextClearanceSequence();
+      
+      const payload = {
+        ...clearanceForm,
+        clearanceNo: newClearanceNo,
+        _id: docId,
+        type: 'barangay_clearance',
+        updatedAt: new Date().toISOString(),
+        createdAt: clearanceForm.createdAt || new Date().toISOString(),
+      };
+      
+      if (!isEditing) delete payload._rev;
+      if (typeof db !== 'undefined' && db.put) {
+        await db.put(payload);
+      }
+
+      if (typeof createAuditLog === 'function') {
+        await createAuditLog({
+          action: isEditing ? 'UPDATE' : 'CREATE',
+          module: 'BARANGAY_CLEARANCE',
+          recordId: newClearanceNo,
+          details: `${isEditing ? 'Updated' : 'Issued'} Barangay Clearance ${newClearanceNo} for ${clearanceForm.fullName}`,
+        });
+      }
+
+      showToast(isEditing ? 'Barangay Clearance updated successfully!' : `Barangay Clearance ${newClearanceNo} issued successfully!`, 'success');
+      
+      await resetClearanceForm();
+      window.scrollTo({ top: 0, behavior: 'smooth' }); 
+    } catch (err) {
+      console.error('Failed to save barangay clearance:', err);
+      showToast(`Error saving record: ${err.message || 'Database error'}`, 'error');
+      } finally {
+       setIsSavingClearance(false);
+    }
+  };
+
+
+const resetClearanceForm = async () => {
+  setEditingClearanceId(null);
+  const nextNo = await peekNextClearanceNo();
+
   setClearanceForm({
     _id: '',
+    _rev: undefined,
     clearanceNo: nextNo,
     fullName: '',
     purpose: '',
@@ -2064,7 +2306,29 @@ const resetClearanceForm = () => {
 };
 
 const handleEditClearance = (rec) => {
-  setClearanceForm(rec);
+  setEditingClearanceId(rec._id);
+  setClearanceForm({
+    _id: rec._id || '',
+    _rev: rec._rev || undefined, // Required for PouchDB updates
+    clearanceNo: rec.clearanceNo || '',
+    dateIssued: rec.dateIssued || new Date().toISOString().split('T')[0],
+    fullName: rec.fullName || '',
+    purpose: rec.purpose || '',
+    remarks: rec.remarks || 'No Derogatory Record',
+    validity: rec.validity || '(6) Six Months Validity',
+    hasBlotterRecord: rec.hasBlotterRecord || false,
+    orNo: rec.orNo || '',
+    amtPaid: rec.amtPaid || '',
+    ctcNo: rec.ctcNo || '',
+    ctcAmtPaid: rec.ctcAmtPaid || '',
+    ctcDateIssued: rec.ctcDateIssued || '',
+    ctcPlaceIssued: rec.ctcPlaceIssued || '',
+    secretary: rec.secretary || '',
+    captain: rec.captain || '',
+    createdAt: rec.createdAt || new Date().toISOString()
+  });
+
+  // Smooth scroll to top form section
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
@@ -2478,10 +2742,10 @@ useEffect(() => {
         .map(mapDocToBlotter)
         .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
 
-      console.log('📌 Consolidated Admin Blotters Loaded:', blotterDocs.length, blotterDocs);
+      console.log(' Consolidated Admin Blotters Loaded:', blotterDocs.length, blotterDocs);
       setBlotterList(blotterDocs);
     } catch (err) {
-      console.error('❌ Error fetching blotter records from PouchDB:', err);
+      console.error(' Error fetching blotter records from PouchDB:', err);
     }
   };
 
@@ -3649,7 +3913,6 @@ const handlePrintFormat = (format) => {
     alert('Please select a certificate from the table first.');
     return;
   }
-  // Small delay para ma-render muna ang hidden container
   setTimeout(() => window.print(), 150);
 };
 
@@ -4016,79 +4279,163 @@ useEffect(() => {
 // ── POUCHDB SAVE / UPDATE HANDLER ──
 const handleSaveBusinessClearance = async (e) => {
   e.preventDefault();
-  
-  if (!businessForm.businessName.trim() || !businessForm.lastName.trim()) {
-    alert('Please complete the required Applicant and Business Name fields.');
+
+  // 1. Validate Page 1 Fields
+  if (
+    !businessForm.businessName?.trim() ||
+    !businessForm.lastName?.trim() ||
+    !businessForm.firstName?.trim()
+  ) {
+    showToast(
+      'Please complete the required Applicant and Business Name fields.',
+      'error'
+    );
+    setBusinessTab('page1');
     return;
   }
 
+  // 2. Validate Page 2 Fields (OR No. and Fee)
+  const hasOrNo =
+    businessForm.orNo &&
+    String(businessForm.orNo).trim().length > 0;
+
+  const hasFee =
+    businessForm.clearanceFee !== undefined &&
+    businessForm.clearanceFee !== null &&
+    String(businessForm.clearanceFee).trim().length > 0;
+
+  if (!hasOrNo || !hasFee) {
+    showToast(
+      'Please complete the O.R. Number and Clearance Fee on Page 2.',
+      'error'
+    );
+    setBusinessTab('page2');
+
+    setTimeout(() => {
+      const orInput = document.querySelector(
+        'input[placeholder="e.g. 9876543"]'
+      );
+
+      if (orInput) {
+        orInput.focus();
+      }
+    }, 300);
+
+    return;
+  }
+
+  setIsSavingBusiness(true);
+
   try {
+    const isEditing = Boolean(businessForm._id);
+
+    const docId = isEditing
+      ? businessForm._id
+      : `bus_clearance_${Date.now()}`;
+
+    const newBcIdNo = isEditing
+      ? businessForm.bcIdNo
+      : await getNextBusinessSequence();
+
     const payload = {
       ...businessForm,
-      _id: businessForm._id || `bus_clearance_${Date.now()}`,
+
+      bcIdNo: newBcIdNo,
+      _id: docId,
       type: 'business_clearance',
+
+      clearanceFee: Number(
+        businessForm.clearanceFee || 0
+      ).toFixed(2),
+
+      garbageFee: Number(
+        businessForm.garbageFee || 0
+      ).toFixed(2),
+
       updatedAt: new Date().toISOString(),
-      createdAt: businessForm.createdAt || new Date().toISOString(),
+
+      createdAt:
+        businessForm.createdAt ||
+        new Date().toISOString(),
     };
 
+    // Remove revision when creating a new record
+    if (!isEditing) {
+      delete payload._rev;
+    }
+
+    // Save to local database
     if (typeof db !== 'undefined' && db.put) {
       await db.put(payload);
     }
 
-    // Refresh masterlist automatically
-    await fetchBusinessClearances();
-    
-    alert(businessForm._id ? '✓ Business Clearance updated successfully!' : '✓ Business Clearance entry saved successfully!');
+    // Create audit log
+    try {
+      await createAuditLog({
+        action: isEditing
+          ? 'UPDATE_BUSINESS_CLEARANCE'
+          : 'CREATE_BUSINESS_CLEARANCE',
 
-    // Reset Form & Set Next ID
-    const nextId = String(parseInt(businessForm.bcIdNo || '156') + 1).padStart(4, '0');
-    setBusinessForm({
-      bcIdNo: nextId,
-      lastName: '',
-      firstName: '',
-      middleName: '',
-      contactNo: '',
-      email: '',
-      applicantAddress: '',
-      applicantBgyCityProv: 'Bustrac, Nabua, Camarines Sur',
-      civilStatus: '',
-      occupation: '',
-      nationality: 'Filipino',
-      isFemale: false,
-      remarks: '',
-      photoUrl: null,
-      regDate: new Date().toISOString().split('T')[0],
-      businessName: '',
-      natureOfBusiness: '',
-      businessCategory: '',
-      typeOfBusiness: '',
-      storeAreaSqm: '',
-      businessAddress: '',
-      businessBgyCityProv: 'BUSTRAC, NABUA, CAMARINES SUR',
-      businessContactNo: '',
-      businessEmail: '',
-      cctvEnabled: false,
-      sanitaryWasteDisposal: false,
-      hasFireExtinguisher: false,
-      hasFireExit: false,
-      sanitaryCompliant: false,
-      employeeCount: 0,
-      employeeMasterlistName: '',
-      orNo: '',
-      clearanceFee: '',
-      garbageFee: '',
-    });
+        module: 'BUSINESS_CLEARANCE',
+
+        recordId: newBcIdNo,
+
+        details: `${
+          isEditing ? 'Updated' : 'Created'
+        } Business Clearance ${newBcIdNo} for ${
+          businessForm.businessName
+        }`,
+      });
+    } catch (auditErr) {
+      console.warn(
+        'Audit log failed:',
+        auditErr
+      );
+    }
+
+    // Success notification
+    showToast(
+      isEditing
+        ? 'Business Clearance updated successfully!'
+        : `Business Clearance ${newBcIdNo} saved successfully!`,
+      'success'
+    );
+
+    // Reset form without confirmation after successful save/update
+    await resetBusinessForm(true);
+
+    // Return to Page 1
     setBusinessTab('page1');
+
+    // Scroll back to the top
+    window.scrollTo({
+      top: 0,
+      behavior: 'smooth',
+    });
+
   } catch (err) {
-    console.error('Failed to save/update Business Clearance record:', err);
-    alert('Error saving record to local database.');
+    console.error(
+      'Failed to save/update Business Clearance record:',
+      err
+    );
+
+    showToast(
+      'Error saving record to local database: ' +
+        err.message,
+      'error'
+    );
+
+  } finally {
+    setIsSavingBusiness(false);
   }
 };
 
-
 const handleEditBusinessClearance = (record) => {
-  if (!record) return;
-
+  if (!record || !record._id) {
+    showToast('Error: Cannot edit. Record ID is missing.', 'error');
+    return;
+  }
+  
   setBusinessForm({
     bcIdNo: record.bcIdNo || '',
     civilStatus: record.civilStatus || '',
@@ -4103,7 +4450,7 @@ const handleEditBusinessClearance = (record) => {
     nationality: record.nationality || '',
     isFemale: record.isFemale || false,
     remarks: record.remarks || '',
-    photoUrl: record.photoUrl || '',
+    photoUrl: record.photoUrl || null,
     regDate: record.regDate || '',
     storeAreaSqm: record.storeAreaSqm || '',
     businessName: record.businessName || '',
@@ -4119,46 +4466,86 @@ const handleEditBusinessClearance = (record) => {
     hasFireExtinguisher: record.hasFireExtinguisher || false,
     hasFireExit: record.hasFireExit || false,
     sanitaryCompliant: record.sanitaryCompliant || false,
-    employeeCount: record.employeeCount || '',
+    employeeCount: record.employeeCount || 0,
     employeeMasterlistName: record.employeeMasterlistName || '',
     orNo: record.orNo || '',
     orDateIssued: record.orDateIssued || new Date().toISOString().split('T')[0],
     clearanceFee: record.clearanceFee || '',
     garbageFee: record.garbageFee || '',
-    _id: record._id,
-    _rev: record._rev
+    _id: record._id,   
+    _rev: record._rev   
   });
 
-  setBusinessModalMode('edit');
-  setIsBusinessModalOpen(true);
+  setBusinessTab('page1'); 
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  showToast('Record loaded for editing.', 'success');
+
+    // Scroll smoothly papunta sa form after ng state update
+  setTimeout(() => {
+    if (businessFormRef.current) {
+      businessFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      window.scrollTo({ top: 0, behavior: 'smooth' }); // Fallback
+    }
+  }, 100); // 100ms delay para siguradong na-render na ang Page 1
 };
 
+// ── RESET BUSINESS CLEARANCE FORM ──
+const resetBusinessForm = async (skipConfirm = false) => {
+  if (!skipConfirm && (businessForm.businessName.trim() || businessForm.lastName.trim() || businessForm.firstName.trim())) {
+    if (!window.confirm('Are you sure you want to clear the form? All unsaved data will be lost.')) {
+      return;
+    }
+  }
+
+  const nextBcIdNo = await peekNextBusinessSequence();
+  setBusinessForm({
+    bcIdNo: nextBcIdNo,
+    lastName: '',
+    firstName: '',
+    middleName: '',
+    contactNo: '',
+    email: '',
+    applicantAddress: '',
+    applicantBgyCityProv: 'Bustrac, Nabua, Camarines Sur',
+    civilStatus: '',
+    occupation: '',
+    nationality: 'Filipino',
+    isFemale: false,
+    remarks: '',
+    photoUrl: null,
+    regDate: new Date().toISOString().split('T')[0],
+    businessName: '',
+    natureOfBusiness: '',
+    businessCategory: '',
+    typeOfBusiness: '',
+    storeAreaSqm: '',
+    businessAddress: '',
+    businessBgyCityProv: 'BUSTRAC, NABUA, CAMARINES SUR',
+    businessContactNo: '',
+    businessEmail: '',
+    cctvEnabled: false,
+    sanitaryWasteDisposal: false,
+    hasFireExtinguisher: false,
+    hasFireExit: false,
+    sanitaryCompliant: false,
+    employeeCount: 0,
+    employeeMasterlistName: '',
+    orNo: '',
+    orDateIssued: new Date().toISOString().split('T')[0],
+    clearanceFee: '',
+    garbageFee: '',
+    secretary: settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
+    captain: settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
+    _id: '',
+    _rev: undefined
+  });
+  setBusinessTab('page1');
+};
 
 const [printingCert, setPrintingCert] = useState(null);
 
-const handlePrintBusinessClearance = (record) => {
-  if (!record) return;
 
-  setSelectedCertificate({
-    ...record,
-    certType: 'Business Clearance',
-    certificateType: 'Business Clearance',
-    applicantName: `${record.firstName || ''} ${record.lastName || ''}`.trim(),
-    purpose: record.natureOfBusiness || 'Business Clearance Registration'
-  });
-
-  if (typeof setSelectedPrintCertFn === 'function') {
-    setSelectedPrintCertFn(record);
-  }
-
-  setTimeout(() => {
-    if (typeof handlePrintDocument === 'function') {
-      handlePrintDocument(record);
-    } else {
-      window.print();
-    }
-  }, 300);
-};
 
 const handleOpenIndigencyPrintModal = (record) => {
   setSelectedIndigencyCert(record);
@@ -4695,6 +5082,34 @@ const handleGenerateExcelReport = (moduleType) => {
       }));
       break;
 
+    case 'clearances':
+      exportData = (clearanceList || []).map(c => ({
+        'Clearance No': c.clearanceNo || 'N/A',
+        'Full Name': c.fullName || 'N/A',
+        'Purpose': c.purpose || 'N/A',
+        'Date Issued': c.dateIssued || 'N/A',
+        'O.R. No.': c.orNo || 'N/A',
+        'Amount Paid (₱)': parseFloat(c.amtPaid || 0).toFixed(2),
+        'CTC No.': c.ctcNo || 'N/A',
+        'Blotter Status': c.hasBlotterRecord ? 'With Active Case' : 'Clean Record'
+      }));
+      break;
+    
+    case 'business_clearances':
+      exportData = (businessMasterlist || []).map(b => ({
+        'BC ID No': b.bcIdNo || 'N/A',
+        'Business Name': b.businessName || 'N/A',
+        'Owner Name': `${b.lastName || ''}, ${b.firstName || ''} ${b.middleName || ''}`.trim() || 'N/A',
+        'Nature of Business': b.natureOfBusiness || 'N/A',
+        'Business Address': b.businessAddress || 'N/A',
+        'Date Registered': b.regDate || 'N/A',
+        'O.R. No.': b.orNo || 'N/A',
+        'Clearance Fee (₱)': parseFloat(b.clearanceFee || 0).toFixed(2),
+        'Garbage Fee (₱)': parseFloat(b.garbageFee || 0).toFixed(2),
+        'Status': b.status || 'Active'
+      }));
+      break;
+
     default:
       alert('Pumili ng tamang report type.');
       return;
@@ -4729,6 +5144,12 @@ const closePrint = useCallback(() => {
   setPrintData(null);
 }, []);
 
+const handleTriggerPrint = () => {
+  setTimeout(() => {
+    window.print();
+  }, 150);
+};
+
 const clearSelectedCert = useCallback(() => {
   setSelectedCertificate(null);
   const url = new URL(window.location.href);
@@ -4750,7 +5171,7 @@ const handleSaveBlotter = async (e) => {
 
   // Detailed Required Fields Validation with Auto-Focus
   if (!blotterForm.date) {
-    alert('⚠️ Please select the Date of Incident.');
+    showToast(' Please select the Date of Incident.');
     document.getElementById('blotter-date')?.focus();
     return;
   }
@@ -5228,6 +5649,126 @@ const [settingsForm, setSettingsForm] = useState({
 
   fetchBarangaySettings();
 }, []);
+
+// ── BARANGAY CLEARANCE: REAL-TIME POUCHDB LISTENER ──
+useEffect(() => {
+  const loadClearances = async () => {
+    try {
+      if (!db || typeof db.allDocs !== 'function') {
+        console.warn('PouchDB not ready for clearances');
+        return;
+      }
+      const result = await db.allDocs({
+        include_docs: true,
+        startkey: 'brgy_clearance_',
+        endkey: 'brgy_clearance_\uffff'
+      });
+      const docs = result.rows.map(r => r.doc).filter(Boolean);
+      setClearanceList(docs);
+    } catch (err) {
+      console.error('Failed to fetch barangay clearances:', err);
+    }
+  };
+
+  loadClearances();
+
+  const changes = db.changes({
+    since: 'now',
+    live: true,
+    include_docs: true
+  }).on('change', (change) => {
+    if (change.doc && change.doc._id && change.doc._id.startsWith('brgy_clearance_')) {
+      setClearanceList(prev => {
+        const filtered = prev.filter(c => c._id !== change.doc._id);
+        if (change.deleted) return filtered;
+        return [change.doc, ...filtered];
+      });
+    }
+  }).on('error', (err) => {
+    console.error('Barangay clearance changes error:', err);
+  });
+
+  return () => changes.cancel();
+}, []);
+
+// ── BUSINESS CLEARANCE: REAL-TIME POUCHDB LISTENER ──
+useEffect(() => {
+  const loadBusiness = async () => {
+    try {
+      if (!db || typeof db.allDocs !== 'function') {
+        console.warn('PouchDB not ready for business clearances');
+        return;
+      }
+      const result = await db.allDocs({
+        include_docs: true,
+        startkey: 'bus_clearance_',
+        endkey: 'bus_clearance_\uffff'
+      });
+      const docs = result.rows.map(r => r.doc).filter(Boolean);
+      setBusinessMasterlist(docs);
+    } catch (err) {
+      console.error('Failed to fetch business clearances:', err);
+    }
+  };
+
+  loadBusiness();
+
+    const changes = db.changes({ since: 'now', live: true, include_docs: true })
+    .on('change', (change) => {
+      if (change.doc && change.doc._id && change.doc._id.startsWith('bus_clearance_')) {
+        setBusinessMasterlist((prev) => {
+          const filtered = prev.filter((c) => c._id !== change.doc._id);
+          if (change.deleted) return filtered;
+          return [change.doc, ...filtered];
+        });
+      }
+    })
+    .on('error', (err) => {
+      console.error('Business clearance changes error:', err);
+    });
+
+  return () => {
+    changes.cancel();
+  };
+}, []);
+
+useEffect(() => {
+  if (screen === 'business_clearance' && !businessForm._id) {
+    peekNextBusinessSequence().then(nextId => {
+      setBusinessForm(prev => ({ ...prev, bcIdNo: nextId }));
+    });
+  }
+}, [screen, businessForm._id]);
+
+useEffect(() => {
+  const createIndexes = async () => {
+    try {
+      // Residents index
+      await localDb.createIndex({ 
+        index: { fields: ['type', 'rbiId', 'purok'] }, 
+        name: 'residents_index' 
+      });
+      
+      // Blotter index
+      await localDb.createIndex({ 
+        index: { fields: ['type', 'status', 'dateFiled'] }, 
+        name: 'blotter_index' 
+      });
+      
+      // Certificates index
+      await localDb.createIndex({ 
+        index: { fields: ['type', 'status', 'createdAt'] }, 
+        name: 'certificates_index' 
+      });
+      
+      console.log(' PouchDB indexes created successfully');
+    } catch (err) {
+      console.warn('Index creation skipped (may already exist):', err.message);
+    }
+  };
+  
+  createIndexes();
+}, []); 
 
   // ─────────────────────────────────────────────
   // RENDER
@@ -7471,6 +8012,7 @@ const [settingsForm, setSettingsForm] = useState({
                     setSelectedPrintCert={setSelectedPrintCert}
                     printMode={printMode}
                     setPrintMode={setPrintMode}
+                    showToast={showToast}
                   />
                 )}
 
@@ -7511,7 +8053,7 @@ const [settingsForm, setSettingsForm] = useState({
 
                           <div className="fg" style={{ marginBottom: '16px' }}>
                             <label className="fl">PURPOSE OF CLEARANCE *</label>
-                            <input type="text" className="fc" required placeholder="e.g. Employment Requirement, Local Travel, License" value={clearanceForm.purpose} onChange={(e) => setClearanceForm({ ...clearanceForm, purpose: e.target.value })} />
+                            <input type="text" className="fc" required placeholder="e.g. Employment Requirement" value={clearanceForm.purpose} onChange={(e) => setClearanceForm({ ...clearanceForm, purpose: e.target.value.toUpperCase() })} />
                           </div>
 
                           <div className="fg2" style={{ marginBottom: '20px' }}>
@@ -7641,20 +8183,55 @@ const [settingsForm, setSettingsForm] = useState({
 
                       {/* FORM ACTION BUTTONS */}
                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginBottom: '32px', padding: '20px', background: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)' }}>
-                        <button type="button" className="btn btn-g" onClick={resetClearanceForm} style={{ padding: '12px 24px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                        
+                        {/* Clear Form Button */}
+                        <button 
+                          type="button" 
+                          className="btn btn-g" 
+                          onClick={resetClearanceForm} 
+                          disabled={isSavingClearance}
+                          style={{ padding: '12px 24px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', opacity: isSavingClearance ? 0.6 : 1 }}
+                        >
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <polyline points="1 4 1 10 7 10" />
                             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
                           </svg>
                           Clear Form
                         </button>
-                        <button type="submit" className="btn btn-p" style={{ padding: '12px 28px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)' }}>
-                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                            <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                            <polyline points="17 21 17 13 7 13 7 21" />
-                            <polyline points="7 3 7 8 15 8" />
-                          </svg>
-                          Save & Issue Clearance
+
+                        <button 
+                          type="submit" 
+                          className="btn btn-p" 
+                          disabled={isSavingClearance}
+                          style={{ 
+                            padding: '12px 28px', 
+                            fontWeight: 700, 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '10px', 
+                            boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
+                            opacity: isSavingClearance ? 0.7 : 1,
+                            cursor: isSavingClearance ? 'not-allowed' : 'pointer',
+                            transition: 'all 0.2s ease'
+                          }}
+                        >
+                          {isSavingClearance ? (
+                            <>
+                              {/* Loading Spinner */}
+                              <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
+                              Saving...
+                            </>
+                          ) : (
+                            <>
+                              {/* Normal Icon */}
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                                <polyline points="17 21 17 13 7 13 7 21" />
+                                <polyline points="7 3 7 8 15 8" />
+                              </svg>
+                              Save & Issue Clearance
+                            </>
+                          )}
                         </button>
                       </div>
                     </form>
@@ -7705,6 +8282,20 @@ const [settingsForm, setSettingsForm] = useState({
                               {filteredClearances.length} of {clearanceList.length}
                             </span>
                           </h4>
+                           
+                          <button 
+                            type="button" 
+                            className="btn btn-g" 
+                            onClick={() => handleGenerateExcelReport('clearances')} 
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '42px', fontSize: '13px' }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <path d="M7 10l5 5 5-5" />
+                              <path d="M12 15V3" />
+                            </svg>
+                            Export Excel
+                          </button>
                           <div style={{ position: 'relative', width: '350px', maxWidth: '100%' }}>
                             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" 
                               style={{ 
@@ -7736,9 +8327,9 @@ const [settingsForm, setSettingsForm] = useState({
                         </div>
                         
                         {/* Table Content */}
-                        <div style={{ overflowX: 'auto' }}>
+                        <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '65vh' }}>
                           <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse', textAlign: 'left' }}>
-                            <thead>
+                            <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
                               <tr style={{ background: 'var(--surface2)', borderBottom: '2px solid var(--border)' }}>
                                 <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', whiteSpace: 'nowrap' }}>Clearance No.</th>
                                 <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Resident Full Name</th>
@@ -7876,7 +8467,7 @@ const [settingsForm, setSettingsForm] = useState({
                     </div>
 
                     {/* SINGLE FORM WRAPPER FOR BOTH TABS */}
-                    <form onSubmit={handleSaveBusinessClearance}>
+                    <form onSubmit={handleSaveBusinessClearance} noValidate>
                       
                       {/* ── PAGE 1 CONTENT ── */}
                       <div style={{ display: businessTab === 'page1' ? 'block' : 'none' }}>
@@ -7902,11 +8493,11 @@ const [settingsForm, setSettingsForm] = useState({
                             <div className="fg3" style={{ marginBottom: '10px' }}>
                               <div className="fg" style={{ marginBottom: 0 }}>
                                 <label className="fl">LAST NAME *</label>
-                                <input type="text" className="fc" required value={businessForm.lastName} onChange={(e) => setBusinessForm({ ...businessForm, lastName: e.target.value })} />
+                                <input type="text" className="fc" value={businessForm.lastName} onChange={(e) => setBusinessForm({ ...businessForm, lastName: e.target.value.toUpperCase() })} />
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
                                 <label className="fl">FIRST NAME *</label>
-                                <input type="text" className="fc" required value={businessForm.firstName} onChange={(e) => setBusinessForm({ ...businessForm, firstName: e.target.value })} />
+                                <input type="text" className="fc" value={businessForm.firstName} onChange={(e) => setBusinessForm({ ...businessForm, firstName: e.target.value.toUpperCase() })} />
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
                                 <label className="fl">MIDDLE NAME</label>
@@ -8002,13 +8593,13 @@ const [settingsForm, setSettingsForm] = useState({
 
                             <div className="fg" style={{ marginBottom: '10px' }}>
                               <label className="fl">BUSINESS NAME *</label>
-                              <input type="text" className="fc" required placeholder="e.g. Bustrac Convenience Store" value={businessForm.businessName} onChange={(e) => setBusinessForm({ ...businessForm, businessName: e.target.value })} />
+                              <input type="text" className="fc" placeholder="e.g. Bustrac Convenience Store" value={businessForm.businessName} onChange={(e) => setBusinessForm({ ...businessForm, businessName: e.target.value.toUpperCase() })} />
                             </div>
 
                             <div className="fg3" style={{ marginBottom: '10px' }}>
                               <div className="fg" style={{ marginBottom: 0 }}>
                                 <label className="fl">NATURE OF BUSINESS</label>
-                                <input type="text" className="fc" placeholder="Retail / Wholesale" value={businessForm.natureOfBusiness} onChange={(e) => setBusinessForm({ ...businessForm, natureOfBusiness: e.target.value })} />
+                                <input type="text" className="fc" placeholder="Retail / Wholesale" value={businessForm.natureOfBusiness} onChange={(e) => setBusinessForm({ ...businessForm, natureOfBusiness: e.target.value.toUpperCase() })} />
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
                                 <label className="fl">BUSINESS CATEGORY</label>
@@ -8075,10 +8666,61 @@ const [settingsForm, setSettingsForm] = useState({
 
                         {/* ACTION BUTTONS (PAGE 1) */}
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
-                          <button type="button" className="btn btn-g" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}> SAVE AS DRAFT
+                          <button 
+                            type="button" 
+                            className="btn btn-g" 
+                            onClick={() => showToast('Draft saving feature is coming soon!', 'info')}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                          > 
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                              <polyline points="17 21 17 13 7 13 7 21" />
+                              <polyline points="7 3 7 8 15 8" />
+                            </svg>
+                            Save as Draft 
                           </button>
-                          <button type="button" className="btn btn-p" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }} onClick={() => setBusinessTab('page2')}>
-                            Next: O.R. & Assessment Details 
+
+                          <button 
+                            type="button" 
+                            className="btn btn-g" 
+                            onClick={() => {
+                              if (businessForm.businessName.trim() || businessForm.lastName.trim() || businessForm.firstName.trim()) {
+                                if (window.confirm('Are you sure you want to cancel? All unsaved data will be lost.')) {
+                                  resetBusinessForm();
+                                }
+                              } else {
+                                resetBusinessForm();
+                              }
+                            }}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                          >
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <line x1="18" y1="6" x2="6" y2="18" />
+                              <line x1="6" y1="6" x2="18" y2="18" />
+                            </svg>
+                            Cancel
+                          </button>
+
+                          {/* NEXT BUTTON (Auto-disabled kung kulang ang required fields) */}
+                          <button 
+                            type="button" 
+                            className="btn btn-p" 
+                            disabled={!businessForm.businessName?.trim() || !businessForm.lastName?.trim() || !businessForm.firstName?.trim()} 
+                            style={{ 
+                              display: 'inline-flex', 
+                              alignItems: 'center', 
+                              gap: '6px', 
+                              opacity: (!businessForm.businessName?.trim() || !businessForm.lastName?.trim() || !businessForm.firstName?.trim()) ? 0.5 : 1, 
+                              cursor: (!businessForm.businessName?.trim() || !businessForm.lastName?.trim() || !businessForm.firstName?.trim()) ? 'not-allowed' : 'pointer',
+                              transition: 'all 0.2s ease'
+                            }} 
+                            onClick={() => setBusinessTab('page2')}
+                          >
+                            Next: O.R. & Assessment Details
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M5 12h14" />
+                              <path d="M12 5l7 7-7 7" />
+                            </svg>
                           </button>
                         </div>
                       </div>
@@ -8152,16 +8794,74 @@ const [settingsForm, setSettingsForm] = useState({
                           </div>
 
                           {/* ACTION BUTTONS (PAGE 2) */}
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
-                            <button type="button" className="btn btn-g" onClick={() => setBusinessTab('page1')}>
-                              ◄ Back to Page 1
+                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
+                            {/* Back to Page 1 Button */}
+                            <button 
+                              type="button" 
+                              className="btn btn-g" 
+                              onClick={() => setBusinessTab('page1')}
+                              style={{ padding: '12px 24px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M19 12H5" />
+                                <path d="M12 19l-7-7 7-7" />
+                              </svg>
+                              Back to Page 1
                             </button>
-                            <button type="submit" className="btn btn-p" style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"></path>
-                                <polyline points="17 21 17 13 7 13 7 21"></polyline>
-                                <polyline points="7 3 7 8 15 8"></polyline>
-                              </svg> Save & Complete Record
+
+                            {/* Clear Form Button */}
+                            <button 
+                              type="button" 
+                              className="btn btn-g" 
+                              onClick={() => {
+                                if (businessForm.businessName.trim() || businessForm.lastName.trim() || businessForm.firstName.trim()) {
+                                  if (window.confirm('Are you sure you want to clear the form? All unsaved data will be lost.')) {
+                                    resetBusinessForm();
+                                  }
+                                } else {
+                                  resetBusinessForm(); 
+                                }
+                              }} 
+                              style={{ padding: '12px 24px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px' }}
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <polyline points="1 4 1 10 7 10" />
+                                <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                              </svg> 
+                              Clear Form 
+                            </button>
+
+                            <button 
+                              type="submit" 
+                              className="btn btn-p" 
+                              disabled={isSavingBusiness} 
+                              style={{ 
+                                padding: '12px 28px', 
+                                fontWeight: 700, 
+                                display: 'flex', 
+                                alignItems: 'center', 
+                                gap: '10px', 
+                                boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)', 
+                                opacity: isSavingBusiness ? 0.7 : 1, 
+                                cursor: isSavingBusiness ? 'not-allowed' : 'pointer', 
+                                transition: 'all 0.2s ease' 
+                              }}
+                            >
+                              {isSavingBusiness ? (
+                                <>
+                                  <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
+                                  {businessForm._id ? 'Updating...' : 'Saving...'}
+                                </>
+                              ) : (
+                                <>
+                                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                                    <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                                    <polyline points="17 21 17 13 7 13 7 21" />
+                                    <polyline points="7 3 7 8 15 8" />
+                                  </svg>
+                                  {businessForm._id ? 'Update Business Clearance' : 'Save & Issue Business Clearance'}
+                                </>
+                              )}
                             </button>
                           </div>
                         </div>
@@ -8174,11 +8874,21 @@ const [settingsForm, setSettingsForm] = useState({
                         <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700 }}>
                           Registered Business Clearances ({businessMasterlist.length})
                         </h4>
+                         <button type="button" className="btn btn-g" onClick={() => handleGenerateExcelReport('business_clearances')} style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '36px', fontSize: '12px' }}>
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                            <path d="M7 10l5 5 5-5" />
+                            <path d="M12 15V3" />
+                          </svg>
+                          Export Excel
+                        </button>
                       </div>
-                      <div style={{ overflowX: 'auto' }}>
+                      
+                      
+                      <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '50vh' }}>
                         <table style={{ width: '100%', fontSize: '12px', borderCollapse: 'collapse', textAlign: 'left' }}>
-                          <thead>
-                            <tr style={{ background: 'var(--surface)', borderBottom: '2px solid var(--border)' }}>
+                          <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--surface)' }}>
+                            <tr style={{ borderBottom: '2px solid var(--border)' }}>
                               <th style={{ padding: '8px' }}>BC ID</th>
                               <th style={{ padding: '8px' }}>Business Name</th>
                               <th style={{ padding: '8px' }}>Owner Name</th>
@@ -8189,64 +8899,69 @@ const [settingsForm, setSettingsForm] = useState({
                             </tr>
                           </thead>
                           <tbody>
-                          {businessMasterlist.length === 0 ? (
-                            <tr>
-                              <td colSpan="7" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
-                                No business clearance records found in local database.
-                              </td>
-                            </tr>
-                          ) : (
-                            businessMasterlist.map((rec, index) => (
-                              <tr key={rec._id || rec.id || `bus-${index}`} style={{ borderBottom: '1px solid var(--border)' }}>
-                                <td style={{ padding: '8px', fontWeight: 'bold' }}>{rec.bcIdNo || 'N/A'}</td>
-                                <td style={{ padding: '8px' }}>{rec.businessName || 'N/A'}</td>
-                                <td style={{ padding: '8px' }}>{`${rec.lastName || ''}, ${rec.firstName || ''}`.replace(/^,\s*/, '') || 'N/A'}</td>
-                                <td style={{ padding: '8px' }}>{rec.natureOfBusiness || 'N/A'}</td>
-                                <td style={{ padding: '8px' }}>{rec.regDate || 'N/A'}</td>
-                                <td style={{ padding: '8px' }}>{rec.orNo || 'N/A'}</td>
-                                <td style={{ padding: '8px', textAlign: 'center' }}>
-                                  <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
-                                    {/* Edit Button */}
-                                    <button
-                                      type="button"
-                                      className="btn btn-g"
-                                      style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        handleEditBusinessClearance(rec);
-                                      }}
-                                    >
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                        <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                      </svg>
-                                      Edit
-                                    </button>
-
-                                    {/* Print Button */}
-                                    <button
-                                      type="button"
-                                      className="btn btn-p"
-                                      style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                                      onClick={(e) => {
-                                        e.preventDefault();
-                                        e.stopPropagation();
-                                        handlePrintBusinessClearance(rec);
-                                      }}
-                                    >
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <polyline points="6 9 6 2 18 2 18 9"></polyline>
-                                        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path> <rect x="6" y="14" width="12" height="8"></rect>
-                                      </svg>
-                                      Print
-                                    </button>
-                                  </div>
+                            {businessMasterlist.length === 0 ? (
+                              <tr>
+                                <td colSpan="7" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
+                                  No business clearance records found in local database.
                                 </td>
                               </tr>
-                            ))
-                          )}
-                        </tbody>
+                            ) : (
+                              businessMasterlist.map((rec, index) => (
+                                <tr key={rec._id || rec.id || `bus-${index}`} style={{ borderBottom: '1px solid var(--border)' }}>
+                                  <td style={{ padding: '8px', fontWeight: 'bold' }}>{rec.bcIdNo || 'N/A'}</td>
+                                  <td style={{ padding: '8px' }}>{rec.businessName || 'N/A'}</td>
+                                  <td style={{ padding: '8px' }}>
+                                    {rec.ownerName || `${rec.lastName || ''}, ${rec.firstName || ''}`.replace(/^,\s*/, '') || 'N/A'}
+                                  </td>
+                                  <td style={{ padding: '8px' }}>{rec.natureOfBusiness || 'N/A'}</td>
+                                  <td style={{ padding: '8px' }}>{rec.regDate || rec.dateIssued || 'N/A'}</td>
+                                  <td style={{ padding: '8px' }}>{rec.orNo || rec.orNumber || 'N/A'}</td>
+                                  <td style={{ padding: '8px', textAlign: 'center' }}>
+                                    <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
+                                      {/* Edit Button */}
+                                      <button
+                                        type="button"
+                                        className="btn btn-g"
+                                        style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          if (typeof handleEditBusinessClearance === 'function') {
+                                            handleEditBusinessClearance(rec);
+                                          }
+                                        }}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                        </svg>
+                                        Edit
+                                      </button>
+
+                                      {/* Print Button */}
+                                      <button
+                                        type="button"
+                                        className="btn btn-p"
+                                        style={{ padding: '4px 8px', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                        onClick={(e) => {
+                                          e.preventDefault();
+                                          e.stopPropagation();
+                                          handlePrintBusinessClearance(rec);
+                                        }}
+                                      >
+                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <polyline points="6 9 6 2 18 2 18 9"></polyline>
+                                          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
+                                          <rect x="6" y="14" width="12" height="8"></rect>
+                                        </svg>
+                                        Print
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))
+                            )}
+                          </tbody>
                         </table>
                       </div>
                     </div>
@@ -11414,174 +12129,96 @@ const [settingsForm, setSettingsForm] = useState({
         </div>{/* /main */}
 
         {/* ═══ 1. GENERAL PRINT MODAL (FOR ALL CERTIFICATES / PERMITS) ═══ */}
-      {showPrintModal && selectedPrintCert && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.85)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          zIndex: 99999,
-          backdropFilter: 'blur(6px)',
-          padding: '20px',
-        }}>
-          <div style={{
-            background: 'var(--surface, #1e293b)',
-            color: 'var(--text, #f8fafc)',
-            borderRadius: '12px',
-            width: '100%',
-            maxWidth: '900px',
-            maxHeight: '92vh',
-            display: 'flex',
-            flexDirection: 'column',
-            padding: '20px',
-            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
-            border: '1px solid var(--border, #334155)',
-          }}>
-            {/* Dynamic Print Preview gamit ang A4PreviewWrapper */}
-            <A4PreviewWrapper>
-              <div id="printable-certificate-card" data-print-mode={printMode}>
-                {(() => {
-                  const typeStr = String(
-                    selectedPrintCert.certificateType ||
-                    selectedPrintCert.type ||
-                    selectedPrintCert.clearanceType ||
-                    selectedPrintCert.certType || ''
-                  ).toLowerCase();
-
-                  if (typeStr.includes('business') || typeStr.includes('permit') || selectedPrintCert.businessName) {
-                    return <BusinessPermit data={selectedPrintCert} />;
-                  } else if (typeStr.includes('indigency')) {
-                    return <IndigencyTemplate data={selectedPrintCert} />;
-                  } else if (typeStr.includes('residency') || typeStr.includes('resident')) {
-                    return <ResidencyCertificate data={selectedPrintCert} />;
-                  } else {
-                    return <BarangayClearance data={selectedPrintCert} />;
-                  }
-                })()}
+        {showPrintModal && selectedPrintCert && (
+          <div 
+            className="print-modal-overlay" 
+            style={{ 
+              position: 'fixed', 
+              top: 0, 
+              left: 0, 
+              right: 0, 
+              bottom: 0, 
+              backgroundColor: 'rgba(0, 0, 0, 0.85)', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              zIndex: 99999, 
+              backdropFilter: 'blur(6px)', 
+              padding: '20px', 
+            }} 
+            onClick={() => setShowPrintModal(false)}
+          >
+            <div 
+              className="print-modal-content" 
+              style={{ 
+                background: '#fff', 
+                borderRadius: '12px', 
+                width: '100%', 
+                maxWidth: '900px', 
+                maxHeight: '92vh', 
+                display: 'flex', 
+                flexDirection: 'column', 
+                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', 
+                overflow: 'auto', 
+              }} 
+              onClick={(e) => e.stopPropagation()}
+            >
+              {/* Print Preview Area */}
+              <div style={{ padding: '20px', flex: 1, overflow: 'auto' }}>
+                <div id="printable-certificate-card" data-print-mode={printMode}>
+                  {(() => {
+                    const typeStr = String(
+                      selectedPrintCert.certificateType || 
+                      selectedPrintCert.type || 
+                      selectedPrintCert.clearanceType || 
+                      selectedPrintCert.certType || 
+                      ''
+                    ).toLowerCase();
+                    
+                    if (typeStr.includes('business') || typeStr.includes('permit') || selectedPrintCert.businessName) {
+                      return <BusinessPermit data={selectedPrintCert} />;
+                    } else if (typeStr.includes('indigency')) {
+                      return <IndigencyTemplate data={selectedPrintCert} />;
+                    } else if (typeStr.includes('residency') || typeStr.includes('resident')) {
+                      return <ResidencyCertificate data={selectedPrintCert} />;
+                    } else {
+                      return <BarangayClearance data={selectedPrintCert} />;
+                    }
+                  })()}
+                </div>
               </div>
-            </A4PreviewWrapper>
 
-            {/* Modal Action Controls */}
-            <div className="no-print" style={{
-              display: 'flex',
-              justify: 'flex-end',
-              gap: '10px',
-              marginTop: '16px',
-              paddingTop: '12px',
-              borderTop: '1px solid var(--border, #334155)',
-              flexShrink: 0,
-            }}>
-              <button
-                type="button"
-                className="btn btn-g"
-                onClick={() => setShowPrintModal(false)}
-                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-                Close
-              </button>
-              <button
-                type="button"
-                className="btn btn-p"
-                onClick={handlePrintDocument}
-                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="6 9 6 2 18 2 18 9"></polyline>
-                  <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
-                  <rect x="6" y="14" width="12" height="8"></rect>
-                </svg>
-                Print Document
-              </button>
+              {/* Modal Action Controls - Hidden during print via CSS */}
+              <div className="no-print" style={{ 
+                display: 'flex', 
+                justifyContent: 'flex-end', 
+                gap: '10px', 
+                padding: '16px', 
+                borderTop: '1px solid #e2e8f0', 
+                background: '#f8fafc', 
+              }}>
+                <button 
+                  type="button" 
+                  className="btn btn-g" 
+                  onClick={() => setShowPrintModal(false)} 
+                  style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+                >
+                  Close
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-p" 
+                  onClick={() => window.print()} 
+                  style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                >
+                  🖨️ Print Document
+                </button>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ═══ 2. INDIVIDUAL BARANGAY CLEARANCE PRINT MODAL ═══ */}
-      {showClearancePrintModal && selectedClearanceCert && (
-        <div className="clearance-print-overlay" style={{
-          position: 'fixed',
-          inset: 0,
-          background: 'rgba(0, 0, 0, 0.85)',
-          display: 'flex',
-          alignItems: 'center',
-          justify: 'center',
-          zIndex: 9999,
-          backdropFilter: 'blur(6px)',
-          padding: '20px',
-        }}>
-          <div style={{
-            background: 'var(--surface, #1e293b)',
-            borderRadius: '12px',
-            width: '100%',
-            maxWidth: '880px',
-            maxHeight: '92vh',
-            display: 'flex',
-            flexDirection: 'column',
-            padding: '20px',
-            boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
-            border: '1px solid var(--border, #334155)',
-          }}>
-            {/* Clean Reusable A4 Preview Wrapper */}
-            <A4PreviewWrapper>
-              <div id="printable-certificate-card">
-                <BarangayClearance data={selectedClearanceCert} />
-              </div>
-            </A4PreviewWrapper>
-
-            {/* Action Buttons */}
-            <div className="no-print" style={{
-              display: 'flex',
-              justify: 'flex-end',
-              gap: '10px',
-              marginTop: '16px',
-              paddingTop: '12px',
-              borderTop: '1px solid var(--border, #334155)',
-              flexShrink: 0,
-            }}>
-              <button
-                type="button"
-                className="btn btn-g"
-                onClick={() => setShowClearancePrintModal(false)}
-                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="18" y1="6" x2="6" y2="18"></line>
-                  <line x1="6" y1="6" x2="18" y2="18"></line>
-                </svg>
-                Close
-              </button>
-              <button
-                type="button"
-                className="btn btn-p"
-                onClick={() => {
-                  setTimeout(() => {
-                    window.print();
-                    setTimeout(() => setShowClearancePrintModal(false), 500);
-                  }, 200);
-                }}
-                style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-              >
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="6 9 6 2 18 2 18 9"></polyline>
-                  <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"></path>
-                  <rect x="6" y="14" width="12" height="8"></rect>
-                </svg>
-                Print Certificate
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      
 
       {/* ═══ 3. ADD NEW CTC RECORD MODAL ═══ */}
       {showCtcModal && (
@@ -11745,19 +12382,19 @@ const [settingsForm, setSettingsForm] = useState({
 
       {/* ═══ 5. BLOTTER ACTION MODAL / DIALOG ═══ */}
       {actionModalOpen && (
-        <div style={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          bottom: 0,
-          backgroundColor: 'rgba(0, 0, 0, 0.65)',
-          backdropFilter: 'blur(4px)',
-          display: 'flex',
-          alignItems: 'center',
-          justify: 'center',
-          zIndex: 9999,
-          padding: '16px',
+        <div style={{ 
+          position: 'fixed', 
+          top: 0, 
+          left: 0, 
+          right: 0, 
+          bottom: 0, 
+          backgroundColor: 'rgba(0, 0, 0, 0.65)', 
+          backdropFilter: 'blur(4px)', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center',  
+          zIndex: 9999, 
+          padding: '16px', 
         }}>
           <div className="card" style={{
             width: '100%',
@@ -11947,7 +12584,7 @@ const [settingsForm, setSettingsForm] = useState({
             </div>
 
             <div className="modal-body" style={{ padding: '20px', overflowY: 'auto', flex: 1, display: 'flex', flexDirection: 'column', gap: '16px' }}>
-              <form onSubmit={handleSaveBusinessClearance} id="business-clearance-form">
+              <form onSubmit={handleSaveBusinessClearance} id="business-clearance-form" noValidate> 
                 <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--primary, #3b82f6)', marginBottom: '8px' }}>
                   1. Business Information
                 </div>
@@ -11958,7 +12595,7 @@ const [settingsForm, setSettingsForm] = useState({
                   </div>
                   <div className="fg">
                     <label className="fl">Business Name *</label>
-                    <input type="text" className="fc" required value={businessForm.businessName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessName: e.target.value }))} placeholder="e.g. Macabangon General Store" />
+                    <input type="text" className="fc" value={businessForm.businessName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, businessName: e.target.value.toUpperCase() }))} placeholder="e.g. Macabangon General Store" />
                   </div>
                   <div className="fg">
                     <label className="fl">Nature / Type of Business</label>
@@ -11976,7 +12613,7 @@ const [settingsForm, setSettingsForm] = useState({
                 <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
                   <div className="fg">
                     <label className="fl">First Name *</label>
-                    <input type="text" className="fc" required value={businessForm.firstName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, firstName: e.target.value }))} />
+                    <input type="text" className="fc" value={businessForm.firstName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, firstName: e.target.value.toUpperCase() }))} />
                   </div>
                   <div className="fg">
                     <label className="fl">Middle Name</label>
@@ -11984,7 +12621,7 @@ const [settingsForm, setSettingsForm] = useState({
                   </div>
                   <div className="fg">
                     <label className="fl">Last Name *</label>
-                    <input type="text" className="fc" required value={businessForm.lastName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, lastName: e.target.value }))} />
+                    <input type="text" className="fc" value={businessForm.lastName || ''} onChange={(e) => setBusinessForm(p => ({ ...p, lastName: e.target.value.toUpperCase() }))} />
                   </div>
                 </div>
 
@@ -11994,7 +12631,7 @@ const [settingsForm, setSettingsForm] = useState({
                 <div className="form-grid-2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                   <div className="fg">
                     <label className="fl">O.R. Number *</label>
-                    <input type="text" className="fc" required value={businessForm.orNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orNo: e.target.value }))} placeholder="e.g. 1234567" />
+                    <input type="text" className="fc" value={businessForm.orNo || ''} onChange={(e) => setBusinessForm(p => ({ ...p, orNo: e.target.value }))} placeholder="e.g. 1234567" />
                   </div>
                   <div className="fg">
                     <label className="fl">Clearance Fee (₱)</label>
@@ -12021,19 +12658,129 @@ const [settingsForm, setSettingsForm] = useState({
       )}
 
       {/* ═══ 8. BLOTTER CERTIFICATE PRINT MODAL CALL ═══ */}
-      <BlotterCertificatePrintModal
-        isOpen={isPrintModalOpen}
-        onClose={() => {
-          setIsPrintModalOpen(false);
-          setSelectedBlotter(null);
-        }}
-        blotterData={selectedBlotter ? {
-          ...selectedBlotter,
-          captainName: systemSettings?.punongBarangay || settingsForm.punongBarangay,
-          secretaryName: systemSettings?.luponSecretary || settingsForm.luponSecretary,
-          publicDomain: systemSettings?.publicDomain
-        } : null}
-      />
+      {/* ═══ 8. BLOTTER CERTIFICATE PRINT MODAL CALL ═══ */}
+<BlotterCertificatePrintModal
+  isOpen={isPrintModalOpen}
+  onClose={() => {
+    setIsPrintModalOpen(false);
+    setSelectedBlotter(null);
+  }}
+  blotterData={selectedBlotter ? {
+    ...selectedBlotter,
+    // ✅ Safe Fallback Mappings para maiwasan ang "undefined" errors sa loob ng Modal
+    caseNum: selectedBlotter.caseNum || selectedBlotter.trackingNo || selectedBlotter.id || selectedBlotter._id || 'N/A',
+    complainantName: selectedBlotter.complainantName || selectedBlotter.complainant || 'N/A',
+    respondentName: selectedBlotter.respondentName || selectedBlotter.respondent || 'N/A',
+    dateFiled: selectedBlotter.dateFiled || selectedBlotter.date || 'N/A',
+    timeFiled: selectedBlotter.timeFiled || selectedBlotter.incidentTime || selectedBlotter.time || 'N/A',
+    incidentType: selectedBlotter.incidentType || selectedBlotter.type || 'N/A',
+    narrative: selectedBlotter.narrative || selectedBlotter.details || 'No narrative provided.',
+    location: selectedBlotter.location || selectedBlotter.purok || 'Barangay Bustrac',
+    status: selectedBlotter.status || 'Pending',
+    // ✅ Siguraduhing may laman ang mga signatories
+    captainName: systemSettings?.punongBarangay || settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
+    secretaryName: systemSettings?.luponSecretary || settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
+    publicDomain: systemSettings?.publicDomain || settingsForm?.publicDomain || ''
+  } : null}
+/>
+      
+      {/* ═══ BARANGAY CLEARANCE PRINT MODAL PORTAL ═══ */}
+      {showClearancePrintModal && selectedClearanceCert && createPortal(
+        <div className="clearance-print-overlay">
+          <div className="clearance-modal-content">
+            {/* Printable Area Wrapper */}
+            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', justifyContent: 'center' }}>
+              <A4PreviewWrapper>
+                <div id="printable-certificate-card">
+                  <BarangayClearance data={selectedClearanceCert} />
+                </div>
+              </A4PreviewWrapper>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="no-print modal-actions">
+              <button 
+                type="button" 
+                className="btn btn-g" 
+                onClick={() => setShowClearancePrintModal(false)}
+              >
+                Close
+              </button>
+              <button 
+                type="button" 
+                className="btn btn-p" 
+                onClick={() => window.print()}
+              >
+                Print Certificate
+              </button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+      {/* ═══ BUSINESS CLEARANCE PRINT PORTAL / OVERLAY ═══ */}
+      {showBusinessPrintModal && selectedBusinessCert && createPortal(
+        <div 
+          className="business-print-portal" 
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.85)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 999999, padding: '20px', backdropFilter: 'blur(6px)' }} 
+          onClick={() => setShowBusinessPrintModal(false)}
+        >
+          <div 
+            className="business-print-modal-content" 
+            style={{ background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '950px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', overflow: 'hidden', margin: 'auto' }} 
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Preview Wrapper (Maging transparent ito pag nag-print) */}
+            <div 
+              className="business-print-preview-wrapper" 
+              style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', justifyContent: 'center', backgroundColor: '#525659' }}
+            >
+              <div id="printable-business-certificate-card" style={{ width: '210mm', minHeight: '297mm', backgroundColor: '#ffffff', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
+                <BusinessClearanceTemplate data={selectedBusinessCert} />
+              </div>
+            </div>
+            
+            {/* Action Buttons (Mawawala ito pag nag-print) */}
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', padding: '16px', borderTop: '1px solid #e2e8f0', background: '#f8fafc' }}>
+              <button type="button" className="btn btn-g" onClick={() => setShowBusinessPrintModal(false)}>Close</button>
+              <button type="button" className="btn btn-p" onClick={handlePrintBusinessDocument}>🖨️ Print Certificate</button>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
+                
+                <div className="toast-container" style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 99999, display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  {toasts.map((toast) => (
+                    <div 
+                      key={toast.id} 
+                      className={`toast-notification toast-${toast.type}`}
+                      style={{
+                        background: toast.type === 'success' ? '#10b981' : '#ef4444',
+                        color: '#ffffff',
+                        padding: '14px 20px',
+                        borderRadius: '8px',
+                        boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.3)',
+                        display: 'flex',
+                        alignItems: 'flex-start',
+                        gap: '10px',
+                        fontWeight: 600,
+                        fontSize: '14px',
+                        animation: 'slideIn 0.3s ease-out forwards',
+                        minWidth: '300px',
+                        whiteSpace: 'pre-line'
+                      }}
+                    >
+                      {toast.type === 'success' ? (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                      ) : (
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                      )}
+                      {toast.message}
+                    </div>
+                  ))}
+                </div>
+
                 </div>{/* /app */}
               </div>/* /dashboard-shell-container */
             );

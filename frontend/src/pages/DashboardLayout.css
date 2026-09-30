@@ -592,6 +592,44 @@ html[data-theme="light"] .dashboard-shell-container .sidebar {
   pointer-events: none;
 }
 
+/* ═══ 6. SIDEBAR LAYOUT FIX ══════════════════════════════════ */
+.dashboard-shell-container .sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);      /* 280px — gamitin ang variable */
+  height: 100vh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  z-index: 1000;
+  background-color: var(--card-bg, #1e293b);
+  border-right: 1px solid var(--border, #2a2f3d);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Custom Scrollbar for Sidebar */
+.dashboard-shell-container .sidebar::-webkit-scrollbar {
+  width: 5px;
+}
+.dashboard-shell-container .sidebar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.dashboard-shell-container .sidebar::-webkit-scrollbar-thumb {
+  background: var(--border, #334155);
+  border-radius: 4px;
+}
+.dashboard-shell-container .sidebar::-webkit-scrollbar-thumb:hover {
+  background: var(--muted, #64748b);
+}
+
+/* Offset main content para hindi ma-cover ng fixed sidebar */
+.dashboard-shell-container .main {
+  margin-left: var(--sidebar-w);  /* 280px — match sa sidebar width */
+  min-height: 100vh;
+}
+
 /* ═══ 6. TOPBAR ═══════════════════════════════════════════════ */
 .dashboard-shell-container .topbar {
   position: sticky; top: 0; z-index: 50;
@@ -3747,3 +3785,62 @@ html[data-theme="light"] .cert-modal-body .btn.btn-g:hover {
     min-width: 0;
   }
 }
+/* ═══════════════════════════════════════════════════════════ */
+/* TOAST NOTIFICATION ANIMATIONS & STYLES                      */
+/* ═══════════════════════════════════════════════════════════ */
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fadeOut {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+.toast-notification {
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px); 
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.toast-notification:hover {
+  transform: scale(1.02);
+  transition: transform 0.2s ease;
+  cursor: pointer;
+}
+/* Force modal to center */
+.clearance-print-overlay {
+  position: fixed !important;
+  top: 0 !important;
+  left: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: center !important;
+  z-index: 999999 !important;
+  margin: 0 !important;
+  padding: 20px !important;
+}
+
+.clearance-modal-content {
+  margin: auto !important;
+  max-width: 950px !important;
+  max-height: 90vh !important;
+}
+

@@ -73,66 +73,383 @@
 #printable-certificate-card.direct-print-only {
   display: none !important;
 }
-
 /* ═══════════════════════════════════════════════════════════════
-   2. PRINT MEDIA STYLES (Lalabas lang kapag pumasok sa Print Preview)
+   BLOTTER CERTIFICATE PRINT MODAL - SCREEN PREVIEW STYLES
+   ═══════════════════════════════════════════════════════════════ */
+
+.print-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: rgba(15, 23, 42, 0.85);
+  backdrop-filter: blur(6px);
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  z-index: 99999;
+  padding: 20px;
+}
+
+.print-modal-content {
+  background: #0f172a;
+  color: #f8fafc;
+  width: 100%;
+  max-width: 900px;
+  height: 90vh;
+  border-radius: 12px;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.7);
+  border: 1px solid #334155;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  margin: auto !important; /* ⬅️ CRITICAL: Pwersahang i-center ang modal */
+}
+
+.modal-actions-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 20px;
+  background: #1e293b;
+  border-bottom: 1px solid #334155;
+  flex-shrink: 0;
+}
+
+.btn-print {
+  background: #2563eb;
+  color: #ffffff;
+  border: none;
+  padding: 8px 18px;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  font-size: 13px;
+  transition: background 0.2s ease;
+}
+
+.btn-print:hover {
+  background: #1d4ed8;
+}
+
+.btn-print:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.btn-close-modal {
+  background: transparent;
+  color: #94a3b8;
+  border: none;
+  font-size: 20px;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 4px;
+}
+
+.btn-close-modal:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.paper-scroll-wrapper {
+  flex: 1;
+  overflow-y: auto;
+  padding: 30px 20px;
+  background: #0f172a;
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+}
+
+.printable-certificate {
+  position: relative;
+  width: 210mm;
+  min-height: 297mm;
+  padding: 20mm 18mm;
+  font-family: 'Times New Roman', Times, serif;
+  line-height: 1.6;
+  color: #000000;
+  background: #ffffff;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5);
+  border-radius: 2px;
+  box-sizing: border-box;
+  margin: 0 auto;
+}
+
+.watermark-container {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0.08;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.watermark-img {
+  width: 320px;
+  height: 320px;
+  object-fit: contain;
+}
+
+.cert-content-inner {
+  position: relative;
+  z-index: 2;
+}
+
+.cert-header-wrapper {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 2px solid #000000;
+  padding-bottom: 12px;
+  margin-bottom: 20px;
+}
+
+.cert-logo {
+  width: 75px;
+  height: 75px;
+  object-fit: contain;
+}
+
+.cert-header-text {
+  text-align: center;
+  flex: 1;
+}
+
+.cert-header-text p {
+  margin: 2px 0;
+  font-size: 13px;
+}
+
+.cert-header-text h4 {
+  margin: 4px 0;
+  font-size: 16px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.cert-title {
+  text-align: center;
+  font-size: 19px;
+  font-weight: bold;
+  text-decoration: underline;
+  margin: 25px 0 20px 0;
+  letter-spacing: 0.5px;
+}
+
+.case-meta-box {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 25px;
+  font-size: 14px;
+}
+
+.party-block {
+  margin-bottom: 20px;
+  font-size: 15px;
+}
+
+.cert-body-text {
+  font-size: 15px;
+  text-align: justify;
+  text-indent: 40px;
+  margin-bottom: 16px;
+}
+
+.resolution-box {
+  border: 1px solid #000000;
+  padding: 12px 16px;
+  margin: 20px 0;
+  font-style: italic;
+  background: #fafafa;
+  font-size: 14px;
+}
+
+.signatures-container {
+  margin-top: 35px;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+}
+
+.sig-block {
+  text-align: center;
+  margin-top: 15px;
+}
+
+.sig-line {
+  border-top: 1px solid #000000;
+  margin-top: 35px;
+  padding-top: 5px;
+  font-weight: bold;
+  text-transform: uppercase;
+}
+
+.official-seal-footer {
+  margin-top: 40px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+}
+
+.verification-footer-bar {
+  margin-top: 35px;
+  border-top: 1px dashed #666666;
+  padding-top: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.qr-code-box {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.qr-text-meta {
+  font-size: 10px;
+  color: #444444;
+  line-height: 1.3;
+}
+
+/* Animation for success toast */
+@keyframes slideIn {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+/* ═══════════════════════════════════════════════════════════════
+   ULTIMATE PRINT MEDIA STYLES (Fixed for ALL Modals)
    ═══════════════════════════════════════════════════════════════ */
 @media print {
-  /* 1. I-reset ang HTML at Body para sa eksaktong sukat ng A4 */
+  /* 1. A4 Page Setup */
+  @page {
+    size: A4 portrait;
+    margin: 0;
+  }
+
+  /* 2. Clean Body & HTML */
   html, body {
     margin: 0 !important;
     padding: 0 !important;
     width: 210mm !important;
     height: 297mm !important;
     background: #ffffff !important;
+    color: #000000 !important;
     overflow: visible !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
   }
 
-  @page {
-    size: A4 portrait;
-    margin: 0;
-  }
-
-  /* 2. Itago ang buong UI sa likod */
-  body * {
+  /* 3. Hide main app UI (DO NOT use body * { visibility: hidden }) */
+  #root > div,
+  .dashboard-shell-container,
+  .sidebar,
+  header,
+  nav,
+  aside,
+  .screen,
+  .main,
+  .tb,
+  .tw,
+  .btn,
+  .no-print,
+  .modal-actions,
+  .modal-actions-bar {
+    display: none !important;
     visibility: hidden !important;
   }
 
-  /* 3. Siguraduhin na ang print container at lahat ng elemento sa loob nito ay makikita */
+  /* 4. Show ALL Print Modal Overlays */
+  .print-modal-overlay,
+  .business-print-portal,
   .certificate-print-container,
-  #printable-certificate-card,
-  .certificate-print-container *,
-  #printable-certificate-card * {
+  .print-only {
+    display: block !important;
     visibility: visible !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: transparent !important;
+    z-index: 9999999 !important;
+    padding: 0 !important;
+    margin: 0 !important;
   }
 
-  /* 4. I-position ang certificate sa pinakataas ng A4 page */
-  .certificate-print-container,
-  #printable-certificate-card {
+  /* 5. Make intermediate wrappers transparent */
+  .print-modal-content,
+  .paper-scroll-wrapper,
+  .business-print-modal-content,
+  .business-print-preview-wrapper,
+  .clearance-modal-content {
     display: block !important;
+    visibility: visible !important;
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    overflow: visible !important;
+    box-shadow: none !important;
+  }
+
+  /* 6. The actual certificate cards (Absolute positioning to fill A4) */
+  .printable-certificate,
+  #printable-certificate-card,
+  #printable-business-certificate-card {
+    display: block !important;
+    visibility: visible !important;
     position: absolute !important;
-    left: 0 !important;
     top: 0 !important;
+    left: 0 !important;
     width: 210mm !important;
     min-height: 297mm !important;
     margin: 0 !important;
-    padding: 10mm !important;
+    padding: 15mm 15mm !important;
     box-sizing: border-box !important;
     background: #ffffff !important;
-    transform: none !important;
+    color: #000000 !important;
     box-shadow: none !important;
     z-index: 9999999 !important;
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
   }
 
-  /* 5. Itago lamang ang mga action buttons o elements na may class na .no-print */
-  .no-print,
-  .no-print * {
+  /* 7. Force ALL children inside to be visible */
+  .printable-certificate *,
+  #printable-certificate-card *,
+  #printable-business-certificate-card * {
+    visibility: visible !important;
+    color: #000000 !important;
+  }
+
+  /* 8. Hide modal action bars during print */
+  .modal-actions-bar {
     display: none !important;
     visibility: hidden !important;
   }
+
+  /* 9. Watermark specific */
+  .watermark-container {
+    opacity: 0.08 !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
 }
+
 
 /* ═══════════════════════════════════════════════════════════════ 
    NEW CERTIFICATE REQUEST MODAL STYLES 
