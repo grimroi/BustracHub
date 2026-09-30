@@ -3,6 +3,33 @@ import { getStepFromStatus } from '../../utils/residentUtils';
 
 const certSteps = ['Submitted', 'Review', 'Approved', 'Ready', 'Issued'];
 
+// Default Certificate Requirements List
+const DEFAULT_CERTIFICATE_REQUIREMENTS = {
+  'Barangay Clearance': [
+    'Valid ID (Government-issued)',
+    'Proof of Residency / Purok Endorsement',
+    'Recent 2x2 Picture (White background)'
+  ],
+  'Certificate of Indigency': [
+    'Valid ID o Voter\'s Stub',
+    'Kumpirmasyon mula sa Purok Leader',
+    'Layunin o Patunay ng Pangangailangan (e.g., Medical/Educational/Financial Assistance)'
+  ],
+  'Certificate of Residency': [
+    'Valid ID na nagpapakita ng tirahan sa barangay',
+    'Purok Leader Endorsement / Verification'
+  ],
+  'Barangay Business Clearance': [
+    'DTI Registration Paperwork',
+    'Lease Contract / Patunay ng Lokasyon ng Negosyo',
+    'Mayor\'s Permit Application Form'
+  ],
+  'First Time Job Seeker': [
+    'Valid ID o School ID',
+    'Oath of Undertaking Form'
+  ]
+};
+
 export default function ResidentCertificates({
   loggedInUser,
   myRequests,
@@ -17,6 +44,9 @@ export default function ResidentCertificates({
   setFilterTab,
   handleCancelRequest,
 }) {
+  // Kunin ang active requirements base sa napiling type ng resident
+  const activeRequirements = DEFAULT_CERTIFICATE_REQUIREMENTS[certForm.certType] || [];
+
   const filteredRequests = useMemo(() => {
     return myRequests.filter((req) => {
       const isIssued = req.status === 'Issued' || Number(req.step || 1) >= 5;
@@ -109,8 +139,33 @@ export default function ResidentCertificates({
                 <option value="Certificate of Indigency">Certificate of Indigency</option>
                 <option value="Certificate of Residency">Certificate of Residency</option>
                 <option value="Barangay Business Clearance">Barangay Business Clearance</option>
+                <option value="First Time Job Seeker">First Time Job Seeker</option>
               </select>
             </div>
+
+            {/* DYNAMIC REQUIREMENTS DISPLAY */}
+            {certForm.certType ? (
+              <div style={{ padding: '12px 14px', background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: 16 }}>
+                <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--primary)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                    <polyline points="14 2 14 8 20 8" />
+                    <line x1="16" y1="13" x2="8" y2="13" />
+                    <line x1="16" y1="17" x2="8" y2="17" />
+                  </svg>
+                  REQUIRED DOCUMENTS ({certForm.certType.toUpperCase()})
+                </div>
+                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                  {activeRequirements.map((req, idx) => (
+                    <li key={idx}>{req}</li>
+                  ))}
+                </ul>
+              </div>
+            ) : (
+              <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface2)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', marginBottom: 16, fontStyle: 'italic' }}>
+                Select a certificate type above to view required documents.
+              </div>
+            )}
 
             {/* Purpose */}
             <div className="fg" style={{ marginBottom: 16 }}>
@@ -168,6 +223,7 @@ export default function ResidentCertificates({
         <span>My Requests</span>
         <span className="badge b-blue" style={{ fontSize: 10 }}>{myRequests.length} Total</span>
       </div>
+
       <div style={{ display: 'flex', gap: 6, marginBottom: 14 }}>
         {['all', 'pending', 'issued'].map((tab) => (
           <button
@@ -252,6 +308,7 @@ export default function ResidentCertificates({
                   const value = idx + 1;
                   const done = isIssued ? true : stepCount > value;
                   const active = !isIssued && stepCount === value;
+
                   return (
                     <div key={label} className={`step${done ? ' done' : active ? ' active' : ' pending'}`}>
                       <div className="step-circle">

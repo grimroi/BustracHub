@@ -14,6 +14,57 @@ export const formatResidentDate = (rawTime) => {
   });
 };
 
+/**
+ * I-validate ang lahat ng profile form fields bago i-save.
+ */
+export const validateProfileData = (profile) => {
+  if (!profile.firstName?.trim() || !profile.lastName?.trim()) {
+    return { isValid: false, error: 'First name and last name are required.' };
+  }
+  if (!isValidPHMobile(profile.contact)) {
+    return { isValid: false, error: 'Please enter a valid 11-digit Philippine contact number (e.g. 09171234567).' };
+  }
+  if (!profile.birthdate) {
+    return { isValid: false, error: 'Birthdate is required.' };
+  }
+  
+  const birthDate = new Date(profile.birthdate);
+  const today = new Date();
+  if (birthDate > today) {
+    return { isValid: false, error: 'Birthdate cannot be in the future.' };
+  }
+  
+  const age = today.getFullYear() - birthDate.getFullYear();
+  if (age < 0 || age > 120) {
+    return { isValid: false, error: 'Please enter a valid birthdate.' };
+  }
+  if (!profile.purok) {
+    return { isValid: false, error: 'Please select your Purok / Zone.' };
+  }
+  if (!profile.gender) {
+    return { isValid: false, error: 'Please select your gender.' };
+  }
+  if (!profile.civilStatus) {
+    return { isValid: false, error: 'Please select your civil status.' };
+  }
+  if (profile.emergencyContactNumber?.trim() && !isValidPHMobile(profile.emergencyContactNumber)) {
+    return { isValid: false, error: 'Please enter a valid 11-digit emergency contact number.' };
+  }
+
+  return { isValid: true, error: null };
+};
+
+/**
+ * Kukunin ang 1-2 letrang initials mula sa buong pangalan.
+ */
+export const getInitials = (name = '') => {
+  if (!name || typeof name !== 'string') return 'RS';
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  if (parts.length === 0) return 'RS';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+};
+
 export const formatDateOnly = (rawTime) => {
   if (!rawTime) return 'N/A';
   const parsed = new Date(rawTime);
@@ -22,6 +73,91 @@ export const formatDateOnly = (rawTime) => {
     month: 'short', day: 'numeric', year: 'numeric',
   });
 };
+
+/**
+ * I-validate kung tama ang 11-digit PH mobile number.
+ */
+export const isValidPHMobile = (number) => {
+  if (!number) return false;
+  const cleaned = String(number).replace(/\D/g, '');
+  return /^09\d{9}$/.test(cleaned);
+};
+
+/**
+ * I-format ang date string sa readable format (hal. "January 1, 1990").
+ */
+export const formatDisplayDate = (dateStr) => {
+  if (!dateStr) return 'Not set';
+  const d = new Date(dateStr);
+  if (isNaN(d.getTime())) return dateStr;
+  return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+};
+
+/**
+ * Kukunin ang kasalukuyang naka-store na user mula sa sessionStorage o localStorage.
+ */
+export const getStoredUser = () => {
+  try {
+    const rawUser = sessionStorage.getItem('bustrac_user') || localStorage.getItem('bustrac_user');
+    if (!rawUser) return { fullName: 'Resident', initials: 'RS' };
+    const parsed = typeof rawUser === 'string' ? JSON.parse(rawUser) : rawUser;
+    const name = parsed.fullName || parsed.user || parsed.name || 'Resident';
+    const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+    return { fullName: name, initials, ...parsed };
+  } catch (e) {
+    return { fullName: 'Resident', initials: 'RS' };
+  }
+};
+
+/**
+ * Lilinisin ang lahat ng user session at roles sa storage sa pag-logout.
+ */
+export const clearStoredUser = () => {
+  sessionStorage.removeItem('bustrac_user');
+  localStorage.removeItem('bustrac_user');
+  localStorage.removeItem('bustrac_role');
+};
+
+export const updateStoredUser = (updatedData) => {
+  try {
+    const sessionRaw = sessionStorage.getItem('bustrac_user');
+    const localRaw = localStorage.getItem('bustrac_user');
+    const existing = JSON.parse(sessionRaw || localRaw || '{}');
+    const merged = { ...existing, ...updatedData };
+
+    if (sessionRaw) {
+      sessionStorage.setItem('bustrac_user', JSON.stringify(merged));
+    }
+    if (localRaw || !sessionRaw) {
+      localStorage.setItem('bustrac_user', JSON.stringify(merged));
+    }
+
+    // DISPATCH CUSTOM EVENT para sa kasalukuyang tab
+    window.dispatchEvent(new Event('bustrac_user_updated'));
+
+    return merged;
+  } catch (e) {
+    console.error('Failed to update stored user:', e);
+    return updatedData;
+  }
+};
+
+/**
+ * Kukunin ang paunang profile state mula sa loggedInUser o residentProfile object.
+ */
+export const getInitialProfileState = (loggedInUser = {}, residentProfile = {}) => ({
+  firstName: loggedInUser.firstName || residentProfile.firstName || '',
+  lastName: loggedInUser.lastName || residentProfile.lastName || '',
+  contact: loggedInUser.contact || residentProfile.contact || residentProfile.phone || '',
+  email: loggedInUser.email || residentProfile.email || '',
+  birthdate: loggedInUser.birthdate || residentProfile.birthdate || residentProfile.dateOfBirth || '',
+  gender: loggedInUser.gender || residentProfile.gender || '',
+  civilStatus: loggedInUser.civilStatus || residentProfile.civilStatus || residentProfile.civil_status || '',
+  purok: loggedInUser.purok || residentProfile.purok || residentProfile.zone || '',
+  address: loggedInUser.address || residentProfile.address || residentProfile.streetAddress || '',
+  emergencyContactName: loggedInUser.emergencyContactName || residentProfile.emergencyContactPerson || residentProfile.emergencyContactName || '',
+  emergencyContactNumber: loggedInUser.emergencyContactNumber || residentProfile.emergencyContactNo || residentProfile.emergencyContactNumber || '',
+});
 
 export const calculateAge = (birthdate) => {
   if (!birthdate) return 0;

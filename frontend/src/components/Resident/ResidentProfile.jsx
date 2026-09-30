@@ -1,5 +1,12 @@
 import { useState, useEffect } from 'react';
 import { FaUser, FaPhone, FaEnvelope, FaMapMarkerAlt, FaIdCard, FaCalendarAlt, FaVenusMars, FaHeart, FaEdit, FaSave, FaTimes, FaSignOutAlt, FaSync } from 'react-icons/fa';
+import {
+  calculateAge,
+  getInitialProfileState,
+  formatDisplayDate,
+  validateProfileData,
+  getInitials,
+} from '../utils/residentUtils';
 
 export default function ResidentProfile({
   residentProfile,
@@ -14,158 +21,67 @@ export default function ResidentProfile({
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   // Expanded editableProfile state with ALL fields
-  const [editableProfile, setEditableProfile] = useState({
-    firstName: '',
-    lastName: '',
-    contact: '',
-    email: '',
-    birthdate: '',
-    gender: '',
-    civilStatus: '',
-    purok: '',
-    address: '',
-    emergencyContactName: '',
-    emergencyContactNumber: '',
-  });
+  const [editableProfile, setEditableProfile] = useState(() =>
+  getInitialProfileState(loggedInUser, residentProfile)
+);
 
   // Populate edit form when entering edit mode or when data changes
   useEffect(() => {
-    const user = loggedInUser || {};
-    const profile = residentProfile || {};
-    setEditableProfile({
-      firstName: user.firstName || profile.firstName || '',
-      lastName: user.lastName || profile.lastName || '',
-      contact: user.contact || profile.contact || profile.phone || '',
-      email: user.email || profile.email || '',
-      birthdate: user.birthdate || profile.birthdate || profile.dateOfBirth || '',
-      gender: user.gender || profile.gender || '',
-      civilStatus: user.civilStatus || profile.civilStatus || profile.civil_status || '',
-      purok: user.purok || profile.purok || profile.zone || '',
-      address: user.address || profile.address || profile.streetAddress || '',
-      emergencyContactName: user.emergencyContactName || profile.emergencyContactPerson || profile.emergencyContactName || '',
-      emergencyContactNumber: user.emergencyContactNumber || profile.emergencyContactNo || profile.emergencyContactNumber || '',
-    });
-  }, [loggedInUser, residentProfile, isEditing]);
+  if (!isEditing) {
+    setEditableProfile(getInitialProfileState(loggedInUser, residentProfile));
+  }
+}, [loggedInUser, residentProfile, isEditing]);
 
   const handleProfileFieldChange = (field) => (e) => {
-    setEditableProfile((prev) => ({ ...prev, [field]: e.target.value }));
-  };
+  let value = e.target.value;
 
-  const calculateDisplayAge = (birthdate) => {
-    if (!birthdate) return null;
-    const birth = new Date(birthdate);
-    if (isNaN(birth.getTime())) return null;
-    const today = new Date();
-    let age = today.getFullYear() - birth.getFullYear();
-    const monthDiff = today.getMonth() - birth.getMonth();
-    if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < birth.getDate())) {
-      age--;
-    }
-    return age >= 0 ? age : null;
-  };
+  // Kung contact number o emergency number, tanggalin ang non-digits at limitahan sa 11 digits
+  if (field === 'contact' || field === 'emergencyContactNumber') {
+    value = value.replace(/\D/g, '').slice(0, 11);
+  }
 
-  const formatDisplayDate = (dateStr) => {
-    if (!dateStr) return 'Not set';
-    const d = new Date(dateStr);
-    if (isNaN(d.getTime())) return dateStr;
-    return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
-  };
+  setEditableProfile((prev) => ({ ...prev, [field]: value }));
+};
+
+
+ 
 
   const handleSave = async () => {
-    // Validation
-    if (!editableProfile.firstName.trim() || !editableProfile.lastName.trim()) {
-      alert('First name and last name are required.');
-      return;
-    }
+  const { isValid, error } = validateProfileData(editableProfile);
+  if (!isValid) {
+    alert(error);
+    return;
+  }
 
-    const contact = editableProfile.contact.trim().replace(/\D/g, '');
-    if (!contact || !/^09\d{9}$/.test(contact)) {
-      alert('Please enter a valid 11-digit Philippine contact number (e.g. 09171234567).');
-      return;
-    }
-
-    if (!editableProfile.birthdate) {
-      alert('Birthdate is required.');
-      return;
-    }
-
-    // Validate birthdate is not in the future
-    const birthDate = new Date(editableProfile.birthdate);
-    const today = new Date();
-    if (birthDate > today) {
-      alert('Birthdate cannot be in the future. Please enter a valid birthdate.');
-      return;
-    }
-
-    const age = today.getFullYear() - birthDate.getFullYear();
-    if (age < 0 || age > 120) {
-      alert('Please enter a valid birthdate.');
-      return;
-    }
-
-    if (!editableProfile.purok) {
-      alert('Please select your Purok / Zone.');
-      return;
-    }
-
-    if (!editableProfile.gender) {
-      alert('Please select your gender.');
-      return;
-    }
-
-    if (!editableProfile.civilStatus) {
-      alert('Please select your civil status.');
-      return;
-    }
-
-    if (editableProfile.emergencyContactNumber.trim()) {
-      const emContact = editableProfile.emergencyContactNumber.trim().replace(/\D/g, '');
-      if (!/^09\d{9}$/.test(emContact)) {
-        alert('Please enter a valid 11-digit emergency contact number.');
-        return;
-      }
-    }
-
-    setIsSaving(true);
-    try {
-      await handleSaveProfileEdit(editableProfile);
-      setSaveSuccess(true);
-      setIsEditing(false);
-      setTimeout(() => setSaveSuccess(false), 3000);
-    } catch (err) {
-      alert('Failed to save: ' + (err.message || 'Unknown error'));
-    } finally {
-      setIsSaving(false);
-    }
-  };
+  setIsSaving(true);
+  try {
+    await handleSaveProfileEdit(editableProfile);
+    setSaveSuccess(true);
+    setIsEditing(false);
+    setTimeout(() => setSaveSuccess(false), 3000);
+  } catch (err) {
+    alert('Failed to save: ' + (err.message || 'Unknown error'));
+  } finally {
+    setIsSaving(false);
+  }
+};
 
   const handleCancelEditProfile = () => {
-    const user = loggedInUser || {};
-    const profile = residentProfile || {};
-    setEditableProfile({
-      firstName: user.firstName || profile.firstName || '',
-      lastName: user.lastName || profile.lastName || '',
-      contact: user.contact || profile.contact || profile.phone || '',
-      email: user.email || profile.email || '',
-      birthdate: user.birthdate || profile.birthdate || profile.dateOfBirth || '',
-      gender: user.gender || profile.gender || '',
-      civilStatus: user.civilStatus || profile.civilStatus || profile.civil_status || '',
-      purok: user.purok || profile.purok || profile.zone || '',
-      address: user.address || profile.address || profile.streetAddress || '',
-      emergencyContactName: user.emergencyContactName || profile.emergencyContactPerson || profile.emergencyContactName || '',
-      emergencyContactNumber: user.emergencyContactNumber || profile.emergencyContactNo || profile.emergencyContactNumber || '',
-    });
-    setIsEditing(false);
-  };
+  setEditableProfile(getInitialProfileState(loggedInUser, residentProfile));
+  setIsEditing(false);
+};
 
   // Derived display values
   const user = loggedInUser || {};
   const profile = residentProfile || {};
   const fullName = user.fullName || profile.fullName || `${user.firstName || ''} ${user.lastName || ''}`.trim() || 'Resident';
-  const initials = fullName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+
+  // Gamitin ang helper at tanggalin ang lumang duplicate line sa ibaba nito:
+  const initials = getInitials(fullName);
+
   const residentId = user.residentId || profile.residentId || profile._id || 'RES-XXXX';
   const birthdate = user.birthdate || profile.birthdate || profile.dateOfBirth || '';
-  const age = user.age || profile.age || calculateDisplayAge(birthdate) || '-';
+  const age = user.age || profile.age || calculateAge(birthdate) || '-';
   const gender = user.gender || profile.gender || 'Not specified';
   const civilStatus = user.civilStatus || profile.civilStatus || profile.civil_status || 'Not specified';
   const contact = user.contact || profile.contact || profile.phone || 'Not set';
@@ -291,6 +207,7 @@ export default function ResidentProfile({
                 <input
                   className="fc"
                   type="text"
+                  disabled={isSaving}
                   placeholder="Juan"
                   value={editableProfile.firstName}
                   onChange={handleProfileFieldChange('firstName')}
@@ -328,7 +245,7 @@ export default function ResidentProfile({
                 />
                 {editableProfile.birthdate && (
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                    Age: {calculateDisplayAge(editableProfile.birthdate) || '-'} years old
+                    Age: {calculateAge(editableProfile.birthdate) || '-'} years old
                   </div>
                 )}
               </div>

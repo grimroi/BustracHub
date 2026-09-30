@@ -13,6 +13,9 @@ import {
   normalizeFeedbackDoc,
   buildAuditLogPayload,
   calculateAge,
+  updateStoredUser,
+  getStoredUser,
+  clearStoredUser,
 } from '../utils/residentUtils';
 
 import ResidentHome from '../components/Resident/ResidentHome';
@@ -39,19 +42,24 @@ export default function ResidentUI() {
   const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
 
   /* ── User State ── */
-  const [loggedInUser, setLoggedInUser] = useState(() => {
-    const rawUser = sessionStorage.getItem('bustrac_user') || localStorage.getItem('bustrac_user');
-    if (!rawUser) return { fullName: 'Resident', initials: 'RS' };
-    try {
-      const parsed = typeof rawUser === 'string' ? JSON.parse(rawUser) : rawUser;
-      const name = parsed.fullName || parsed.user || parsed.name || 'Resident';
-      const initials = name.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
-      return { fullName: name, initials, ...parsed };
-    } catch (e) {
-      const name = typeof rawUser === 'string' ? rawUser : 'Resident';
-      return { fullName: name, initials: name.slice(0, 2).toUpperCase() };
+  const [loggedInUser, setLoggedInUser] = useState(getStoredUser);
+  
+  /* ── Multi-Tab & Same-Tab Real-time Sync Listener ── */
+useEffect(() => {
+  const handleUserChange = (e) => {
+    if (!e || e.key === 'bustrac_user' || e.type === 'bustrac_user_updated') {
+      setLoggedInUser(getStoredUser());
     }
-  });
+  };
+
+  window.addEventListener('storage', handleUserChange);
+  window.addEventListener('bustrac_user_updated', handleUserChange);
+
+  return () => {
+    window.removeEventListener('storage', handleUserChange);
+    window.removeEventListener('bustrac_user_updated', handleUserChange);
+  };
+}, []);
 
   const greetingText = useMemo(() => {
     const h = new Date().getHours();
@@ -121,8 +129,8 @@ export default function ResidentUI() {
   /* ── FIX 1: Stable user matching using refs to prevent circular deps ── */
   const loggedInUserRef = useRef(loggedInUser);
   useEffect(() => {
-    loggedInUserRef.current = loggedInUser;
-  }, [loggedInUser]);
+  loggedInUserRef.current = loggedInUser;
+}, [loggedInUser]);
 
   const checkUserMatch = useCallback((doc) => {
     const user = loggedInUserRef.current;
@@ -221,39 +229,34 @@ export default function ResidentUI() {
         .sort(sortTs);
       setMyFeedbacks(userFeedbacks);
 
-      // FIX 2: Find resident profile and enrich loggedInUser ONCE
       const residentDoc = docs.find((d) =>
         (d.docType === 'resident' || d.type === 'resident' || d.residentId) && checkUserMatch(d)
       );
-            if (residentDoc) {
+      if (residentDoc) {
         setResidentProfile({ ...residentDoc, rawDoc: residentDoc });
-        setLoggedInUser((prev) => {
-          const merged = {
-            ...prev,
-            firstName: residentDoc.firstName || prev?.firstName || '',
-            lastName: residentDoc.lastName || prev?.lastName || '',
-            fullName: residentDoc.fullName || `${residentDoc.firstName || ''} ${residentDoc.lastName || ''}`.trim() || prev?.fullName || '',
-            birthdate: residentDoc.birthdate || residentDoc.dateOfBirth || prev?.birthdate || '',
-            age: residentDoc.age || residentDoc.currentAge || calculateAge(residentDoc.birthdate || residentDoc.dateOfBirth) || prev?.age || 0,
-            purok: residentDoc.purok || residentDoc.zone || prev?.purok || '',
-            contact: residentDoc.contact || residentDoc.phone || residentDoc.mobile || prev?.contact || '',
-            email: residentDoc.email || prev?.email || '',
-            residentId: residentDoc.residentId || residentDoc._id || prev?.residentId || '',
-            rbiId: residentDoc.rbiId || residentDoc.householdId || prev?.rbiId || '',
-            address: residentDoc.address || residentDoc.streetAddress || prev?.address || '',
-            gender: residentDoc.gender || prev?.gender || '',
-            civilStatus: residentDoc.civilStatus || prev?.civilStatus || '',
-            emergencyContactName: residentDoc.emergencyContactPerson || residentDoc.emergencyContactName || prev?.emergencyContactName || '',
-            emergencyContactNumber: residentDoc.emergencyContactNo || residentDoc.emergencyContactNumber || prev?.emergencyContactNumber || '',
-          };
-          try {
-            const storageUser = JSON.parse(sessionStorage.getItem('bustrac_user') || localStorage.getItem('bustrac_user') || '{}');
-            const updated = { ...storageUser, ...merged };
-            localStorage.setItem('bustrac_user', JSON.stringify(updated));
-            localStorage.setItem('bustrac_user', JSON.stringify(updated));
-          } catch (e) { /* ignore */ }
-          return merged;
-        });
+        
+        const prevUser = loggedInUserRef.current || {};
+        const merged = {
+          ...prevUser,
+          firstName: residentDoc.firstName || prevUser?.firstName || '',
+          lastName: residentDoc.lastName || prevUser?.lastName || '',
+          fullName: residentDoc.fullName || `${residentDoc.firstName || ''} ${residentDoc.lastName || ''}`.trim() || prevUser?.fullName || '',
+          birthdate: residentDoc.birthdate || residentDoc.dateOfBirth || prevUser?.birthdate || '',
+          age: residentDoc.age || residentDoc.currentAge || calculateAge(residentDoc.birthdate || residentDoc.dateOfBirth) || prevUser?.age || 0,
+          purok: residentDoc.purok || residentDoc.zone || prevUser?.purok || '',
+          contact: residentDoc.contact || residentDoc.phone || residentDoc.mobile || prevUser?.contact || '',
+          email: residentDoc.email || prevUser?.email || '',
+          residentId: residentDoc.residentId || residentDoc._id || prevUser?.residentId || '',
+          rbiId: residentDoc.rbiId || residentDoc.householdId || prevUser?.rbiId || '',
+          address: residentDoc.address || residentDoc.streetAddress || prevUser?.address || '',
+          gender: residentDoc.gender || prevUser?.gender || '',
+          civilStatus: residentDoc.civilStatus || prevUser?.civilStatus || '',
+          emergencyContactName: residentDoc.emergencyContactPerson || residentDoc.emergencyContactName || prevUser?.emergencyContactName || '',
+          emergencyContactNumber: residentDoc.emergencyContactNo || residentDoc.emergencyContactNumber || prevUser?.emergencyContactNumber || '',
+        };
+
+        const updatedUser = updateStoredUser(merged);
+        setLoggedInUser(updatedUser);
       }
 
       setLastSync(new Date());
@@ -263,7 +266,7 @@ export default function ResidentUI() {
     } finally {
       setIsLoading(false);
     }
-  }, [checkUserMatch]); // FIXED: removed loggedInUser from deps
+  }, [checkUserMatch]); 
 
   /* ── FIX 1: Real-time listener with cleanup ── */
   useEffect(() => {
@@ -296,9 +299,7 @@ export default function ResidentUI() {
   /* ── Handlers ── */
   const handleLogout = useCallback(() => {
   if (window.confirm('Are you sure you want to leave the resident portal?')) {
-    sessionStorage.removeItem('bustrac_user');
-    localStorage.removeItem('bustrac_user');
-    localStorage.removeItem('bustrac_role');
+    clearStoredUser(); // Gamitin ang nilikhang helper sa residentUtils.js
     navigate('/');
   }
 }, [navigate]);
@@ -613,33 +614,65 @@ export default function ResidentUI() {
   async (editableProfile) => {
     if (!db) throw new Error('Local database is not connected.');
 
-    const targetDocId = residentProfile?.rawDoc?._id || residentProfile?._id || loggedInUserRef.current?._id || loggedInUserRef.current?.residentId;
+    const targetDocId =
+      residentProfile?.rawDoc?._id ||
+      residentProfile?._id ||
+      loggedInUserRef.current?._id ||
+      loggedInUserRef.current?.residentId;
+
     let existingDoc = null;
     if (targetDocId) {
-      try { existingDoc = await db.get(targetDocId); } catch (err) { /* ignore */ }
+      try {
+        existingDoc = await db.get(targetDocId);
+      } catch (err) {
+        /* ignore */
+      }
     }
+
     if (!existingDoc) {
       const res = await db.allDocs({ include_docs: true });
-      const currentId = String(loggedInUserRef.current?.residentId || loggedInUserRef.current?.id || '').toLowerCase().trim();
-      const currentName = String(loggedInUserRef.current?.fullName || '').toLowerCase().trim();
+      const currentId = String(
+        loggedInUserRef.current?.residentId || loggedInUserRef.current?.id || ''
+      )
+        .toLowerCase()
+        .trim();
+      const currentName = String(
+        loggedInUserRef.current?.fullName || ''
+      )
+        .toLowerCase()
+        .trim();
+
       existingDoc = res.rows
         .map((row) => row.doc)
         .find((doc) => {
           if (!doc) return false;
-          const isRes = doc.docType === 'resident' || doc.type === 'resident' || doc.residentId;
+          const isRes =
+            doc.docType === 'resident' ||
+            doc.type === 'resident' ||
+            doc.residentId;
           if (!isRes) return false;
-          const docId = String(doc.residentId || doc._id || '').toLowerCase().trim();
-          const docName = String(doc.fullName || `${doc.firstName || ''} ${doc.lastName || ''}`).toLowerCase().trim();
-          return (currentId && docId === currentId) || (currentName && docName.includes(currentName));
+          const docId = String(doc.residentId || doc._id || '')
+            .toLowerCase()
+            .trim();
+          const docName = String(
+            doc.fullName || `${doc.firstName || ''} ${doc.lastName || ''}`
+          )
+            .toLowerCase()
+            .trim();
+          return (
+            (currentId && docId === currentId) ||
+            (currentName && docName.includes(currentName))
+          );
         });
     }
 
     // Build name fields
     const firstName = editableProfile.firstName?.trim() || existingDoc?.firstName || '';
     const lastName = editableProfile.lastName?.trim() || existingDoc?.lastName || '';
-    const fullName = firstName && lastName 
-      ? `${firstName} ${lastName}` 
-      : (existingDoc?.fullName || loggedInUserRef.current?.fullName || 'Resident');
+    const fullName =
+      firstName && lastName
+        ? `${firstName} ${lastName}`
+        : existingDoc?.fullName || loggedInUserRef.current?.fullName || 'Resident';
 
     const updatedDoc = existingDoc
       ? {
@@ -722,29 +755,31 @@ export default function ResidentUI() {
       rawDoc: { ...updatedDoc, _rev: result.rev },
     }));
 
-    setLoggedInUser((prev) => {
-      const merged = {
-        ...prev,
-        firstName: updatedDoc.firstName,
-        lastName: updatedDoc.lastName,
-        fullName: updatedDoc.fullName,
-        contact: updatedDoc.contact,
-        email: updatedDoc.email,
-        purok: updatedDoc.purok,
-        address: updatedDoc.address,
-        birthdate: updatedDoc.birthdate,
-        age: updatedDoc.age,
-        gender: updatedDoc.gender,
-        civilStatus: updatedDoc.civilStatus,
-      };
-      localStorage.setItem('bustrac_user', JSON.stringify(merged));
-      localStorage.setItem('bustrac_user', JSON.stringify(merged));
-      return merged;
-    });
+    const prevUser = loggedInUserRef.current || loggedInUser || {};
+    const mergedUser = {
+      ...prevUser,
+      firstName: updatedDoc.firstName,
+      lastName: updatedDoc.lastName,
+      fullName: updatedDoc.fullName,
+      contact: updatedDoc.contact,
+      email: updatedDoc.email,
+      purok: updatedDoc.purok,
+      address: updatedDoc.address,
+      birthdate: updatedDoc.birthdate,
+      age: updatedDoc.age,
+      gender: updatedDoc.gender,
+      civilStatus: updatedDoc.civilStatus,
+      emergencyContactName: updatedDoc.emergencyContactPerson || prevUser?.emergencyContactName || '',
+      emergencyContactNumber: updatedDoc.emergencyContactNo || prevUser?.emergencyContactNumber || '',
+    };
+
+    const updatedUser = updateStoredUser(mergedUser);
+
+    setLoggedInUser(updatedUser);
 
     alert('Your information has been successfully updated!');
   },
-  [db, residentProfile]
+  [db, residentProfile, loggedInUser]
 );
 
 
@@ -767,7 +802,7 @@ export default function ResidentUI() {
     { id: 's-assistance', label: 'Aid', icon: <FaHandHoldingHeart /> },
     { id: 's-profile', label: 'Profile', icon: <FaUser /> },
   ];
-
+ 
   /* ── Render ── */
   return (
     <div className="resident-root-container">
