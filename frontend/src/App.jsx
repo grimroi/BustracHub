@@ -13,7 +13,7 @@ import VerifyDocument from './pages/VerifyDocument';
 export default function App() {
   useEffect(() => {
     const syncHandler = setupPouchDBSync();
-    resolveDbConflicts();
+    
 
     return () => {
       if (syncHandler && typeof syncHandler.cancel === 'function') {

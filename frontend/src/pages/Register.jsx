@@ -43,13 +43,13 @@ export default function Register() {
       const cleanFullName = formData.fullName.trim();
 
       const newResidentUser = {
-        _id: `user_res_${Date.now()}`,
+        _id: `user_${cleanUsername}`, 
         type: 'user',
         docType: 'user',
         username: cleanUsername,
         passwordHash: hashedPassword,
         role: 'resident',
-        name: cleanFullName, // Important: Must match the Complainant/Respondent name
+        fullName: cleanFullName,    
         residentId: `RES-${Date.now().toString().slice(-4)}`,
         email: formData.email.trim(),
         contact: formData.contact.trim(),

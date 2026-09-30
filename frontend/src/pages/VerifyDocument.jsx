@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import barangayLogo from '../assets/bustrac-logo.png';
 import nabuaLogo from '../assets/nabua-logo.jpg';
-import { localDb } from '../services/db';
+import { localDb as db } from '../services/db'; 
 
 export default function VerifyDocument() {
   const [searchParams] = useSearchParams();
@@ -21,7 +21,7 @@ export default function VerifyDocument() {
       }
       try {
         // 1. Unang i-check ang Local PouchDB Index
-        let result = await localDb.allDocs({ include_docs: true });
+        let result = await db.allDocs({ include_docs: true });
         let allDocs = result.rows.map(r => r.doc).filter(Boolean);
 
         // 2. Kung empty sa local, mag-fallback sa Remote CouchDB

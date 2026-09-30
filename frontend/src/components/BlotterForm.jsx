@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { localDb } from '../services/db';
+import { localDb as db } from '../services/db'; 
 
 export default function BlotterForm({ onSuccess }) {
   const [complainant, setComplainant] = useState('');
@@ -21,7 +21,7 @@ export default function BlotterForm({ onSuccess }) {
       createdAt: new Date().toISOString(),
     };
 
-    await localDb.post(doc);
+    await db.post(doc);
     if (onSuccess) onSuccess(doc);
   };
 

@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
-import PouchDB from 'pouchdb';
 import logo from '../assets/logo.png';
 import './DashboardLayout.css';
 import nabuaLogo from "../assets/nabua-logo.jpg";
@@ -15,7 +14,8 @@ import CertificateLifecycle, { CertificateIssuancePrint } from './CertificateLif
 import CertPrintScreen from './CertPrintScreen';
 import ResidentCombobox, { formatPurok } from '../components/ResidentCombobox';
 import AuditLogView from '../components/AuditLogView';
-import { localDb as db, localDb, forceSyncToRemote, createAuditLog } from '../services/db';
+import { localDb as db, forceSyncToRemote } from '../services/db';
+import { createAuditLog } from '../utils/auditLog';
 import { exportToExcel } from '../utils/excelExporter';
 import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import BlotterForm from '../components/BlotterForm';
@@ -2072,7 +2072,6 @@ const handleStatusDropdownChange = async (newStatus) => {
 const totalResidents = residentsList.length;
 const totalHouseholds = householdsList.length;
 const totalVoters = residentsList.filter(r => r.voter || r.isVoter === 'Yes' || r.voterStatus === 'Yes').length;
-const totalConflicts = residentsList.filter(r => r.conflict || r.hasDerogatory).length;
 
 // Safe Purok Counter (Ina-extract at pino-format ang Purok kahit may kasamang Zone o Address text)
 const getPurokCount = (purokNumber) => {
@@ -5457,7 +5456,7 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
     updatedAt: now,
   };
 
-  const res = await localDb.put(updatedPayload);
+  const res = await db.put(updatedPayload);
 
   const finalDoc = { ...updatedPayload, _rev: res.rev };
   setActivitiesList((prev) =>
@@ -5472,7 +5471,7 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
         updatedAt: now,
       };
 
-      await localDb.put(newPayload);
+      await db.put(newPayload);
 
       setActivitiesList((prev) => [newPayload, ...prev]);
     }
@@ -5523,7 +5522,7 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
   try {
     const docToDelete = activitiesList.find((a) => (a._id || a.id) === id);
     if (docToDelete && docToDelete._id) {
-      await localDb.remove(docToDelete._id, docToDelete._rev);
+      await db.remove(docToDelete._id, docToDelete._rev);
     }
 
     setActivitiesList((prev) => prev.filter((a) => (a._id || a.id) !== id));
@@ -5550,7 +5549,7 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
     useEffect(() => {
       async function loadActivities() {
         try {
-          const result = await localDb.find({
+          const result = await db.find({
             selector: { type: 'activity' }
           });
           if (result.docs) {
@@ -5571,7 +5570,7 @@ const saveSettings = async (updatedSettings) => {
     let existingRev = systemSettings?._rev;
 
     try {
-      const docInDb = await localDb.get('setting_barangay_officials');
+      const docInDb = await db.get('setting_barangay_officials');
       if (docInDb) {
         existingRev = docInDb._rev;
       }
@@ -5592,7 +5591,7 @@ const saveSettings = async (updatedSettings) => {
       ...(existingRev ? { _rev: existingRev } : {})
     };
 
-    const response = await localDb.put(payload);
+    const response = await db.put(payload);
 
     const savedPayload = { ...payload, _rev: response.rev };
     setSystemSettings(savedPayload);
@@ -5606,7 +5605,7 @@ const saveSettings = async (updatedSettings) => {
     });
 
     if (typeof forceSyncToRemote === 'function') {
-      forceSyncToRemote();
+      await forceSyncToRemote();
     }
 
     alert('Barangay settings saved successfully!');
@@ -5628,7 +5627,7 @@ const [settingsForm, setSettingsForm] = useState({
   useEffect(() => {
   async function fetchBarangaySettings() {
     try {
-      const savedData = await localDb.get('setting_barangay_officials');
+      const savedData = await db.get('setting_barangay_officials');
       if (savedData) {
         setSystemSettings(savedData);
         setSettingsForm({
@@ -5741,34 +5740,15 @@ useEffect(() => {
 }, [screen, businessForm._id]);
 
 useEffect(() => {
-  const createIndexes = async () => {
-    try {
-      // Residents index
-      await localDb.createIndex({ 
-        index: { fields: ['type', 'rbiId', 'purok'] }, 
-        name: 'residents_index' 
-      });
-      
-      // Blotter index
-      await localDb.createIndex({ 
-        index: { fields: ['type', 'status', 'dateFiled'] }, 
-        name: 'blotter_index' 
-      });
-      
-      // Certificates index
-      await localDb.createIndex({ 
-        index: { fields: ['type', 'status', 'createdAt'] }, 
-        name: 'certificates_index' 
-      });
-      
-      console.log(' PouchDB indexes created successfully');
-    } catch (err) {
-      console.warn('Index creation skipped (may already exist):', err.message);
-    }
-  };
-  
-  createIndexes();
-}, []); 
+  if (role === 'admin' && db) {
+    fetchDatabaseConflicts();
+  }
+  // Auto-refresh every 30 seconds while on dashboard
+  const interval = setInterval(() => {
+    if (role === 'admin' && db) fetchDatabaseConflicts();
+  }, 30000);
+  return () => clearInterval(interval);
+}, [role, db]);
 
   // ─────────────────────────────────────────────
   // RENDER
@@ -6228,7 +6208,7 @@ useEffect(() => {
             )}
 
             {/* Real-time Dynamic Sync Status Indicator */}
-            <SyncStatusIndicator />
+            <SyncStatusIndicator syncState={syncState} />
 
             <ThemeToggle />
             
@@ -6252,7 +6232,7 @@ useEffect(() => {
                         { label: 'Reg. Voters', value: totalVoters, sub: `${totalResidents > 0 ? ((totalVoters / totalResidents) * 100).toFixed(0) : 0}% of total`, color: 'var(--amber)' },
                         { label: 'Pending Certs', value: pendingRequestsCount, sub: 'Awaiting approval', color: 'var(--accent)' },
                         { label: 'Open Blotter', value: typeof blotterList !== 'undefined' ? blotterList.filter(b => b.status === 'Open' || b.status === 'Under Mediation').length : 0, sub: 'Active cases', color: 'var(--red)' },
-                        ...(role === 'admin' ? [{ label: 'Sync Conflicts', value: totalConflicts, sub: totalConflicts > 0 ? 'Needs fix' : 'All synced', color: totalConflicts > 0 ? 'var(--amber)' : 'var(--muted)' }] : []),
+                        ...(role === 'admin' ? [{ label: 'Sync Conflicts', value: conflictsList.length, sub: conflictsList.length > 0 ? 'Needs fix' : 'All synced', color: conflictsList.length > 0 ? 'var(--amber)' : 'var(--muted)' }] : []),
                         { label: 'Feedback', value: activeFeedbackCount, sub: 'Submissions', color: 'var(--teal)' }
                       ].map((stat, i) => (
                         <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
@@ -6271,11 +6251,11 @@ useEffect(() => {
                           {role === 'admin' ? 'Pending Admin Actions' : 'Pending Actions'}
                         </div>
                         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
-                          {role === 'admin' && totalConflicts > 0 && (
+                          {role === 'admin' && conflictsList.length > 0 && (
                             <div onClick={() => nav('conflicts')} style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: '8px', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
                               <div>
                                 <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--amber-text)' }}>Sync Conflicts Detected</div>
-                                <div style={{ fontSize: '12px', color: 'var(--text)' }}>{totalConflicts} record(s) need resolution</div>
+                                <div style={{ fontSize: '12px', color: 'var(--text)' }}>{conflictsList.length} record(s) need resolution</div>
                               </div>
                               <span style={{ background: 'var(--amber)', color: '#ffffff', border: 'none', fontWeight: 700, fontSize: '11px', padding: '6px 14px', borderRadius: '6px' }}>Resolve</span>
                             </div>

@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
-import { createAuditLog } from '../services/db';
+import { localDb as db } from '../services/db'; 
+import { createAuditLog } from '../utils/auditLog';
 import './LogIn.css';
 
 const getApiBaseUrl = () => {
@@ -22,6 +23,13 @@ const hashPasswordForOffline = async (password) => {
     .join('');
 };
 
+// Helper: Normalize at check kung active ang status
+const isAccountActive = (status) => {
+  if (!status) return true; // Default to active for legacy docs
+  const normalized = String(status).trim().toLowerCase();
+  return normalized === 'active' || normalized === 'enabled' || normalized === 'approved';
+};
+
 export default function LogIn() {
   const navigate = useNavigate();
   const location = useLocation();
@@ -36,67 +44,121 @@ export default function LogIn() {
   );
 
   // Helper para suriin ang Offline Authentication / Local Cache
-  // Helper para suriin ang Offline Authentication / Local Cache
-const checkLocalAuth = async (trimmedUsername, inputPassword) => {
-  try {
-    const lowerUsername = trimmedUsername.toLowerCase();
-    const storedOfflineAuth = localStorage.getItem('bustrac_offline_auth');
-    let allOfflineAuth = storedOfflineAuth ? JSON.parse(storedOfflineAuth) : {};
+  const checkLocalAuth = async (trimmedUsername, inputPassword) => {
+    try {
+      const lowerUsername = trimmedUsername.toLowerCase();
+      const storedOfflineAuth = localStorage.getItem('bustrac_offline_auth');
+      let allOfflineAuth = storedOfflineAuth ? JSON.parse(storedOfflineAuth) : {};
+      const inputHash = await hashPasswordForOffline(inputPassword);
 
-    const inputHash = await hashPasswordForOffline(inputPassword);
+      // 1. Default Admin Seed Check (Fallback)
+      if (lowerUsername === 'admin' && inputPassword === 'capstone2026') {
+        const defaultAdminObj = {
+          username: 'admin',
+          passwordHash: inputHash,
+          role: 'admin',
+          user: {
+            id: 'admin_default',
+            username: 'admin',
+            role: 'admin',
+            name: 'System Administrator',
+            status: 'Active'
+          }
+        };
+        allOfflineAuth['admin'] = defaultAdminObj;
+        localStorage.setItem('bustrac_offline_auth', JSON.stringify(allOfflineAuth));
+        return defaultAdminObj;
+      }
 
-    // 1. Default Admin Seed Check (Gagana kahit kailanman ay hindi pa nakapag-online login)
-    if (lowerUsername === 'admin' && inputPassword === 'capstone2026') {
-      const defaultAdminObj = {
-        username: 'admin',
-        passwordHash: inputHash,
-        role: 'admin',
-        user: { id: 'admin_default', username: 'admin', role: 'admin', name: 'System Administrator' }
-      };
-      allOfflineAuth['admin'] = defaultAdminObj;
-      localStorage.setItem('bustrac_offline_auth', JSON.stringify(allOfflineAuth));
-      return defaultAdminObj;
+      // 2. Suriin sa LocalStorage Cache
+      const offlineAuth = allOfflineAuth[lowerUsername];
+      if (offlineAuth && inputHash === offlineAuth.passwordHash) {
+        const cachedStatus = offlineAuth.user?.status || offlineAuth.status;
+        if (!isAccountActive(cachedStatus)) {
+          return { inactive: true, status: cachedStatus };
+        }
+        return offlineAuth;
+      }
+
+      // 3. Fallback: Suriin sa PouchDB Document
+      try {
+        const localUserDoc = await db.get(`user_${lowerUsername}`);
+        if (
+          localUserDoc &&
+          (localUserDoc.passwordHash === inputHash || localUserDoc.password === inputPassword)
+        ) {
+          if (!isAccountActive(localUserDoc.status)) {
+            return { inactive: true, status: localUserDoc.status };
+          }
+          return {
+            username: localUserDoc.username,
+            passwordHash: localUserDoc.passwordHash || inputHash,
+            role: localUserDoc.role,
+            user: {
+              id: localUserDoc._id,
+              username: localUserDoc.username,
+              role: localUserDoc.role,
+              fullName: localUserDoc.fullName || localUserDoc.name,
+              status: localUserDoc.status
+            }
+          };
+        }
+      } catch (pouchErr) {
+        // Continue if doc not found
+      }
+
+      return null;
+    } catch (err) {
+      console.error('Error during local auth verification:', err);
+      return null;
     }
-
-    // 2. Suriin ang mayroon nang Offline Cache
-    const offlineAuth = allOfflineAuth[lowerUsername];
-    if (!offlineAuth) return null;
-
-    if (inputHash === offlineAuth.passwordHash) {
-      return offlineAuth;
-    }
-    return null;
-  } catch (err) {
-    console.error('Error during local auth verification:', err);
-    return null;
-  }
-};
+  };
 
   const handleLogin = useCallback(
     async (event) => {
       event.preventDefault();
       setShowError(false);
       setIsLoading(true);
+
       const trimmedUsername = username.trim();
       const lowerUsername = trimmedUsername.toLowerCase();
 
       try {
-        // STEP 1: Subukang mag-online Login via API Server
+        // STEP 1: Online API Login Attempt
         const response = await fetch(`${API_BASE_URL}/api/login`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ username: trimmedUsername, password }),
         });
 
+        // ==================== DEBUG: HTTP LEVEL ====================
+        console.log('>>> [LOGIN] API URL:', `${API_BASE_URL}/api/login`);
+        console.log('>>> [LOGIN] HTTP Status:', response.status, response.statusText);
+        console.log('>>> [LOGIN] response.ok:', response.ok);
+        // ==========================================================
+
         if (response.ok) {
           const data = await response.json();
-          if (data.success) {
-            const userRole = data.user?.role || data.role;
-            sessionStorage.setItem('bustrac_role', userRole);
-            sessionStorage.setItem('bustrac_user', JSON.stringify(data.user));
-            sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+          console.log('>>> LOGIN API RESPONSE:', data);
 
-            // I-cache ang credentials sa LocalStorage para sa susunod na offline access
+          if (data.success) {
+            const userRole = String(data.user?.role || data.role || '').trim().toLowerCase();
+            console.log('>>> EXTRACTED ROLE:', userRole);
+            console.log('>>> NAVIGATING TO:', userRole === 'admin' ? '/admin' : '...');
+
+            if (!isAccountActive(data.user?.status)) {
+              setErrorMessage('Ang iyong account ay hindi aktibo. Makipag-ugnayan sa Administrator.');
+              setShowError(true);
+              setIsLoading(false);
+              return;
+            }
+
+            // Gamitin ang localStorage para sa Offline Persistence
+            localStorage.setItem('bustrac_role', userRole);
+            localStorage.setItem('bustrac_user', JSON.stringify(data.user));
+            localStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
+            // Cache credentials sa localStorage
             try {
               const passwordHash = await hashPasswordForOffline(password);
               const existingOfflineAuth = JSON.parse(
@@ -109,24 +171,37 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
                 user: data.user,
               };
               localStorage.setItem('bustrac_offline_auth', JSON.stringify(existingOfflineAuth));
+
+              // Magtabi rin ng copy sa PouchDB
+              const pouchUserDoc = {
+                _id: `user_${lowerUsername}`,
+                type: 'user',
+                username: trimmedUsername,
+                passwordHash,
+                role: userRole,
+                fullName: data.user?.fullName || data.user?.name || trimmedUsername,
+                status: data.user?.status || 'Active',
+                updatedAt: new Date().toISOString()
+              };
+              await db.put(pouchUserDoc).catch(() => {});
             } catch (e) {
-              console.warn('Failed to cache credentials locally:', e);
+              console.warn('Failed to cache user credentials:', e);
             }
 
-            // System Audit Logging
+            // Audit Log
             try {
               await createAuditLog({
                 action: 'USER_LOGIN',
                 module: 'SYSTEM',
-                recordId: data.user?.username || trimmedUsername || 'UNKNOWN',
+                recordId: data.user?.username || trimmedUsername,
                 user: `${data.user?.username || trimmedUsername} (${userRole})`,
-                details: `${userRole === 'admin' ? 'Admin' : userRole === 'staff' ? 'Staff' : 'Resident'} logged in via Online API`,
+                details: `${userRole} logged in via Online API`,
               });
             } catch (auditErr) {
-              console.warn('Audit log entry failed:', auditErr);
+              console.warn('Audit log error:', auditErr);
             }
 
-            // Navigation
+            // Redirect batay sa Role
             if (userRole === 'admin') navigate('/admin');
             else if (userRole === 'staff') navigate('/staff');
             else if (userRole === 'resident') {
@@ -136,30 +211,57 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
               navigate('/');
             }
             return;
+          } else {
+            // ✅ HTTP 200 pero data.success === false
+            console.warn('>>> data.success is FALSE');
+            console.warn('>>> Full response data:', JSON.stringify(data, null, 2));
+          }
+        } else {
+          // ✅ HTTP error (401, 403, 500, etc.)
+          console.error('>>> response.ok is FALSE. Status:', response.status);
+          console.error('>>> Status text:', response.statusText);
+          try {
+            const errorBody = await response.json();
+            console.error('>>> Error body:', errorBody);
+          } catch (_) {
+            console.error('>>> Error body is not JSON (probably HTML o walang laman)');
           }
         }
 
-        // Kung hindi success ang response (maling password o invalid account)
         setErrorMessage('Invalid username or password. Please try again.');
         setShowError(true);
-
       } catch (err) {
-        // STEP 2: Fallback sa Local Offline Auth kung walang backend connection
-        console.warn('Network or API Login server unavailable. Attempting offline fallback...', err);
+        // STEP 2: Offline Fallback
+        console.warn('Backend unavailable. Switching to offline authentication...', err);
         const localUser = await checkLocalAuth(trimmedUsername, password);
 
-        if (localUser) {
-          const userRole = localUser.role || localUser.user?.role;
-          sessionStorage.setItem('bustrac_role', userRole);
-          sessionStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
-          sessionStorage.setItem('bustrac_loginTime', new Date().toISOString());
+        if (localUser?.inactive) {
+          setErrorMessage('Ang iyong account ay hindi aktibo.');
+          setShowError(true);
+        } else if (localUser) {
+          const userRole = String(localUser.role || localUser.user?.role || '').trim().toLowerCase();
+          localStorage.setItem('bustrac_role', userRole);
+          localStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
+          localStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
+          createAuditLog({
+            action: 'USER_LOGIN',
+            module: 'SYSTEM',
+            recordId: localUser.user?.username || trimmedUsername,
+            user: `${localUser.user?.username || trimmedUsername} (${userRole})`,
+            details: `${userRole} logged in via OFFLINE MODE`,
+          }).catch(console.warn);
 
           if (userRole === 'admin') navigate('/admin');
           else if (userRole === 'staff') navigate('/staff');
           else if (userRole === 'resident') navigate('/resident');
           else navigate('/');
         } else {
-          setErrorMessage('Cannot connect to server and no offline cache found for this user.');
+          setErrorMessage(
+            navigator.onLine
+              ? 'Invalid username or password.'
+              : 'Hindi pa na-cache sa device na ito ang account. Mag-login muna nang may internet connection.'
+          );
           setShowError(true);
         }
       } finally {
@@ -182,16 +284,14 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
 
   return (
     <div className="login-page-root">
-      {/* KALIWA: HERO / BRANDING SECTION */}
+      {/* LEFT: HERO / BRANDING SECTION */}
       <div className="hero-section">
         <div className="hero-glow-top" />
         <div className="hero-glow-bottom" />
-
         <div className="hero-brand">
           <img src={logo} alt="Barangay Logo" className="brand-logo" />
           <span className="brand-title">Bustrac Hub</span>
         </div>
-
         <div className="hero-content">
           <div className="hero-tag font-bold">Barangay Management Portal</div>
           <h1 className="hero-heading">
@@ -200,7 +300,6 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
           <p className="hero-description">
             Centralized resident profiling, certificate issuance, blotter logging, and aid distribution workspace built for uninterrupted barangay operations.
           </p>
-
           <div className="hero-features">
             <div>
               <div className="feature-title">Offline Sync</div>
@@ -216,20 +315,18 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
             </div>
           </div>
         </div>
-
         <div className="hero-footer">
           © 2026 Barangay Bustrac. All rights reserved.
         </div>
       </div>
 
-      {/* KANAN: LOGIN FORM SECTION */}
+      {/* RIGHT: LOGIN FORM SECTION */}
       <div className="form-section">
         <div className="form-container">
           <div className="mobile-brand">
             <img src={logo} alt="Logo" className="brand-logo-sm" />
             <span className="brand-title-sm">Bustrac Hub</span>
           </div>
-
           <div className="form-header">
             <h2 className="form-title">Sign In</h2>
             <p className="form-sub">
@@ -237,7 +334,6 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
             </p>
           </div>
 
-          {/* ERROR ALERT */}
           {showError && (
             <div className="error-alert">
               <svg className="error-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -247,7 +343,6 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
             </div>
           )}
 
-          {/* FORM */}
           <form onSubmit={handleLogin} className="login-form">
             <div className="input-group">
               <label className="input-label">Username</label>
@@ -315,7 +410,6 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
             </button>
           </form>
 
-          {/* FOOTER ACTIONS */}
           <div className="form-footer">
             <div style={{ textAlign: 'center', marginBottom: '12px', fontSize: '13px', color: '#94a3b8' }}>
               Don't have a Resident Account yet?{' '}
@@ -338,14 +432,11 @@ const checkLocalAuth = async (trimmedUsername, inputPassword) => {
                 Register Here
               </button>
             </div>
-            <button
-              type="button"
-              onClick={() => navigate('/')}
-              className="back-btn"
-            >
+            <button type="button" onClick={() => navigate('/')} className="back-btn">
               ← Back to Public Portal
             </button>
             <p className="offline-notice">
+              {!isOnline && <strong style={{ color: '#f59e0b' }}>[OFFLINE MODE] </strong>}
               Works seamlessly without internet. Your data saves locally and automatically syncs when online.
             </p>
           </div>

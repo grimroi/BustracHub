@@ -3,7 +3,8 @@ import { createPortal } from 'react-dom';
 import { QRCodeSVG } from 'qrcode.react';
 import barangayLogo from '../assets/bustrac-logo.png';
 import nabuaLogo from '../assets/nabua-logo.jpg';
-import { createAuditLog, localDb } from '../services/db';
+import { localDb as db } from '../services/db';
+import { createAuditLog } from '../utils/auditLog';
 
 export default function BlotterCertificatePrintModal({ isOpen, onClose, blotterData }) {
   const [showSuccess, setShowSuccess] = useState(false);
@@ -94,7 +95,7 @@ export default function BlotterCertificatePrintModal({ isOpen, onClose, blotterD
   useEffect(() => {
     async function fetchBarangaySettings() {
       try {
-        const savedData = await localDb.get('setting_barangay_officials');
+        const savedData = await db.get('setting_barangay_officials');
         setSystemSettings(savedData);
       } catch (err) {
         if (err.status !== 404) {

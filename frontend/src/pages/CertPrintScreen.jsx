@@ -5,7 +5,8 @@ import BusinessPermit from '../components/certificates/templates/BusinessPermit'
 import IndigencyTemplate from '../components/certificates/templates/IndigencyTemplate';
 import ResidencyCertificate from '../components/certificates/templates/ResidencyCertificate';
 import '../styles/Certificates.css';
-import { localDb as db, createAuditLog } from '../services/db';
+import { localDb as db } from '../services/db';
+import { createAuditLog } from '../utils/auditLog';
 
 
 

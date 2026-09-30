@@ -1,9 +1,11 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { localDb as db, forceSyncToRemote, createAuditLog } from '../services/db';
+import { localDb as db, forceSyncToRemote } from '../services/db';
+import { createAuditLog } from '../utils/auditLog';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
 import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart } from "react-icons/fa";
+import { saveCertificateRequest } from '../services/db';
 
 import {
   normalizeCertificateDoc,
@@ -247,7 +249,7 @@ export default function ResidentUI() {
           try {
             const storageUser = JSON.parse(sessionStorage.getItem('bustrac_user') || localStorage.getItem('bustrac_user') || '{}');
             const updated = { ...storageUser, ...merged };
-            sessionStorage.setItem('bustrac_user', JSON.stringify(updated));
+            localStorage.setItem('bustrac_user', JSON.stringify(updated));
             localStorage.setItem('bustrac_user', JSON.stringify(updated));
           } catch (e) { /* ignore */ }
           return merged;
@@ -293,12 +295,13 @@ export default function ResidentUI() {
 
   /* ── Handlers ── */
   const handleLogout = useCallback(() => {
-    if (window.confirm('Are you sure you want to leave the resident portal?')) {
-      sessionStorage.removeItem('bustrac_user');
-      localStorage.removeItem('bustrac_user');
-      navigate('/');
-    }
-  }, [navigate]);
+  if (window.confirm('Are you sure you want to leave the resident portal?')) {
+    sessionStorage.removeItem('bustrac_user');
+    localStorage.removeItem('bustrac_user');
+    localStorage.removeItem('bustrac_role');
+    navigate('/');
+  }
+}, [navigate]);
 
   const updateCertField = (field) => (e) => {
     setCertForm((prev) => ({ ...prev, [field]: e.target.value }));
@@ -735,7 +738,7 @@ export default function ResidentUI() {
         civilStatus: updatedDoc.civilStatus,
       };
       localStorage.setItem('bustrac_user', JSON.stringify(merged));
-      sessionStorage.setItem('bustrac_user', JSON.stringify(merged));
+      localStorage.setItem('bustrac_user', JSON.stringify(merged));
       return merged;
     });
 
