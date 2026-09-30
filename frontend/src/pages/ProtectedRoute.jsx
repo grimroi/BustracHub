@@ -14,7 +14,7 @@ export default function ProtectedRoute({ children, allowedRoles }) {
   }
   role = role.trim();
 
-  const rawUser = sessionStorage.getItem('bustrac_user');
+  const rawUser = localStorage.getItem('bustrac_user');
   const isLoggedIn = !!rawUser;
 
   if (!isLoggedIn) {

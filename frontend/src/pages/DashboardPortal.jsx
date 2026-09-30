@@ -580,7 +580,7 @@ const handleOpenPrint = (blotterItem) => {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   
   // ── Dynamic User Identity ──
-const rawUser = sessionStorage.getItem('bustrac_user');
+const rawUser = localStorage.getItem('bustrac_user');
 
 let currentUser = {};
 
@@ -8237,57 +8237,28 @@ useEffect(() => {
                     </form>
 
                     {/* ─ REGISTERED BARANGAY CLEARANCES MASTERLIST TABLE ── */}
-                      <div className="tw" style={{ 
-                        background: 'var(--surface)', 
-                        border: '1px solid var(--border)', 
-                        borderRadius: '12px', 
-                        overflow: 'hidden',
-                        marginTop: '20px'
-                      }}>
-                        {/* Table Header */}
-                        <div style={{ 
-                          padding: '20px 24px', 
-                          background: 'var(--surface2)', 
-                          borderBottom: '2px solid var(--border)', 
-                          display: 'flex', 
-                          justifyContent: 'space-between', 
-                          alignItems: 'center', 
-                          flexWrap: 'wrap', 
-                          gap: '16px' 
-                        }}>
-                          <h4 style={{ 
-                            margin: 0, 
-                            fontSize: '15px', 
-                            fontWeight: 700, 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '10px' 
-                          }}>
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                              <polyline points="14 2 14 8 20 8" />
-                              <line x1="16" y1="13" x2="8" y2="13" />
-                              <line x1="16" y1="17" x2="8" y2="17" />
-                            </svg>
-                            Issued Individual Barangay Clearances
-                            <span style={{ 
-                              fontSize: '13px', 
-                              color: 'var(--muted)', 
-                              fontWeight: 500, 
-                              background: 'var(--surface)', 
-                              padding: '4px 12px', 
-                              borderRadius: '20px', 
-                              border: '1px solid var(--border)' 
-                            }}>
-                              {filteredClearances.length} of {clearanceList.length}
-                            </span>
-                          </h4>
-                           
+                    <div className="tw" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginTop: '20px' }}>
+                      {/* Table Header / Toolbar */}
+                      <div style={{ padding: '20px 24px', background: 'var(--surface2)', borderBottom: '2px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '16px' }}>
+                        <h4 style={{ margin: 0, fontSize: '15px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
+                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                            <polyline points="14 2 14 8 20 8" />
+                            <line x1="16" y1="13" x2="8" y2="13" />
+                            <line x1="16" y1="17" x2="8" y2="17" />
+                          </svg>
+                          Issued Individual Barangay Clearances
+                          <span style={{ fontSize: '13px', color: 'var(--muted)', fontWeight: 500, background: 'var(--surface)', padding: '4px 12px', borderRadius: '20px', border: '1px solid var(--border)' }}>
+                            {filteredClearances.length} of {clearanceList.length}
+                          </span>
+                        </h4>
+                        
+                        <div style={{ display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' }}>
                           <button 
                             type="button" 
                             className="btn btn-g" 
                             onClick={() => handleGenerateExcelReport('clearances')} 
-                            style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '42px', fontSize: '13px' }}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '42px', fontSize: '13px', fontWeight: 600 }}
                           >
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
@@ -8296,15 +8267,9 @@ useEffect(() => {
                             </svg>
                             Export Excel
                           </button>
-                          <div style={{ position: 'relative', width: '350px', maxWidth: '100%' }}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" 
-                              style={{ 
-                                position: 'absolute', 
-                                left: '14px', 
-                                top: '50%', 
-                                transform: 'translateY(-50%)', 
-                                pointerEvents: 'none' 
-                              }}>
+                          
+                          <div style={{ position: 'relative', width: '320px', maxWidth: '100%' }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" style={{ position: 'absolute', left: '14px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
                               <circle cx="11" cy="11" r="8" />
                               <path d="M21 21l-4.35-4.35" />
                             </svg>
@@ -8314,129 +8279,100 @@ useEffect(() => {
                               placeholder="Search clearance no., name, purpose..." 
                               value={clearanceSearch} 
                               onChange={(e) => setClearanceSearch(e.target.value)} 
-                              style={{ 
-                                paddingLeft: '44px', 
-                                paddingRight: '14px', 
-                                height: '42px', 
-                                borderRadius: '8px', 
-                                border: '1.5px solid var(--border)', 
-                                fontWeight: 500 
-                              }} 
+                              style={{ paddingLeft: '44px', paddingRight: '14px', height: '42px', borderRadius: '8px', border: '1.5px solid var(--border)', fontWeight: 500, width: '100%' }} 
                             />
                           </div>
                         </div>
-                        
-                        {/* Table Content */}
-                        <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '65vh' }}>
-                          <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse', textAlign: 'left' }}>
-                            <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
-                              <tr style={{ background: 'var(--surface2)', borderBottom: '2px solid var(--border)' }}>
-                                <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', whiteSpace: 'nowrap' }}>Clearance No.</th>
-                                <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Resident Full Name</th>
-                                <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Purpose</th>
-                                <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Date Issued</th>
-                                <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>O.R. No.</th>
-                                <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'right' }}>Amount</th>
-                                <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'center' }}>Actions</th>
+                      </div>
+
+                      {/* Table Content with Scroll */}
+                      <div style={{ overflowX: 'auto', overflowY: 'auto', maxHeight: '65vh' }}>
+                        <table style={{ width: '100%', fontSize: '13px', borderCollapse: 'collapse', textAlign: 'left' }}>
+                          <thead style={{ position: 'sticky', top: 0, zIndex: 10 }}>
+                            <tr style={{ background: 'var(--surface2)', borderBottom: '2px solid var(--border)' }}>
+                              <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', whiteSpace: 'nowrap' }}>Clearance No.</th>
+                              <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Resident Full Name</th>
+                              <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Purpose</th>
+                              <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Date Issued</th>
+                              <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>O.R. No.</th>
+                              <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'right' }}>Amount</th>
+                              <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'center' }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {filteredClearances.length === 0 ? (
+                              <tr>
+                                <td colSpan="7" style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--muted)' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                    <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'var(--surface2)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '8px' }}>
+                                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" style={{ opacity: 0.6 }}>
+                                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                        <path d="M14 2v6h6" />
+                                        <path d="M12 18v-6" />
+                                        <path d="M9 15h6" />
+                                      </svg>
+                                    </div>
+                                    <div>
+                                      <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px', color: 'var(--text)' }}>
+                                        {clearanceList.length === 0 ? 'No Clearances Found' : 'No Results Found'}
+                                      </div>
+                                      <div style={{ fontSize: '13px', opacity: 0.8 }}>
+                                        {clearanceList.length === 0 ? 'No individual barangay clearances found in database' : 'No clearances match your search criteria'}
+                                      </div>
+                                    </div>
+                                  </div>
+                                </td>
                               </tr>
-                            </thead>
-                            <tbody>
-                              {filteredClearances.length === 0 ? (
-                                <tr>
-                                  <td colSpan="7" style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--muted)' }}>
-                                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                                      <div style={{ 
-                                        width: '64px', 
-                                        height: '64px', 
-                                        borderRadius: '50%', 
-                                        background: 'var(--surface2)', 
-                                        display: 'flex', 
-                                        alignItems: 'center', 
-                                        justifyContent: 'center', 
-                                        marginBottom: '8px' 
-                                      }}>
-                                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" style={{ opacity: 0.6 }}>
-                                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                          <path d="M14 2v6h6" />
-                                          <path d="M12 18v-6" />
-                                          <path d="M9 15h6" />
+                            ) : (
+                              filteredClearances.map((rec) => (
+                                <tr 
+                                  key={rec._id} 
+                                  style={{ borderBottom: '1px solid var(--border)', transition: 'background-color 0.2s ease' }} 
+                                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface2)'; }} 
+                                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
+                                >
+                                  <td style={{ padding: '16px 20px', fontWeight: '700', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--accent)' }}>{rec.clearanceNo}</td>
+                                  <td style={{ padding: '16px 20px', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text)' }}>{rec.fullName}</td>
+                                  <td style={{ padding: '16px 20px', color: 'var(--text)' }}>{rec.purpose}</td>
+                                  <td style={{ padding: '16px 20px', fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{rec.dateIssued}</td>
+                                  <td style={{ padding: '16px 20px', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--muted)' }}>{rec.orNo || '—'}</td>
+                                  <td style={{ padding: '16px 20px', fontWeight: 700, textAlign: 'right', color: 'var(--green)', fontFamily: 'var(--mono)' }}>₱{parseFloat(rec.amtPaid || 0).toFixed(2)}</td>
+                                  <td style={{ padding: '16px 20px', textAlign: 'center' }}>
+                                    <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
+                                      <button 
+                                        type="button" 
+                                        className="btn btn-g" 
+                                        style={{ padding: '8px 14px', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '6px' }} 
+                                        onClick={() => handleEditClearance(rec)}
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
                                         </svg>
-                                      </div>
-                                      <div>
-                                        <div style={{ fontSize: '15px', fontWeight: 600, marginBottom: '6px', color: 'var(--text)' }}>
-                                          {clearanceList.length === 0 ? 'No Clearances Found' : 'No Results Found'}
-                                        </div>
-                                        <div style={{ fontSize: '13px', opacity: 0.8 }}>
-                                          {clearanceList.length === 0 
-                                            ? 'No individual barangay clearances found in database' 
-                                            : 'No clearances match your search criteria'}
-                                        </div>
-                                      </div>
+                                        Edit
+                                      </button>
+                                      <button 
+                                        type="button" 
+                                        className="btn btn-p" 
+                                        style={{ padding: '8px 14px', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '6px', borderRadius: '6px' }} 
+                                        onClick={() => handlePrintClearance(rec)}
+                                      >
+                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                          <polyline points="6 9 6 2 18 2 18 9" />
+                                          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                                          <rect x="6" y="14" width="12" height="8" />
+                                        </svg>
+                                        Print
+                                      </button>
                                     </div>
                                   </td>
                                 </tr>
-                              ) : (
-                                filteredClearances.map((rec) => (
-                                  <tr key={rec._id} style={{ 
-                                    borderBottom: '1px solid var(--border)', 
-                                    transition: 'all 0.2s ease' 
-                                  }} 
-                                  onMouseEnter={(e) => { 
-                                    e.currentTarget.style.background = 'var(--surface2)'; 
-                                    e.currentTarget.style.transform = 'scale(1.002)'; 
-                                  }} 
-                                  onMouseLeave={(e) => { 
-                                    e.currentTarget.style.background = 'transparent'; 
-                                    e.currentTarget.style.transform = 'scale(1)'; 
-                                  }}>
-                                    <td style={{ padding: '16px 20px', fontWeight: '700', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--accent)' }}>{rec.clearanceNo}</td>
-                                    <td style={{ padding: '16px 20px', textTransform: 'uppercase', fontWeight: 600 }}>{rec.fullName}</td>
-                                    <td style={{ padding: '16px 20px', color: 'var(--text)' }}>{rec.purpose}</td>
-                                    <td style={{ padding: '16px 20px', fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{rec.dateIssued}</td>
-                                    <td style={{ padding: '16px 20px', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--muted)' }}>{rec.orNo || '—'}</td>
-                                    <td style={{ padding: '16px 20px', fontWeight: 700, textAlign: 'right', color: 'var(--green)', fontFamily: 'var(--mono)' }}>₱{parseFloat(rec.amtPaid || 0).toFixed(2)}</td>
-                                    <td style={{ padding: '16px 20px', textAlign: 'center' }}>
-                                      <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                                        <button type="button" className="btn btn-g" style={{ 
-                                          padding: '8px 14px', 
-                                          fontSize: '11px', 
-                                          fontWeight: 600, 
-                                          display: 'flex', 
-                                          alignItems: 'center', 
-                                          gap: '6px', 
-                                          borderRadius: '6px' 
-                                        }} onClick={() => handleEditClearance(rec)}>
-                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                          </svg>
-                                          Edit
-                                        </button>
-                                        <button type="button" className="btn btn-p" style={{ 
-                                          padding: '8px 14px', 
-                                          fontSize: '11px', 
-                                          fontWeight: 600, 
-                                          display: 'flex', 
-                                          alignItems: 'center', 
-                                          gap: '6px', 
-                                          borderRadius: '6px' 
-                                        }} onClick={() => handlePrintClearance(rec)}>
-                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                            <polyline points="6 9 6 2 18 2 18 9" />
-                                            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-                                            <rect x="6" y="14" width="12" height="8" />
-                                          </svg>
-                                          Print
-                                        </button>
-                                      </div>
-                                    </td>
-                                  </tr>
-                                ))
-                              )}
-                            </tbody>
-                          </table>
-                        </div>
+                              ))
+                            )}
+                          </tbody>
+                        </table>
                       </div>
+                    </div>
                   </div>
                 )}
 
@@ -12686,38 +12622,47 @@ useEffect(() => {
       
       {/* ═══ BARANGAY CLEARANCE PRINT MODAL PORTAL ═══ */}
       {showClearancePrintModal && selectedClearanceCert && createPortal(
-        <div className="clearance-print-overlay">
-          <div className="clearance-modal-content">
-            {/* Printable Area Wrapper */}
-            <div style={{ flex: 1, overflowY: 'auto', display: 'flex', justifyContent: 'center' }}>
-              <A4PreviewWrapper>
-                <div id="printable-certificate-card">
+        <div 
+          className="clearance-print-overlay"
+          style={{ 
+            position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, 
+            backgroundColor: 'rgba(0, 0, 0, 0.85)', 
+            display: 'flex', alignItems: 'center', justifyContent: 'center', 
+            zIndex: 999999, padding: '20px', backdropFilter: 'blur(6px)' 
+          }}
+          onClick={() => setShowClearancePrintModal(false)}
+        >
+          <div 
+            className="clearance-modal-content"
+            style={{ 
+              background: '#fff', borderRadius: '12px', width: '100%', maxWidth: '900px', 
+              maxHeight: '90vh', display: 'flex', flexDirection: 'column', 
+              boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', overflow: 'hidden', margin: 'auto' 
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Preview Wrapper (Gray background para parang tunay na papel) */}
+            <div 
+              className="print-preview-wrapper"
+              style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', justifyContent: 'center', backgroundColor: '#525659' }}
+            >
+              <div id="printable-certificate-card" style={{ width: '210mm', minHeight: '297mm', backgroundColor: '#ffffff', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
+                <A4PreviewWrapper>
                   <BarangayClearance data={selectedClearanceCert} />
-                </div>
-              </A4PreviewWrapper>
+                </A4PreviewWrapper>
+              </div>
             </div>
 
-            {/* Action Buttons */}
-            <div className="no-print modal-actions">
-              <button 
-                type="button" 
-                className="btn btn-g" 
-                onClick={() => setShowClearancePrintModal(false)}
-              >
-                Close
-              </button>
-              <button 
-                type="button" 
-                className="btn btn-p" 
-                onClick={() => window.print()}
-              >
-                Print Certificate
-              </button>
+            {/* Action Buttons (Mawawala ito pag nag-print) */}
+            <div className="no-print" style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', padding: '16px', borderTop: '1px solid #e2e8f0', background: '#f8fafc' }}>
+              <button type="button" className="btn btn-g" onClick={() => setShowClearancePrintModal(false)}>Close</button>
+              <button type="button" className="btn btn-p" onClick={() => window.print()}>🖨️ Print Certificate</button>
             </div>
           </div>
         </div>,
         document.body
       )}
+
       {/* ═══ BUSINESS CLEARANCE PRINT PORTAL / OVERLAY ═══ */}
       {showBusinessPrintModal && selectedBusinessCert && createPortal(
         <div 

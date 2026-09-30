@@ -4,8 +4,8 @@ const auditDB = new PouchDB('bustrac_audit_logs');
 
 export async function createAuditLog({ action, module, recordId = null, details = '' }) {
   try {
-    const rawUser = sessionStorage.getItem('bustrac_user');
-    const role = sessionStorage.getItem('bustrac_role');
+    const rawUser = localStorage.getItem('bustrac_user');
+    const role = localStorage.getItem('bustrac_role'); 
     let actor = {
       username: 'system',
       role: 'system',

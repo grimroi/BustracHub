@@ -1,7 +1,7 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-import tailwindcss from '@tailwindcss/vite'
-import { VitePWA } from 'vite-plugin-pwa'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+import { VitePWA } from 'vite-plugin-pwa';
 
 export default defineConfig({
   plugins: [
@@ -10,10 +10,32 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       injectRegister: 'auto',
-      workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg}']
+      manifest: {
+        name: 'Bustrac Hub',
+        short_name: 'Bustrac',
+        start_url: '/',
+        display: 'standalone',
+        background_color: '#ffffff',
+        theme_color: '#3b82f6',
       },
-      manifest: false // Walang standalone PWA install prompt ayon sa instruction ng panel
+      workbox: {
+        // 1. I-cache ang lahat ng static assets
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,jpg,jpeg,woff,woff2}'],
+        
+        // 2. THE MAGIC FIX: Sabihin sa SW na i-serve ang index.html sa anumang route (e.g., /resident)
+        navigateFallback: '/index.html',
+        
+        // 3. Huwag i-intercept ang mga API calls o mga file na may extension (like .js, .png)
+        navigateFallbackDenylist: [/^\/api\//, /\/[^/?]+\.[^/]+$/],
+        
+        // 4. Increase cache limit para iwas error sa pag-cache ng malalaking JS files
+        maximumFileSizeToCacheInBytes: 5 * 1024 * 1024, // 5MB
+      },
+      // I-enable sa dev para sa testing (pero mas mainam i-test sa build)
+      devOptions: {
+        enabled: true,
+        type: 'module',
+      }
     })
   ],
   define: {
@@ -36,4 +58,4 @@ export default defineConfig({
     host: true,
     port: 5173
   }
-})
+});
