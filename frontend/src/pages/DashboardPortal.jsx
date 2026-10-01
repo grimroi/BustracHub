@@ -29,6 +29,8 @@ import "../styles/Certificates.css";
 
 const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
 
+const SESSION_TIMEOUT_MIN = Number(import.meta.env.VITE_SESSION_TIMEOUT_MIN) || 15;
+
 // ─────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────
@@ -216,6 +218,11 @@ const ACTION_META = {
     bClass: 'g' 
   },
 };
+
+// ─────────────────────────────────────────────
+// ADMIN-ONLY SCREEN GUARD
+// ─────────────────────────────────────────────
+const ADMIN_ONLY_SCREENS = ['conflicts', 'audit', 'users', 'officials'];
 
 function getActionMeta(action = '') {
   const key = action.toUpperCase();
@@ -1158,12 +1165,20 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   // HANDLERS — SHARED
   // ─────────────────────────────────────────────
   const nav = (id) => {
+  // 🔒 Guard: harangin ang admin-only screens kung hindi admin
+  if (ADMIN_ONLY_SCREENS.includes(id) && role !== 'admin') {
+    showToast('Access denied. Admin-only module.', 'error');
+    return;
+  }
   setScreen(id);
   navigate(`?page=${id}`);
-  // Updates the browser history so this screen can be tracked by the Back button.
   window.history.pushState({ internalScreen: id }, '', '');
 };
-  const logout        = ()  => navigate('/login');
+  const logout = () => {
+  localStorage.removeItem('bustrac_user');
+  sessionStorage.removeItem('bustrac_user');
+  navigate('/login');
+};
 
   // ─────────────────────────────────────────────
   // HANDLERS — STAFF BLOTTER / SUMMONS
@@ -3117,6 +3132,50 @@ useEffect(() => {
     setScreen('dashboard');
   }
 }, [location, blotterList]);
+useEffect(() => {
+  if (role === 'admin') return;
+  if (!ADMIN_ONLY_SCREENS.includes(screen)) return;
+
+  showToast('Access denied. Admin-only ang page na ito.', 'error');
+  setScreen('dashboard');
+  navigate('?page=dashboard', { replace: true });
+
+  // Table 10: "Unauthorized Access Attempt Logging"
+  (async () => {
+    try {
+      await createAuditLog({
+        action: 'FLAG',
+        module: 'SECURITY',
+        recordId: screen,
+        user: `${currentUser?.username || 'unknown'} (${role})`,
+        details: `Blocked unauthorized access to "${screen}" (${navigator.onLine ? 'online' : 'offline'})`,
+      });
+    } catch (e) {
+      console.warn('Audit log failed:', e);
+    }
+  })();
+}, [screen, role, navigate]);
+
+useEffect(() => {
+  let timer;
+  const expire = () => {
+    localStorage.removeItem('bustrac_user');
+    sessionStorage.removeItem('bustrac_user');
+    alert('Session expired dahil sa inactivity. Mag-login ulit.');
+    navigate('/login');
+  };
+  const reset = () => {
+    clearTimeout(timer);
+    timer = setTimeout(expire, SESSION_TIMEOUT_MIN * 60 * 1000);
+  };
+  const events = ['mousemove', 'keydown', 'click', 'scroll', 'touchstart'];
+  events.forEach((e) => window.addEventListener(e, reset));
+  reset();
+  return () => {
+    clearTimeout(timer);
+    events.forEach((e) => window.removeEventListener(e, reset));
+  };
+}, [navigate]);
 
 const currentBlotterRoster = Array.isArray(blotterList) ? blotterList : [];
 
@@ -11594,8 +11653,8 @@ useEffect(() => {
             )}
             {/* ════════════════════════════════════════
                 SCREEN: CONFLICT RESOLUTION (Admin only)
-             ════════════════════════════════════════ */}
-                {screen === 'conflicts' && (
+                ════════════════════════════════════════ */}
+                {role === 'admin' && screen === 'conflicts' && (
                 <div className="screen active">
                   {conflictsList.length === 0 ? (
                     <div
