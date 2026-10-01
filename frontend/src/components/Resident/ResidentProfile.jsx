@@ -1,12 +1,12 @@
 import { useState, useEffect } from 'react';
 import { FaUser, FaPhone, FaEnvelope, FaMapMarkerAlt, FaIdCard, FaCalendarAlt, FaVenusMars, FaHeart, FaEdit, FaSave, FaTimes, FaSignOutAlt, FaSync } from 'react-icons/fa';
-import {
-  calculateAge,
-  getInitialProfileState,
-  formatDisplayDate,
-  validateProfileData,
-  getInitials,
-} from '../utils/residentUtils';
+import { 
+  calculateAge, 
+  getInitialProfileState, 
+  formatDisplayDate, 
+  validateProfileData, 
+  getInitials 
+} from "../../utils/residentUtils";
 
 export default function ResidentProfile({
   residentProfile,

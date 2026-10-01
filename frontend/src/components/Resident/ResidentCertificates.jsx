@@ -5,28 +5,28 @@ const certSteps = ['Submitted', 'Review', 'Approved', 'Ready', 'Issued'];
 
 // Default Certificate Requirements List
 const DEFAULT_CERTIFICATE_REQUIREMENTS = {
+
   'Barangay Clearance': [
     'Valid ID (Government-issued)',
     'Proof of Residency / Purok Endorsement',
     'Recent 2x2 Picture (White background)'
   ],
+
   'Certificate of Indigency': [
-    'Valid ID o Voter\'s Stub',
-    'Kumpirmasyon mula sa Purok Leader',
-    'Layunin o Patunay ng Pangangailangan (e.g., Medical/Educational/Financial Assistance)'
+    'Valid ID or Voter\'s Stub',
+    'Confirmation from the Purok Leader',
+    'Purpose or Proof of Need (e.g., Medical/Educational/Financial Assistance)'
   ],
+
   'Certificate of Residency': [
-    'Valid ID na nagpapakita ng tirahan sa barangay',
+    'Valid ID showing residence in the barangay',
     'Purok Leader Endorsement / Verification'
   ],
+
   'Barangay Business Clearance': [
     'DTI Registration Paperwork',
-    'Lease Contract / Patunay ng Lokasyon ng Negosyo',
+    'Lease Contract / Proof of Business Location',
     'Mayor\'s Permit Application Form'
-  ],
-  'First Time Job Seeker': [
-    'Valid ID o School ID',
-    'Oath of Undertaking Form'
   ]
 };
 
@@ -44,8 +44,26 @@ export default function ResidentCertificates({
   setFilterTab,
   handleCancelRequest,
 }) {
-  // Kunin ang active requirements base sa napiling type ng resident
-  const activeRequirements = DEFAULT_CERTIFICATE_REQUIREMENTS[certForm.certType] || [];
+  const selectedType = (
+  certForm?.certType || 
+  certForm?.type || 
+  certForm?.certificateType || 
+  ''
+).trim();
+
+const activeRequirements = DEFAULT_CERTIFICATE_REQUIREMENTS[selectedType] || [];
+
+const handleCertTypeChange = (e) => {
+  const val = e.target.value;
+  if (typeof updateCertField === 'function') {
+    const res = updateCertField('certType');
+    if (typeof res === 'function') {
+      res(e); // Curried function style: updateCertField('certType')(e)
+    } else {
+      updateCertField(e); // Standard event style: updateCertField(e)
+    }
+  }
+};
 
   const filteredRequests = useMemo(() => {
     return myRequests.filter((req) => {
@@ -130,21 +148,21 @@ export default function ResidentCertificates({
               </div>
             </div>
 
-            {/* Certificate Type */}
-            <div className="fg" style={{ marginBottom: 12 }}>
-              <label className="fl">Certificate Type *</label>
-              <select className="fc" value={certForm.certType} onChange={updateCertField('certType')} required>
-                <option value="">-- Select Certificate Type --</option>
-                <option value="Barangay Clearance">Barangay Clearance</option>
-                <option value="Certificate of Indigency">Certificate of Indigency</option>
-                <option value="Certificate of Residency">Certificate of Residency</option>
-                <option value="Barangay Business Clearance">Barangay Business Clearance</option>
-                <option value="First Time Job Seeker">First Time Job Seeker</option>
-              </select>
-            </div>
+            {/* Certificate Type Dropdown */}
+          <div className="fg" style={{ marginBottom: 12 }}>
+            <label className="fl">Certificate Type *</label>
+            <select 
+              className="fc" 
+              value={certForm.certType || certForm.type || ''} 
+              onChange={handleCertTypeChange}
+              required
+            >
+              <option value="">-- Select Certificate Type --</option>
+              <option value="Barangay Clearance">Barangay Clearance</option> <option value="Certificate of Indigency">Certificate of Indigency</option> <option value="Certificate of Residency">Certificate of Residency</option> <option value="Barangay Business Clearance">Barangay Business Clearance</option> </select>
+          </div>
 
-            {/* DYNAMIC REQUIREMENTS DISPLAY */}
-            {certForm.certType ? (
+            {/* DYNAMIC REQUIREMENTS DISPLAY (ILAGAY DITO) */}
+            {selectedType ? (
               <div style={{ padding: '12px 14px', background: 'var(--surface2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: 16 }}>
                 <div style={{ fontSize: 11, fontWeight: 800, color: 'var(--primary)', marginBottom: 8, display: 'flex', alignItems: 'center', gap: 6 }}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -153,13 +171,17 @@ export default function ResidentCertificates({
                     <line x1="16" y1="13" x2="8" y2="13" />
                     <line x1="16" y1="17" x2="8" y2="17" />
                   </svg>
-                  REQUIRED DOCUMENTS ({certForm.certType.toUpperCase()})
+                  REQUIRED DOCUMENTS ({selectedType.toUpperCase()})
                 </div>
-                <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text)', display: 'flex', flexDirection: 'column', gap: 4 }}>
-                  {activeRequirements.map((req, idx) => (
-                    <li key={idx}>{req}</li>
-                  ))}
-                </ul>
+                {activeRequirements.length > 0 ? (
+                  <ul style={{ margin: 0, paddingLeft: 18, fontSize: 12, color: 'var(--text)', display: 'flex', flexDirection: 'column', gap: 4 }}>
+                    {activeRequirements.map((req, idx) => (
+                      <li key={idx}>{req}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div style={{ fontSize: 11, color: 'var(--muted)' }}>No requirements specified.</div>
+                )}
               </div>
             ) : (
               <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface2)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', border: '1px dashed var(--border)', marginBottom: 16, fontStyle: 'italic' }}>
@@ -167,7 +189,7 @@ export default function ResidentCertificates({
               </div>
             )}
 
-            {/* Purpose */}
+            {/* Purpose of Request */}
             <div className="fg" style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                 <label className="fl" style={{ margin: 0 }}>Purpose of Request *</label>
@@ -175,15 +197,15 @@ export default function ResidentCertificates({
                   {certForm.certPurpose?.length || 0} / 200
                 </span>
               </div>
-              <textarea
-                className="fc"
-                rows="3"
-                maxLength={200}
-                placeholder="e.g. For employment requirements at DOLE-Camarines Sur..."
-                value={certForm.certPurpose}
-                onChange={updateCertField('certPurpose')}
-                required
-                style={{ resize: 'none' }}
+              <textarea 
+                className="fc" 
+                rows="3" 
+                maxLength={200} 
+                placeholder="e.g. For employment requirements at DOLE-Camarines Sur..." 
+                value={certForm.certPurpose} 
+                onChange={updateCertField('certPurpose')} 
+                required 
+                style={{ resize: 'none' }} 
               />
             </div>
 
