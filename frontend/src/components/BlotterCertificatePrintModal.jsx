@@ -1,6 +1,5 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { QRCodeSVG } from 'qrcode.react';
 import barangayLogo from '../assets/bustrac-logo.png';
 import nabuaLogo from '../assets/nabua-logo.jpg';
 import { localDb as db } from '../services/db';
@@ -52,19 +51,7 @@ export default function BlotterCertificatePrintModal({ isOpen, onClose, blotterD
   const secretaryName = blotterData?.secretaryName || blotterData?.luponSecretary || systemSettings?.luponSecretary || "MRS. MELY M. PRESADO";
 
 
-  const verificationPayload = useMemo(() => {
-    if (!blotterData) return '';
-    let baseUrl = systemSettings?.publicDomain || blotterData?.publicDomain;
-    if (!baseUrl || baseUrl.includes('localhost') || baseUrl.includes('127.0.0.1')) {
-      baseUrl = 'http://192.168.1.7:5173';
-    }
-    baseUrl = baseUrl.replace(/\/$/, '');
-    const cleanCaseNo = caseNo.replace(/[^a-zA-Z0-9]/g, '');
-    const dateTimestamp = new Date(rawDate || Date.now()).getTime().toString(36).toUpperCase();
-    const hash = `BB-${cleanCaseNo}-${dateTimestamp}`;
-    const params = new URLSearchParams({ caseNo, type: title, hash });
-    return `${baseUrl}/verify?${params.toString()}`;
-  }, [title, caseNo, rawDate, blotterData, systemSettings]);
+  
 
   // ═══════════════════════════════════════════════
   // 5. useCallback
@@ -287,15 +274,10 @@ export default function BlotterCertificatePrintModal({ isOpen, onClose, blotterD
 
               <div className="verification-footer-bar">
               {!isCFA ? (
-                <div className="qr-code-box">
-                  {verificationPayload && (
-                    <QRCodeSVG value={verificationPayload} size={80} level="L" includeMargin={true} />
-                  )}
-                  <div className="qr-text-meta">
-                    <strong>OFFICIAL BARANGAY DOCUMENT</strong><br />
-                    <span>Case Ref: {caseNo}</span><br />
-                    <span>Scan to verify document integrity</span>
-                  </div>
+                <div className="qr-text-meta">
+                  <strong>OFFICIAL BARANGAY DOCUMENT</strong><br />
+                  <span>Case Ref: {caseNo}</span><br />
+                  <span>Issued under the seal of Barangay Bustrac</span>
                 </div>
               ) : (
                 <div className="qr-text-meta" style={{ fontStyle: 'italic', color: '#444' }}>
@@ -304,7 +286,6 @@ export default function BlotterCertificatePrintModal({ isOpen, onClose, blotterD
                   <span>Issued for Court / PNP Legal Proceeding Purposes</span>
                 </div>
               )}
-
               <div style={{ fontSize: '10px', color: '#666', textAlign: 'right' }}>
                 <span>Barangay Bustrac Management Information System</span><br />
                 <span>Camarines Sur, Philippines</span>

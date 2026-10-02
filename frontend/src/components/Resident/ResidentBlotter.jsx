@@ -17,6 +17,7 @@ export default function ResidentBlotter({
     respondent: '',
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isFormOpen, setIsFormOpen] = useState(!myBlotters || myBlotters.length === 0);
 
   const updateForm = (field) => (e) => {
     setBlotterForm((p) => ({ ...p, [field]: e.target.value }));
@@ -46,6 +47,28 @@ export default function ResidentBlotter({
       setIsSubmitting(false);
     }
   };
+  
+  const handleBlotterSuccess = (newDoc, wasOffline) => {
+    if (wasOffline) {
+      if (typeof showToast === 'function') {
+        showToast("✅ Report saved locally! It will auto-sync when online.", "success");
+      } else {
+        alert("✅ Report saved locally! It will auto-sync when online.");
+      }
+    } else {
+      if (typeof showToast === 'function') {
+        showToast("✅ Incident report submitted successfully!", "success");
+      } else {
+        alert("✅ Incident report submitted successfully!");
+      }
+    }
+    
+    setIsFormOpen(false);
+    
+    if (typeof loadData === 'function') {
+      loadData();
+    }
+  };
 
   return (
     <div className="screen active" style={{ background: 'transparent', border: 'none', boxShadow: 'none', padding: 0 }}>
@@ -55,102 +78,129 @@ export default function ResidentBlotter({
         <div className="page-sub">File incidents and track complaint status</div>
       </div>
 
-      {/* Submit Form */}
-      <div className="card" style={{ padding: 18, marginBottom: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14 }}>
-        <div style={{ marginBottom: 16 }}>
-          <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 4, display: 'flex', alignItems: 'center', gap: 8 }}>
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary, #3b82f6)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M12 20h9" />
-              <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
-            </svg>
-            Submit Incident Report
+      {/* Submit Form (Collapsible) */}
+      <div className="card" style={{ marginBottom: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+        
+        {/* Collapsible Header */}
+        <div 
+          style={{ 
+            padding: '14px 18px', 
+            background: isFormOpen ? 'var(--surface2, rgba(255,255,255,0.03))' : 'transparent', 
+            borderBottom: isFormOpen ? '1px solid var(--border)' : 'none', 
+            display: 'flex', 
+            justifyContent: 'space-between', 
+            alignItems: 'center', 
+            cursor: 'pointer', 
+            transition: 'all 0.2s ease',
+            userSelect: 'none'
+          }} 
+          onClick={() => setIsFormOpen(!isFormOpen)}
+          role="button"
+          aria-expanded={isFormOpen}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            {/* Minimal Left Border Accent */}
+            <div style={{ width: 4, height: 16, background: 'var(--primary, #3b82f6)', borderRadius: 2 }} />
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
+              {isFormOpen ? 'Hide Report Form' : 'File New Incident Report'}
+            </div>
           </div>
-          <p style={{ fontSize: 12, color: 'var(--muted)', margin: 0, lineHeight: 1.5 }}>
-            Report an incident or official concern to Barangay Bustrac. Your entry will be securely recorded and reviewed by authorized personnel.
-          </p>
+          {/* Clean Unicode Arrow */}
+          <span style={{ fontSize: 12, color: 'var(--muted)', fontWeight: 700, transition: 'transform 0.2s', transform: isFormOpen ? 'rotate(180deg)' : 'rotate(0deg)' }}>
+            ▼
+          </span>
         </div>
 
-        <form onSubmit={handleSubmit}>
-          <div className="fg" style={{ marginBottom: 12 }}>
-            <label className="fl" htmlFor="blotter-subject">Incident Subject / Title *</label>
-            <input
-              id="blotter-subject"
-              type="text"
-              className="fc"
-              placeholder="e.g. Property Dispute, Noise Complaint"
-              required
-              value={blotterForm.subject}
-              onChange={updateForm('subject')}
-              style={{ width: '100%' }}
-            />
-          </div>
-
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10, marginBottom: 12 }}>
-            <div className="fg" style={{ margin: 0, minWidth: 0 }}>
-              <label className="fl" htmlFor="blotter-date">Incident Date</label>
-              <input
-                id="blotter-date"
-                type="date"
-                className="fc"
-                style={{ width: '100%' }}
-                value={blotterForm.incidentDate}
-                onChange={updateForm('incidentDate')}
+        {/* Form Body (Conditionally Rendered) */}
+        {isFormOpen && (
+          <form onSubmit={handleSubmit} style={{ padding: 18 }}>
+            <p style={{ fontSize: 12, color: 'var(--muted)', margin: '0 0 16px 0', lineHeight: 1.5 }}>
+              Report an incident or official concern. Your entry will be securely recorded and reviewed by authorized personnel.
+            </p>
+            
+            <div className="fg" style={{ marginBottom: 12 }}>
+              <label className="fl" htmlFor="blotter-subject">Incident Subject / Title *</label>
+              <input 
+                id="blotter-subject" 
+                type="text" 
+                className="fc" 
+                placeholder="e.g. Property Dispute, Noise Complaint" 
+                required 
+                value={blotterForm.subject} 
+                onChange={updateForm('subject')} 
               />
             </div>
-            <div className="fg" style={{ margin: 0, minWidth: 0 }}>
-              <label className="fl" htmlFor="blotter-location">Location / Zone</label>
-              <input
-                id="blotter-location"
-                type="text"
-                className="fc"
-                placeholder="e.g. Purok 3"
-                style={{ width: '100%' }}
-                value={blotterForm.location}
-                onChange={updateForm('location')}
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 12 }}>
+              <div className="fg" style={{ margin: 0 }}>
+                <label className="fl" htmlFor="blotter-date">Incident Date</label>
+                <input 
+                  id="blotter-date" 
+                  type="date" 
+                  className="fc" 
+                  value={blotterForm.incidentDate} 
+                  onChange={updateForm('incidentDate')} 
+                />
+              </div>
+              <div className="fg" style={{ margin: 0 }}>
+                <label className="fl" htmlFor="blotter-location">Location / Zone</label>
+                <input 
+                  id="blotter-location" 
+                  type="text" 
+                  className="fc" 
+                  placeholder="e.g. Purok 3" 
+                  value={blotterForm.location} 
+                  onChange={updateForm('location')} 
+                />
+              </div>
+            </div>
+
+            <div className="fg" style={{ marginBottom: 12 }}>
+              <label className="fl" htmlFor="blotter-respondent">Respondent (if known)</label>
+              <input 
+                id="blotter-respondent" 
+                type="text" 
+                className="fc" 
+                placeholder="Name of person involved" 
+                value={blotterForm.respondent} 
+                onChange={updateForm('respondent')} 
               />
             </div>
-          </div>
 
-          <div className="fg" style={{ marginBottom: 12 }}>
-            <label className="fl" htmlFor="blotter-respondent">Respondent (if known)</label>
-            <input
-              id="blotter-respondent"
-              type="text"
-              className="fc"
-              placeholder="Name of person involved"
-              style={{ width: '100%' }}
-              value={blotterForm.respondent}
-              onChange={updateForm('respondent')}
-            />
-          </div>
-
-          <div className="fg" style={{ marginBottom: 6 }}>
-            <label className="fl" htmlFor="blotter-details">Incident Details *</label>
-            <textarea
-              id="blotter-details"
-              className="fc"
-              rows="4"
-              placeholder="State details, persons involved, or immediate context..."
-              required
-              maxLength={500}
-              value={blotterForm.details}
-              onChange={updateForm('details')}
-              style={{ width: '100%', resize: 'none' }}
-            />
-            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
-              <span style={{ fontSize: 10, color: 'var(--muted)' }}>{(blotterForm.details || '').length}/500</span>
+            <div className="fg" style={{ marginBottom: 6 }}>
+              <label className="fl" htmlFor="blotter-details">Incident Details *</label>
+              <textarea 
+                id="blotter-details" 
+                className="fc" 
+                rows="4" 
+                placeholder="State details, persons involved, or immediate context..." 
+                required 
+                maxLength={500} 
+                value={blotterForm.details} 
+                onChange={updateForm('details')} 
+                style={{ resize: 'vertical' }} 
+              />
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 4 }}>
+                <span style={{ 
+                  fontSize: 10, 
+                  fontWeight: 600, 
+                  color: (blotterForm.details || '').length >= 450 ? 'var(--red, #ef4444)' : 'var(--muted)' 
+                }}>
+                  {(blotterForm.details || '').length}/500
+                </span>
+              </div>
             </div>
-          </div>
 
-          <button
-            type="submit"
-            className="btn btn-primary btn-full"
-            disabled={isSubmitting}
-            style={{ width: '100%', marginTop: 8, padding: '12px', borderRadius: 10, fontWeight: 700, opacity: isSubmitting ? 0.6 : 1 }}
-          >
-            {isSubmitting ? 'Submitting...' : 'Submit Incident Report'}
-          </button>
-        </form>
+            <button 
+              type="submit" 
+              className="btn btn-primary btn-full" 
+              disabled={isSubmitting} 
+              style={{ width: '100%', marginTop: 8, padding: '12px', borderRadius: 10, fontWeight: 700, opacity: isSubmitting ? 0.6 : 1 }}
+            >
+              {isSubmitting ? 'Submitting...' : 'Submit Incident Report'}
+            </button>
+          </form>
+        )}
       </div>
 
       {/* My Submitted Reports */}
@@ -165,18 +215,22 @@ export default function ResidentBlotter({
       </div>
 
       {!myBlotters || myBlotters.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: '32px 16px', background: 'var(--surface)', border: '1px dashed var(--border)', borderRadius: 14 }}>
-          <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" style={{ marginBottom: 10, opacity: 0.5 }}>
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-            <polyline points="10 9 9 9 8 9" />
-          </svg>
-          <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 4 }}>No blotter records on file</div>
-          <div style={{ fontSize: 12, color: 'var(--muted)' }}>Your filed complaint histories will display here.</div>
-        </div>
-      ) : (
+          <div style={{ 
+            textAlign: 'center', 
+            padding: '48px 16px', 
+            background: 'var(--surface)', 
+            border: '2px dashed var(--border)', 
+            borderRadius: 14 
+          }}>
+            <div style={{ fontSize: 32, marginBottom: 12, opacity: 0.6 }}>📂</div>
+            <div style={{ fontWeight: 700, fontSize: 15, color: 'var(--text)', marginBottom: 6 }}>
+              No blotter records on file
+            </div>
+            <div style={{ fontSize: 12, color: 'var(--muted)', maxWidth: '280px', margin: '0 auto', lineHeight: 1.5 }}>
+              Your filed complaint histories and status updates will display here securely.
+            </div>
+          </div>
+        ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
           {myBlotters.map((item) => {
             const blotterStep = getBlotterStepProgress(item.status);

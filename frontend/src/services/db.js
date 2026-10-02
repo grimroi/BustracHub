@@ -9,28 +9,48 @@ if (typeof localDb.setMaxListeners === 'function') {
   localDb.setMaxListeners(500);
 }
 
-const RAW_COUCH_URL = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
-const CLEAN_URL = RAW_COUCH_URL.replace(/\/\/[^:]+:[^@]+@/, '//');
+// Kunin ang URL mula sa environment variables
+const RAW_COUCH_URL = import.meta.env.VITE_COUCHDB_URL;
 
-export const remoteDb = new PouchDB(CLEAN_URL, {
-  auth: { username: 'admin', password: 'capstone2026' },
-  skip_setup: true,
-  timeout: 10000
-});
+if (!RAW_COUCH_URL) {
+  console.warn('VITE_COUCHDB_URL is not set. Remote database sync will be disabled.');
+}
+
+// I-initialize ang remoteDb gamit ang env variable, o null kung walang ibinigay
+export const remoteDb = RAW_COUCH_URL
+  ? new PouchDB(RAW_COUCH_URL, {
+      skip_setup: true,
+      timeout: 10000
+    })
+  : null;
 
 let activeSyncHandler = null;
+let syncStatusListeners = [];
+
+export const onSyncStatusChange = (cb) => {
+  syncStatusListeners.push(cb);
+  return () => {
+    syncStatusListeners = syncStatusListeners.filter((l) => l !== cb);
+  };
+};
+
+const emitSync = (status) => syncStatusListeners.forEach((cb) => cb(status));
 
 export const setupPouchDBSync = () => {
-  if (typeof navigator !== 'undefined' && !navigator.onLine) return null;
+  // Huwag ituloy ang sync kung walang remoteDb o offline ang client
+  if (!remoteDb || (typeof navigator !== 'undefined' && !navigator.onLine)) return null;
+
   if (activeSyncHandler) {
     try { activeSyncHandler.cancel(); } catch (e) { /* ignore */ }
     activeSyncHandler = null;
   }
+
   activeSyncHandler = localDb.sync(remoteDb, {
     live: true,
     retry: true,
     backoff_def: { initial_delay: 1000, max_delay: 5000 }
   });
+
   activeSyncHandler.on('change', (info) => { console.log('Sync change detected:', info); }); 
   activeSyncHandler.on('paused', (err) => {
     if (err) console.warn('Sync paused. Operating in offline mode.');
@@ -38,6 +58,7 @@ export const setupPouchDBSync = () => {
   activeSyncHandler.on('error', (err) => {
     console.error('Replication error:', err);
   });
+
   return activeSyncHandler;
 };
 
@@ -54,6 +75,7 @@ if (typeof window !== 'undefined') {
 export const forceSyncToRemote = async () => {
   if (!remoteDb) return;
   if (typeof navigator !== 'undefined' && !navigator.onLine) return;
+
   try {
     if (typeof localDb.setMaxListeners === 'function') localDb.setMaxListeners(50);
     const syncInstance = localDb.sync(remoteDb, { live: false, retry: false });
@@ -82,6 +104,7 @@ export const resolveDbConflicts = async () => {
             const uniqueHistory = Array.from(
               new Map(combinedHistory.map(h => [h.timestamp || JSON.stringify(h), h])).values()
             ).sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
+            
             let mergedDoc;
             if (loserTime > winnerTime) {
               mergedDoc = { ...currentWinner, ...loserDoc, status: loserDoc.status || currentWinner.status, history: uniqueHistory, updatedAt: new Date(loserTime).toISOString(), synced: true, isSynced: true };
@@ -124,7 +147,7 @@ export const sanitizeCertificateDoc = (doc) => ({
   _id: doc._id,
   ...(doc._rev && { _rev: doc._rev }),
   type: 'certificate_request',
-  refNumber: doc.refNumber || `CERT-${Math.floor(100000 + Math.random() * 900000)}`,
+  refNumber: doc.refNumber || `CERT-${Date.now().toString(36).toUpperCase().slice(-6)}`,
   residentId: doc.residentId || '',
   residentName: doc.residentName || `${doc.firstName || ''} ${doc.lastName || ''}`.trim(),
   username: doc.username || '',

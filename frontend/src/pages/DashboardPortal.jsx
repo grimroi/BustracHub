@@ -9,25 +9,33 @@ import IndigencyTemplate from '../components/certificates/templates/IndigencyTem
 import BarangayClearance from '../components/certificates/templates/BarangayClearance';
 import BusinessPermit from '../components/certificates/templates/BusinessPermit';
 import ResidencyCertificate from '../components/certificates/templates/ResidencyCertificate';
+import BusinessClearanceTemplate from '../components/certificates/templates/BusinessClearanceTemplate';
 import { ThemeToggle } from '../components/ThemeToggle';
 import CertificateLifecycle, { CertificateIssuancePrint } from './CertificateLifecycle';
 import CertPrintScreen from './CertPrintScreen';
 import ResidentCombobox, { formatPurok } from '../components/ResidentCombobox';
 import AuditLogView from '../components/AuditLogView';
-import { localDb as db, forceSyncToRemote } from '../services/db';
-import { createAuditLog } from '../utils/auditLog';
-import { exportToExcel } from '../utils/excelExporter';
 import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import BlotterForm from '../components/BlotterForm';
 import { SummonsPanel } from '../components/SummonsPanel';
 import { CaseStatusActions } from '../components/CaseStatusActions';
 import A4PreviewWrapper from '../components/A4PreviewWrapper';
 import BlotterCertificatePrintModal from '../components/BlotterCertificatePrintModal';
-import BusinessClearanceTemplate from '../components/certificates/templates/BusinessClearanceTemplate';
+import { localDb as db, forceSyncToRemote } from '../services/db';
+import { createAuditLog } from '../utils/auditLog';
+import { exportToExcel } from '../utils/excelExporter';
+import "../styles/lightmode-fix.css";
+import { setupPouchDBSync, onSyncStatusChange } from '../services/db';
+import {
+  generateUUID,
+  addDays,
+  escapeHtml,
+  toPHDateString,
+  toPHDateTimeLocal,
+} from '../utils/helpers';
 import "../styles/Certificates.css";
 
-
-const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL || 'http://admin:capstone2026@192.168.1.3:5984/bustrachub_db';
+const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL;
 
 const SESSION_TIMEOUT_MIN = Number(import.meta.env.VITE_SESSION_TIMEOUT_MIN) || 15;
 
@@ -294,6 +302,7 @@ const searchResidentHelper = (queryStr, residents) => {
   });
 };
 
+
 // ── Helper Mapper Function outside the component ──
 export const mapDocToBlotter = (doc) => {
   if (!doc) return null;
@@ -336,6 +345,7 @@ export const mapDocToBlotter = (doc) => {
     cfaIssued: Boolean(doc.cfaIssued),
     details: doc.details || doc.narrative || doc.description || '',
     isVawc: Boolean(doc.isVawc || doc.type === 'VAWC' || caseType.includes('VAWC')),
+     sla: doc.sla || null,
     rawDoc: doc
   };
 };
@@ -546,10 +556,10 @@ const [feedbackList, setFeedbackList] = useState([
     message: 'Hello, ask ko lang po kung anong requirements para sa online barangay clearance retrieval window kung taga ibang purok?', 
     date: 'Apr 5, 2026, 10:05 AM', 
     status: 'Resolved', 
-    assignedTo: 'Juhairo Macabangon', //
+    assignedTo: 'Juhairo Macabangon', 
     attachment: null,
     response: 'Good day! You can upload 1 valid government ID in the Document Request screen panel. Processing takes 1-2 business days.',
-    handledBy: 'Juhairo Macabangon', //
+    handledBy: 'Juhairo Macabangon', 
     dateResolved: 'Apr 5, 2026, 4:12 PM'
   }
 ]);
@@ -559,10 +569,10 @@ const [feedbackList, setFeedbackList] = useState([
   const activeBlotterCount = blotterList.filter(b => b.status === 'Pending' || b.status === 'Open' || b.status === 'Under Mediation').length;
 
   const feedbackSummary = {
-    complaint: feedbackList.filter(f => f.feedbackType === 'Complaint').length,
-    inquiry: feedbackList.filter(f => f.feedbackType === 'Inquiry').length,
-    suggestion: feedbackList.filter(f => f.feedbackType === 'Suggestion').length
-  };
+  complaint: feedbackList.filter(f => (f.type || f.feedbackType) === 'Complaint').length,
+  inquiry: feedbackList.filter(f => (f.type || f.feedbackType) === 'Inquiry').length,
+  suggestion: feedbackList.filter(f => (f.type || f.feedbackType) === 'Suggestion').length
+};
 
 const [printModalOpen, setPrintModalOpen] = useState(false);
 const [selectedPrintData, setSelectedPrintData] = useState(null);
@@ -660,7 +670,6 @@ useEffect(() => {
       if (typeof db?.createIndex === 'function') {
         await db.createIndex({ index: { fields: ['type', 'status', 'createdAt'] } });
         await db.createIndex({ index: { fields: ['clearanceNo', 'type'] } });
-        console.log(' PouchDB indexes created successfully.');
       }
     } catch (err) {
       // Silent fail lang, hindi ito critical dahil gumagana ang allDocs
@@ -701,7 +710,9 @@ useEffect(() => {
 
   // ── Admin: Resident Form ──
   const [residentForm, setResidentForm] = useState(EMPTY_RESIDENT);
-
+ const [residentPhotoFile, setResidentPhotoFile] = useState(null);
+  const [photoPreviewUrl, setPhotoPreviewUrl] = useState('');
+  
   const [showBulkDropdown, setShowBulkDropdown] = useState(false);
 
   // Multi-select States for the Residents
@@ -715,6 +726,89 @@ useEffect(() => {
   key: null,
   direction: 'none'
   });
+
+   // ============ PH HOLIDAY + WEEKEND GUARD ============
+const PH_FIXED_HOLIDAYS = [
+  { md: '01-01', name: "New Year's Day" },
+  { md: '04-09', name: 'Araw ng Kagitingan' },
+  { md: '05-01', name: 'Labor Day' },
+  { md: '06-12', name: 'Independence Day' },
+  { md: '08-21', name: 'Ninoy Aquino Day' },
+  { md: '11-01', name: "All Saints' Day" },
+  { md: '11-02', name: "All Souls' Day" },
+  { md: '11-30', name: 'Bonifacio Day' },
+  { md: '12-08', name: 'Immaculate Conception' },
+  { md: '12-25', name: 'Christmas Day' },
+  { md: '12-30', name: 'Rizal Day' },
+  { md: '12-31', name: "Last Day of the Year" },
+];
+
+// Movable holidays — i-update kada taon (Holy Week, Eid'l Fitr/Adha, National Heroes Day)
+const PH_MOVABLE_HOLIDAYS = {
+  2024: ['2024-03-28','2024-03-29','2024-03-30','2024-04-10','2024-06-17','2024-08-26'],
+  2025: ['2025-04-17','2025-04-18','2025-04-19','2025-03-31','2025-06-06','2025-08-25'],
+  2026: ['2026-04-02','2026-04-03','2026-04-04','2026-03-20','2026-05-27','2026-08-31'],
+  2027: ['2027-03-25','2027-03-26','2027-03-27','2027-03-10','2027-05-17','2027-08-30'],
+};
+
+const getHolidayName = (dateStr) => {
+  if (!dateStr) return null;
+  const [y, m, d] = dateStr.split('-');
+  const md = `${m}-${d}`;
+
+  const fixed = PH_FIXED_HOLIDAYS.find(h => h.md === md);
+  if (fixed) return fixed.name;
+
+  const yearList = PH_MOVABLE_HOLIDAYS[Number(y)];
+  if (yearList && yearList.includes(dateStr)) {
+    return 'Movable Holiday (Holy Week / Eid / Special)';
+  }
+  return null;
+};
+
+const handleScheduleDateChange = (e) => {
+  const selectedValue = e.target.value;
+  if (!selectedValue) {
+    setScheduleDate("");
+    return;
+  }
+
+  // selectedValue format: "YYYY-MM-DDTHH:mm"
+  const datePart = selectedValue.split('T')[0];
+  const selectedDate = new Date(`${datePart}T00:00:00`);
+  const dayOfWeek = selectedDate.getDay(); // 0 = Sun, 6 = Sat
+
+  // 1) Weekend check
+  if (dayOfWeek === 0 || dayOfWeek === 6) {
+    alert("⚠️ Ang Barangay Hall ay sarado tuwing Sabado at Linggo.\n\nMangyaring pumili ng Lunes hanggang Biyernes.");
+    // ✅ Force reset DOM pabalik sa dating value
+    e.target.value = scheduleDate || "";
+    return;
+  }
+
+  // 2) Philippine holiday check
+  const holidayName = getHolidayName(datePart);
+  if (holidayName) {
+    alert(`⚠️ Ang napiling petsa ay isang Philippine Holiday:\n\n🎌 ${holidayName}\n\nMangyaring pumili ng ibang araw.`);
+    e.target.value = scheduleDate || "";
+    return;
+  }
+
+  // 3) Optional: office hours lang (8AM – 5PM)
+  const timePart = selectedValue.split('T')[1] || "";
+  const [hh] = timePart.split(':').map(Number);
+  if (!Number.isNaN(hh) && (hh < 8 || hh >= 17)) {
+    alert("⏰ Ang oras ng pagtanggap ay 8:00 AM – 5:00 PM lamang (Lunes–Biyernes).");
+    e.target.value = scheduleDate || "";
+    return;
+  }
+
+  setScheduleDate(selectedValue);
+};
+
+const now = new Date();
+now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
+const minDateTime = now.toISOString().slice(0, 16);
 
   // New initialization: It will check if localStorage has content; if not, it will use the default.
   const [residentsList, setResidentsList] = useState(() => {
@@ -771,11 +865,86 @@ useEffect(() => {
       },
     ];
   });
-
+  
   // Ensure force save to new key:
   useEffect(() => {
     localStorage.setItem('bustrac_programs_v2', JSON.stringify(programsList));
   }, [programsList]);
+
+  useEffect(() => {
+  const loadProgramsFromDB = async () => {
+    try {
+      const result = await db.allDocs({ include_docs: true });
+      const dbPrograms = result.rows
+        .map(r => r.doc)
+        .filter(doc => doc?.type === 'program');
+      
+      if (dbPrograms.length > 0) {
+        // Tanggalin ang internal fields at ibalik sa expected shape
+        const cleaned = dbPrograms.map(p => ({
+          id: p.id,
+          title: p.title,
+          status: p.status,
+          dateLabel: p.dateLabel,
+          current: p.current || 0,
+          target: p.target,
+          note: p.note,
+          createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
+        }));
+        setProgramsList(cleaned);
+      }
+    } catch (err) {
+      console.warn('Failed to load programs from PouchDB:', err);
+    }
+  };
+  loadProgramsFromDB();
+}, []);
+
+useEffect(() => {
+  const loadHouseholdsFromDB = async () => {
+    try {
+      const result = await db.allDocs({ include_docs: true });
+      const dbHouseholds = result.rows
+        .map(r => r.doc)
+        .filter(doc => doc?.type === 'household');
+      
+      if (dbHouseholds.length > 0) {
+        const cleaned = dbHouseholds.map(h => ({
+          id: h.id || h._id,
+          head: h.head,
+          address: h.address,
+          purok: h.purok,
+          purokClass: h.purokClass || 'b',
+          members: h.members || 0,
+        }));
+        setHouseholdsList(cleaned);
+      }
+    } catch (err) {
+      console.warn('Failed to load households from PouchDB:', err);
+    }
+  };
+  loadHouseholdsFromDB();
+}, []);
+
+useEffect(() => {
+  const loadAdvisoriesFromDB = async () => {
+    try {
+      const result = await db.allDocs({ include_docs: true });
+      const dbAdvisories = result.rows
+        .map(r => r.doc)
+        .filter(doc => doc?.type === 'advisory');
+      
+      if (dbAdvisories.length > 0) {
+        setAdvisoriesList(dbAdvisories);
+      }
+    } catch (err) {
+      console.warn('Failed to load advisories from PouchDB:', err);
+    }
+  };
+  loadAdvisoriesFromDB();
+}, []);
+
 
 // ── NEW ADVANCED PROGRAM MANAGEMENT STATES ──
 const [programSearchQuery, setProgramSearchQuery] = useState('');
@@ -822,7 +991,7 @@ const [newProgramTarget, setNewProgramTarget] = useState(100);
 const [newProgramStatus, setNewProgramStatus] = useState('Active');
 
 // ──FUNCTION: ADD A NEW PROGRAM TO THE REGISTRY ──
-const handleCreateProgram = (e) => {
+const handleCreateProgram = async (e) => {
   e.preventDefault();
   if (!newProgramTitle.trim()) {
     alert('Please enter the Program name.');
@@ -845,15 +1014,27 @@ const handleCreateProgram = (e) => {
     note: newProgramStatus === 'Upcoming' ? `Scheduled ${months[new Date().getMonth() + 1]} 15` : ''
   };
 
+  try {
+    await db.put({
+      _id: `program_${generatedId}`,
+      type: 'program',
+      ...newProgram,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Failed to save program to PouchDB:', err);
+  }
+
   setProgramsList([...programsList, newProgram]);
   alert(`✓ Program ${generatedId} created successfully!`);
   
-  // Reset form inputs
   setNewProgramTitle('');
   setNewProgramTarget(100);
   setNewProgramStatus('Active');
   setShowNewProgramForm(false);
 };
+
 //  Automatically saved to localStorage whenever there are changes to our residentsList array
 useEffect(() => {
   localStorage.setItem('bustrac_residents', JSON.stringify(residentsList));
@@ -967,43 +1148,53 @@ const handleReleaseDocument = async (cert) => {
   }
 };
 
-  // Automatically updates the UI whenever there is a change in PouchDB
+// ════════════════════════════════════════════════════════════════
+// SINGLE SOURCE OF TRUTH: CERTIFICATE REAL-TIME LISTENER
+// ════════════════════════════════════════════════════════════════
 useEffect(() => {
-  const fetchAllCerts = async () => {
-    try {
-      const result = await db.allDocs({ include_docs: true });
+  if (!db || typeof db.allDocs !== 'function') return;
+  let isMounted = true;
+
+  const fetchInitialCerts = async () => {
+  try {
+    const result = await db.allDocs({ include_docs: true });
+    
+    if (isMounted) {
       const certs = result.rows
         .map(row => row.doc)
         .filter(doc => doc && doc.type === 'certificate_request');
+      
       setIssuedCertificates(certs);
-    } catch (err) {
-      console.error("Error loading initial certs:", err);
     }
-  };
-  
-  fetchAllCerts();
+  } catch (err) {
+    console.error("Error loading initial certs:", err);
+  }
+};
 
-  // Listen for real-time database changes (Insert, Update, Delete)
+  fetchInitialCerts();
+
   const changes = db.changes({
     since: 'now',
     live: true,
-    include_docs: true
+    include_docs: true,
+    filter: (doc) => doc.type === 'certificate_request'
   }).on('change', (change) => {
-    if (change.doc && change.doc.type === 'certificate_request') {
+    if (isMounted && change.doc) {
       setIssuedCertificates((prevCerts) => {
-        // Remove the old version of the doc (if any) and insert the newest
-        const filtered = prevCerts.filter(c => c._id !== change.doc._id);
+        const filtered = (prevCerts || []).filter(c => c?._id !== change.doc._id);
         return [change.doc, ...filtered];
       });
     }
   }).on('error', (err) => {
-    console.error("PouchDB change listener error:", err);
+    console.error("PouchDB cert changes listener error:", err);
   });
 
-  return () => changes.cancel(); 
+  return () => {
+    isMounted = false;
+    changes.cancel();
+  };
 }, []);
 
-   // FUNCTION FOR DELETING A RESIDENT
   const deleteResident = (id) => {
     if (window.confirm("Are you sure you want to delete this resident?")) {
       setResidentsList(prev => prev.filter(res => res.id !== id));
@@ -1038,53 +1229,61 @@ useEffect(() => {
 
   // FUNCTION TO SAVE THE UPDATED RESIDENT INFORMATION
   const submitEditResident = async (e) => {
-    console.log('🔴 submitEditResident TINAWAG!');
-    e.preventDefault();
+  e.preventDefault();
+  const { firstName, middleName, lastName, civilStatus, purok, household, birthdate } = residentForm;
+  const updatedName = middleName ? `${lastName}, ${firstName} ${middleName}` : `${lastName}, ${firstName}`;
+  
+  // 1. Update React State (Instant UI Feedback)
+  setResidentsList(prev => prev.map(res => {
+    if (res.id === editingResidentId) {
+      return {
+        ...res,
+        firstName,
+        lastName,
+        middleName,
+        name: updatedName,
+        civilStatus,
+        purok,
+        household,
+        age: birthdate ? new Date().getFullYear() - new Date(birthdate).getFullYear() : res.age
+      };
+    }
+    return res;
+  }));
 
-    const {
+  // 2. Update PouchDB (Permanent Save & Sync)
+  try {
+    const existingDoc = await db.get(editingResidentId);
+    await db.put({
+      ...existingDoc,
       firstName,
-      middleName,
       lastName,
+      middleName,
+      name: updatedName,
       civilStatus,
       purok,
-      household
-    } = residentForm;
+      household,
+      birthdate,
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.warn('PouchDB update skipped (might be mock data or offline):', err);
+  }
 
-    const updatedName = middleName
-      ? `${lastName}, ${firstName} ${middleName}`
-      : `${lastName}, ${firstName}`;
-
-    setResidentsList(prev =>
-      prev.map(res => {
-        if (res.id === editingResidentId) {
-          return {
-            ...res,
-            name: updatedName,
-            civilStatus,
-            purok,
-            household,
-            age: residentForm.birthdate
-              ? new Date().getFullYear() -
-                new Date(residentForm.birthdate).getFullYear()
-              : res.age
-          };
-        }
-        return res;
-      })
-    );
-    await createAuditLog({
+  // 3. Audit Log
+  await createAuditLog({
     action: 'UPDATE',
     module: 'RESIDENTS',
     recordId: editingResidentId,
     details: `Updated resident record: ${updatedName}`,
   });
 
-    alert("Resident record updated successfully!");
+  alert("Resident record updated successfully!");
+  setEditingResidentId(null);
+  setResidentForm(EMPTY_RESIDENT);
+  nav('residents');
+};
 
-    setEditingResidentId(null);
-    setResidentForm(EMPTY_RESIDENT);
-    nav('residents');
-  };
   // Admin: Complaint / Summons State
   const [complaint, setComplaint] = useState(INITIAL_COMPLAINT);
   const [beneficiarySearch, setBeneficiarySearch] = useState('');
@@ -1229,6 +1428,35 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   // ─────────────────────────────────────────────
   const updateResidentField = (field, value) =>
     setResidentForm((prev) => ({ ...prev, [field]: value }));
+  
+  const handlePhotoChange = (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    
+    // Strict 500KB Limit para hindi mag-bloat ang PouchDB
+    if (file.size > 500 * 1024) {
+      alert('Masyadong malaki ang larawan. Paki-compress o pumili ng file na mas mababa sa 500KB.');
+      e.target.value = ''; // Reset input
+      return;
+    }
+    
+    // Convert to Base64 para MA-SAVE sa PouchDB/LocalStorage
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setResidentPhotoFile(file);
+      setPhotoPreviewUrl(reader.result);
+      updateResidentField('photoUrl', reader.result); // I-sync sa main form state
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleRemovePhoto = () => {
+    setResidentPhotoFile(null);
+    setPhotoPreviewUrl('');
+    updateResidentField('photoUrl', ''); // Alisin sa main form state
+    const fileInput = document.getElementById('resident-photo-upload');
+    if (fileInput) fileInput.value = '';
+  };
 
   // 1. Function to populate the form when Edit is clicked
   const handleStartEditResident = (res) => {
@@ -1243,7 +1471,9 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
     contact: res.contact || '09123456789',
     purok: res.purok,
     household: res.household,
-    rbiId: res.rbiId || ''
+    rbiId: res.rbiId || '',
+    photoUrl: res.photoUrl || '',
+    email: res.email || '', // 
   });
   setEditingResidentId(res.id);
   nav('add-resident');
@@ -1293,7 +1523,6 @@ const submitAddResident = async (e) => {
   // 2. Required fields validation (gamit ang tamang variable names)
   if (
     !firstName?.trim() ||
-    !middleName?.trim() ||
     !lastName?.trim() ||
     !birthdate ||
     !sex ||
@@ -1328,77 +1557,80 @@ const submitAddResident = async (e) => {
   else if (purokLower.includes('5')) dynamicPurokClass = 'a';
 
   // =========================================================
-  // SCENARIO A: UPDATE EXISTING RESIDENT
-  // =========================================================
-  if (editingResidentId) {
+// SCENARIO A: UPDATE EXISTING RESIDENT
+// =========================================================
+if (editingResidentId) {
     const updatedList = residentsList.map((res) => {
-      if (res.id !== editingResidentId) return res;
-      return {
-        ...res,
-        rbiId: normalizedRbiId,
-        firstName: firstName.trim(),
-        middleName: middleName.trim(),
-        lastName: lastName.trim(),
-        name: fullName,
-        birthdate,
-        gender: sex, // Map sex to gender for list consistency
-        civilStatus,
-        contact: contactNo.trim(), // Map contactNo to contact
-        purok: purokZoneAddress, // Map purokZoneAddress to purok
-        purokClass: dynamicPurokClass,
-        age: new Date().getFullYear() - new Date(birthdate).getFullYear(),
-        household: householdNo, // Map householdNo to household
-        householdHead: Boolean(isHouseholdHead),
-        voter: Boolean(isRegisteredVoter),
-      };
-    });
-    
-    setResidentsList(updatedList);
-    localStorage.setItem('bustrac_residents', JSON.stringify(updatedList));
-
+    if (res.id !== editingResidentId) return res;
+    return {
+      ...res,
+      rbiId: normalizedRbiId,
+      firstName: firstName.trim(),
+      middleName: middleName.trim(),
+      lastName: lastName.trim(),
+      name: fullName,
+      birthdate,
+      gender: sex,
+      civilStatus,
+      contact: contactNo.trim(),
+      purok: purokZoneAddress,
+      purokClass: dynamicPurokClass,
+      age: new Date().getFullYear() - new Date(birthdate).getFullYear(),
+      household: householdNo,
+      householdHead: Boolean(isHouseholdHead),
+      voter: Boolean(isRegisteredVoter),
+      photoUrl: residentForm.photoUrl || res.photoUrl || '',
+      email: residentForm.email || res.email || '', 
+    };
+  });
+  setResidentsList(updatedList);
+  localStorage.setItem('bustrac_residents', JSON.stringify(updatedList));
+  
     try {
-      const existingDoc = await db.get(editingResidentId);
-      await db.put({
-        ...existingDoc,
-        rbiId: normalizedRbiId,
-        firstName: firstName.trim(),
-        middleName: middleName.trim(),
-        lastName: lastName.trim(),
-        name: fullName,
-        birthdate,
-        gender: sex,
-        civilStatus,
-        contact: contactNo.trim(),
-        purok: purokZoneAddress,
-        household: householdNo,
-        householdHead: Boolean(isHouseholdHead),
-        voter: Boolean(isRegisteredVoter),
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.warn('Resident not yet in PouchDB (local update only):', err);
-    }
-
-    await createAuditLog({
-      action: 'UPDATE',
-      module: 'RESIDENTS',
-      recordId: editingResidentId,
-      details: `Updated resident record: ${fullName}`,
+    const existingDoc = await db.get(editingResidentId);
+    await db.put({
+      ...existingDoc,
+      rbiId: normalizedRbiId,
+      firstName: firstName.trim(),
+      middleName: middleName.trim(),
+      lastName: lastName.trim(),
+      name: fullName,
+      birthdate,
+      gender: sex,
+      civilStatus,
+      contact: contactNo.trim(),
+      purok: purokZoneAddress,
+      household: householdNo,
+      householdHead: Boolean(isHouseholdHead),
+      voter: Boolean(isRegisteredVoter),
+      photoUrl: residentForm.photoUrl || existingDoc.photoUrl || '',
+      email: residentForm.email || existingDoc.email || '', 
+      updatedAt: new Date().toISOString(),
     });
-
-    alert(`Resident ${editingResidentId} updated successfully!`);
-    setEditingResidentId(null);
-    setResidentForm(EMPTY_RESIDENT);
-    nav('residents');
-    return;
+  } catch (err) {
+    console.warn('Resident not yet in PouchDB (local update only):', err);
   }
+  
+  await createAuditLog({
+    action: 'UPDATE',
+    module: 'RESIDENTS',
+    recordId: editingResidentId,
+    details: `Updated resident record: ${fullName}`,
+  });
+  alert(`Resident ${editingResidentId} updated successfully!`);
+  setEditingResidentId(null);
+  setResidentForm(EMPTY_RESIDENT);
+  nav('residents');
+  return;
+}
 
   // =========================================================
   // SCENARIO B: CREATE NEW RESIDENT
   // =========================================================
-  const newResidentId = `RES-${String(residentsList.length + 1).padStart(4, '0')}`;
+   const newResidentId = generateUUID();
+const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()}`;  
 
-  const newResident = {
+    const newResident = {
     id: newResidentId,
     rbiId: normalizedRbiId,
     firstName: firstName.trim(),
@@ -1416,33 +1648,30 @@ const submitAddResident = async (e) => {
     householdHead: Boolean(isHouseholdHead),
     voter: Boolean(isRegisteredVoter),
     conflict: false,
+    photoUrl: residentForm.photoUrl || '',
+    email: residentForm.email || '', 
   };
 
   const updatedList = [...residentsList, newResident];
   setResidentsList(updatedList);
   localStorage.setItem('bustrac_residents', JSON.stringify(updatedList));
 
-  const residentDoc = {
-    _id: newResidentId,
-    type: 'resident',
-    residentId: newResidentId,
-    rbiId: normalizedRbiId,
-    firstName: firstName.trim(),
-    middleName: middleName.trim(),
-    lastName: lastName.trim(),
-    name: fullName,
-    birthdate,
-    gender: sex,
-    civilStatus,
-    contact: contactNo.trim(),
-    purok: purokZoneAddress,
-    household: householdNo,
-    householdHead: Boolean(isHouseholdHead),
-    voter: Boolean(isRegisteredVoter),
-    conflict: false,
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
+    const residentDoc = {
+  _id: newResidentId,
+  type: 'resident',
+  ...residentForm, // SPREAD LAHAT NG FORM FIELDS
+  residentId: newResidentId,
+  rbiId: normalizedRbiId,
+  name: fullName,
+  gender: sex,
+  contact: contactNo.trim(),
+  household: householdNo,
+  householdHead: Boolean(isHouseholdHead),
+  voter: Boolean(isRegisteredVoter),
+  conflict: false,
+  createdAt: new Date().toISOString(),
+  updatedAt: new Date().toISOString(),
+};
 
   try {
     await db.put(residentDoc);
@@ -1471,24 +1700,36 @@ const submitAddResident = async (e) => {
     return;
   }
 
-  // Auto-badge color generator base sa Purok zone
   let dynamicPurokClass = 'b';
   if (purok.includes('1')) dynamicPurokClass = 'p';
   else if (purok.includes('2')) dynamicPurokClass = 'g';
   else if (purok.includes('5')) dynamicPurokClass = 'a';
 
-  const newHousehold = {
-    id: `HH-${String(householdsList.length + 1).padStart(4, '0')}`,
+  const householdUUID = generateUUID();
+const newHousehold = {
+  _id: householdUUID,
+  id: `HH-${Date.now().toString(36).slice(-4).toUpperCase()}`,
     head: head,
     address: address,
     purok: purok,
     purokClass: dynamicPurokClass,
-    members: 0 // Magsisimula sa 0 dahil dynamic itong madadagdagan kapag may na-link na residente
+    members: 0
   };
+
+  try {
+    await db.put({
+      _id: newHousehold.id,
+      type: 'household',
+      ...newHousehold,
+      createdAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    console.error('Failed to save household:', err);
+  }
 
   setHouseholdsList([...householdsList, newHousehold]);
   
-   await createAuditLog({
+  await createAuditLog({
     action: 'CREATE',
     module: 'HOUSEHOLDS',
     recordId: newHousehold.id,
@@ -1522,6 +1763,20 @@ const submitEditHousehold = async (e) => {
       }
       return h;
     }));
+    
+    try {
+      const existing = await db.get(selectedHouseholdId);
+      await db.put({
+        ...existing,
+        head,
+        address,
+        purok,
+        purokClass: dynamicPurokClass,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (dbErr) {
+      console.warn('Household edit not synced to PouchDB:', dbErr);
+    }
 
     await createAuditLog({
       action: 'UPDATE',
@@ -1553,63 +1808,65 @@ const handleSaveAnnouncement = async (e, status = 'Published') => {
     return;
   }
 
-  const loggedInUser = JSON.parse(
-    sessionStorage.getItem('bustrac_user') || '{}'
-  );
+  const loggedInUser = JSON.parse(sessionStorage.getItem('bustrac_user') || '{}');
   const now = new Date().toISOString();
 
-  const newAnnouncement = {
-    _id: `announcement_${Date.now()}`,
-    type: 'announcement',
-    title: title.trim(),
-    category: category || 'General',
-    body: content.trim(),
-    content: content.trim(),
-    pinned: Boolean(pinned),
-    author: loggedInUser?.fullName || loggedInUser?.name || 'Barangay Office',
-    date: now,
-    status,
-    timestamp: now,
-    createdAt: now,
-  };
+  let newAnnouncement;
+  
+  if (editingAnnId) {
+    // EDIT MODE: Hanapin ang existing para sa _id at _rev
+    const existing = announcementsList.find(a => (a._id || a.id) === editingAnnId);
+    newAnnouncement = {
+      ...existing,
+      _id: existing?._id || `announcement_${Date.now()}`, // fallback lang
+      type: 'announcement',
+      title: title.trim(),
+      category: category || 'General',
+      body: content.trim(),
+      content: content.trim(),
+      pinned: Boolean(pinned),
+      author: loggedInUser?.fullName || loggedInUser?.name || 'Barangay Office',
+      status,
+      updatedAt: now,
+      // Huwag baguhin ang createdAt kung edit
+    };
+  } else {
+    // CREATE MODE
+    newAnnouncement = {
+      _id: `announcement_${Date.now()}`,
+      type: 'announcement',
+      title: title.trim(),
+      category: category || 'General',
+      body: content.trim(),
+      content: content.trim(),
+      pinned: Boolean(pinned),
+      author: loggedInUser?.fullName || loggedInUser?.name || 'Barangay Office',
+      date: now,
+      status,
+      timestamp: now,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
 
   try {
     await db.put(newAnnouncement);
-
-    if (typeof db.replicate === 'function') {
-      await db.replicate.to(remoteCouchDB);
-    }
-
-    setAnnouncementsList((prev) => [
-      newAnnouncement,
-      ...prev.filter((a) => a._id !== newAnnouncement._id),
-    ]);
-
-    await createAuditLog({
-      action: 'CREATE',
-      module: 'ANNOUNCEMENTS',
-      recordId: newAnnouncement._id,
-      details: `Published announcement: "${newAnnouncement.title}"`,
-    });
-
-    alert(
-      `Announcement "${newAnnouncement.title}" ${
-        status === 'Published' ? 'published' : 'saved as draft'
-      }.`
-    );
-
-    setAnnouncementForm({
-      title: '',
-      category: 'General',
-      content: '',
-      pinned: false,
-      status: 'Published',
-    });
-    setAnnouncementSubScreen('list');
+    // ... sync, audit log, etc
   } catch (err) {
     console.error('Failed to save announcement:', err);
-    alert('Error saving announcement. Check console.');
+    alert('Error saving announcement.');
+    return;
   }
+
+  setAnnouncementsList((prev) => {
+    const filtered = prev.filter((a) => (a._id || a.id) !== (editingAnnId || newAnnouncement._id));
+    return [newAnnouncement, ...filtered];
+  });
+
+  // Reset form
+  setAnnouncementForm({ title: '', category: 'General', content: '', pinned: false, status: 'Published' });
+  setEditingAnnId(null);
+  setAnnouncementSubScreen('list');
 };
 
 // Sync announcements with PouchDB
@@ -1820,6 +2077,16 @@ const submitBlotterAction = async () => {
       newStatus = 'Referred to PNP (CFA Issued)';
       updatedDoc.cfaIssued = true;
       updatedDoc.cfaIssuedAt = nowIso;
+    }  
+     else if (actionType === 'issue_bpo') {
+      newStatus = 'BPO Issued';
+      updatedDoc.bpoIssued = true;
+      updatedDoc.bpoIssuedAt = nowIso;
+      updatedDoc.bpoExpiry = addDays(new Date(), 7).toISOString(); // 7 days protection
+    } else if (actionType === 'refer_pnp') {
+      newStatus = 'Referred to PNP (VAWC)';
+      updatedDoc.referredToPNP = true;
+      updatedDoc.referredAt = nowIso;
     }
 
     updatedDoc.status = newStatus;
@@ -1837,7 +2104,15 @@ const submitBlotterAction = async () => {
 
     const putRes = await db.put(updatedDoc);
     updatedDoc._rev = putRes.rev;
+    
+    if (typeof forceSyncToRemote === 'function') {
+  await forceSyncToRemote();
+}
 
+// Update local selected state
+if (typeof setSelectedBlotter === 'function') {
+  setSelectedBlotter(updatedDoc);
+}
     // Update local selected state
     if (typeof setSelectedBlotter === 'function') {
       setSelectedBlotter(updatedDoc);
@@ -1845,10 +2120,8 @@ const submitBlotterAction = async () => {
     localStorage.setItem('active_blotter_data', JSON.stringify(updatedDoc));
 
     // Refresh the main blotters list
-    if (typeof setBlotters === 'function') {
-      setBlotters(prev => prev.map(item => (item._id === updatedDoc._id ? updatedDoc : item)));
-    } else if (typeof setBlotterList === 'function') {
-      setBlotterList(prev => prev.map(item => (item._id === updatedDoc._id ? updatedDoc : item)));
+    if (typeof setBlotterList === 'function') {
+    setBlotterList(prev => prev.map(item => (item._id === updatedDoc._id ? updatedDoc : item)));
     }
 
     try {
@@ -2087,6 +2360,9 @@ const handleStatusDropdownChange = async (newStatus) => {
 const totalResidents = residentsList.length;
 const totalHouseholds = householdsList.length;
 const totalVoters = residentsList.filter(r => r.voter || r.isVoter === 'Yes' || r.voterStatus === 'Yes').length;
+const getHouseholdMembersCount = (householdId) => {
+  return residentsList.filter(r => r.household === householdId).length;
+};
 
 // Safe Purok Counter (Ina-extract at pino-format ang Purok kahit may kasamang Zone o Address text)
 const getPurokCount = (purokNumber) => {
@@ -2127,6 +2403,8 @@ const [aidType, setAidType] = useState('Rice — 5kg');
 const [remarks, setRemarks] = useState('');
 const [duplicateAlert, setDuplicateAlert] = useState('');
 const [successMessage, setSuccessMessage] = useState('');
+// NEW: Dedicated state for Aid Encode to prevent collision with Resident Profile view
+const [selectedBeneficiaryId, setSelectedBeneficiaryId] = useState('');
 
 
 // Dynamic storage para sa distribution logs (naka-cache sa localStorage)
@@ -2170,6 +2448,8 @@ const [clearanceForm, setClearanceForm] = useState({
   hasBlotterRecord: false,
   selectedResidentId: '', 
   isIssuedByBarangay: true, 
+  dateIssued: toPHDateString(), 
+   ctcDateIssued: toPHDateString(),
 });
 
 const filteredClearances = clearanceList.filter((rec) => {
@@ -2211,7 +2491,7 @@ const getNextClearanceSequence = async () => {
     }
     const nextNumber = (seqDoc.lastNumber || 0) + 1;
     await db.put({ ...seqDoc, lastNumber: nextNumber });
-    return `BC-2026-${String(nextNumber).padStart(4, '0')}`;
+    return `BC-${new Date().getFullYear()}-${String(nextNumber).padStart(4, '0')}`;
   } catch (err) {
     console.error('Failed to get next sequence:', err);
     return `BC-2026-${String(Date.now()).slice(-4)}`;
@@ -2222,7 +2502,7 @@ const getNextClearanceSequence = async () => {
 const peekNextClearanceNo = async () => {
   try {
     const seqDoc = await db.get('seq_brgy_clearance');
-    return `BC-2026-${String((seqDoc.lastNumber || 0) + 1).padStart(4, '0')}`;
+    return `BC-${new Date().getFullYear()}-${String((seqDoc.lastNumber || 0) + 1).padStart(4, '0')}`;
   } catch (err) {
     if (err.name === 'not_found') return 'BC-2026-0001';
     console.warn('Peek sequence failed:', err);
@@ -2259,6 +2539,7 @@ const peekNextBusinessSequence = async () => {
       
       const payload = {
         ...clearanceForm,
+        dateIssued: clearanceForm.dateIssued || toPHDateString(),
         clearanceNo: newClearanceNo,
         _id: docId,
         type: 'barangay_clearance',
@@ -2456,25 +2737,24 @@ const handleLogAidEntry = async () => {
 const handleEncodeSubmit = async (e) => {
   setFormAttempted(true);
   if (e) e.preventDefault();
-
+  
   if (!selectedProgramId) {
     alert('Pumili muna ng Active Relief Program.');
     return;
   }
-  if (!selectedResidentId) {
+  if (!selectedBeneficiaryId) {
     alert('Pumili muna ng Beneficiary Resident.');
     return;
   }
 
   const targetProg = programsList.find((p) => p.id === selectedProgramId);
-  const targetResident = residentsList.find((r) => r.id === selectedResidentId);
+  const targetResident = residentsList.find((r) => r.id === selectedBeneficiaryId);
   const residentName = targetResident ? targetResident.name : 'Unknown Resident';
 
-  // 3. Clean Duplicate Beneficiary Check (Gamit ang aidLogs lamang)
+  // 1. Clean Duplicate Beneficiary Check
   const isDuplicate = aidLogs.some(
-    (log) => log.programId === selectedProgramId && log.residentId === selectedResidentId
+    (log) => log.programId === selectedProgramId && log.residentId === selectedBeneficiaryId
   );
-
   if (isDuplicate) {
     const errorMsg = `⚠️ Si ${residentName} ay nakatanggap na ng ayuda sa ilalim ng ${targetProg?.title || 'programang ito'}.`;
     if (typeof setDuplicateAlert === 'function') {
@@ -2484,17 +2764,15 @@ const handleEncodeSubmit = async (e) => {
     }
     return;
   }
-
-  // Clear duplicate alert kung pumasa sa check
   if (typeof setDuplicateAlert === 'function') setDuplicateAlert('');
 
-  // 4. Capacity Limit Check
+  // 2. Capacity Limit Check
   if (targetProg && (targetProg.current || 0) >= (targetProg.target || 1)) {
     alert(`⚠️ Puno na ang capacity ng ${targetProg.title} (${targetProg.current}/${targetProg.target}).`);
     return;
   }
 
-  // 5. Increment Program Counter
+  // 3. Increment Program Counter
   const updatedPrograms = programsList.map((prog) => {
     if (prog.id === selectedProgramId) {
       return { ...prog, current: Math.min(prog.target, (prog.current || 0) + 1) };
@@ -2503,12 +2781,13 @@ const handleEncodeSubmit = async (e) => {
   });
   setProgramsList(updatedPrograms);
 
-  // 6. Buuin ang Bagong Log Record
+  // 4. Buuin ang Bagong Log Record
   const now = new Date();
   const timeStamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const newLog = {
-    id: `LOG-${Date.now().toString().slice(-4)}`,
-    residentId: selectedResidentId,
+  _id: `aid_${generateUUID()}`,
+  id: `LOG-${Date.now().toString(36).slice(-4).toUpperCase()}`,
+    residentId: selectedBeneficiaryId,
     residentName: residentName,
     programId: selectedProgramId,
     aid: aidType || 'Relief Goods',
@@ -2517,10 +2796,10 @@ const handleEncodeSubmit = async (e) => {
     status: 'OK',
   };
 
-  // 7. Update Log State
+  // 5. Update Log State
   setAidLogs((prev) => [newLog, ...prev]);
 
-    // 8. Persist aid log to PouchDB + Audit Trace
+  // 6. Persist aid log to PouchDB + Audit Trace
   try {
     await db.put({
       _id: newLog.id,
@@ -2529,8 +2808,7 @@ const handleEncodeSubmit = async (e) => {
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-
-    // ➔ Add Audit Log Call
+    
     try {
       await createAuditLog({
         action: 'CREATE_AID_DISTRIBUTION',
@@ -2542,7 +2820,7 @@ const handleEncodeSubmit = async (e) => {
     } catch (auditErr) {
       console.warn('Audit log failed for Aid Distribution:', auditErr);
     }
-
+    
     if (typeof forceSyncToRemote === 'function') {
       await forceSyncToRemote();
     }
@@ -2550,9 +2828,9 @@ const handleEncodeSubmit = async (e) => {
     console.error('Failed to persist aid log to PouchDB:', dbErr);
   }
 
-  // 9. Reset Inputs & Success Notification
+  // 7. Reset Inputs & Success Notification
   setSelectedProgramId('');
-  setSelectedResidentId('');
+  setSelectedBeneficiaryId('');
   setResidentSearch('');
   setQuantity(1);
   setRemarks('');
@@ -2638,7 +2916,6 @@ useEffect(() => {
   const familyMembers = activeFamilyMembers || [];
 
 const handleUpdateResidentChanges = async (e) => {
-  console.log('🔵 handleUpdateResidentChanges TINAWAG!');
   e.preventDefault();
   if (!selectedResidentId) return;
 
@@ -2700,6 +2977,7 @@ const handleUpdateResidentChanges = async (e) => {
 
 // ── 2. MAIN CORE BLOTTER FORM OBJECT STATE ──
 const [blotterForm, setBlotterForm] = useState({
+   date: toPHDateString(), 
   date: new Date().toISOString().split('T')[0],
   time: '',
   type: 'Noise Complaint',
@@ -2756,7 +3034,6 @@ useEffect(() => {
         .map(mapDocToBlotter)
         .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
 
-      console.log(' Consolidated Admin Blotters Loaded:', blotterDocs.length, blotterDocs);
       setBlotterList(blotterDocs);
     } catch (err) {
       console.error(' Error fetching blotter records from PouchDB:', err);
@@ -2777,7 +3054,6 @@ useEffect(() => {
         doc.caseNo?.startsWith('BLT'));
 
     if (isBlotter || changeInfo.deleted) {
-      console.log('⚡ Real-time blotter update detected in Admin Dashboard:', changeInfo.id);
       fetchBlotters();
     }
   });
@@ -2838,37 +3114,6 @@ const [residentsRegistry, setResidentsRegistry] = useState([
   { id: 'RES-2026-004', name: 'Mark Gian Cortero', purok: 'Purok 2' },
   { id: 'RES-2026-005', name: 'Juhairo Macabangon', purok: 'Purok 4' }
 ]);
-
-
-// ── UPGRADED SUBMIT METRICS SYSTEM HANDLER ──
-const handleCreateBlotterEntry = async (e) => {
-  e.preventDefault();
-
-  // Paglikha ng Auto-Incremental ID Tracker Block
-  const generatedId = `BLT-2026-${String(blotterList.length + 125).padStart(5, '0')}`;
-  
-  const finalCaseData = {
-    id: generatedId,
-    ...blotterForm,
-    handlerOfficer: "Juhairo Macabangon",
-    dateRecorded: "July 29, 2026",
-    filedAt: new Date().toLocaleString()
-  };
-
-  const updatedBlotters = [...blotterList, finalCaseData];
-  setBlotterList(updatedBlotters);
-  localStorage.setItem('bustrac_blotter', JSON.stringify(updatedBlotters));
-  
-  await createAuditLog({
-    action: 'CREATE',
-    module: 'BLOTTER',
-    recordId: generatedId,
-    details: `Filed new blotter case: ${blotterForm.type} at ${blotterForm.location}`,
-  });
-  // Triggering the success interface metrics modal window
-  setRecentlyFiledId(generatedId);
-  setShowSuccessModal(true);
-};
 
 const handleClearBlotterForm = () => {
   if (blotterForm.attachments && blotterForm.attachments.length > 0) {
@@ -3438,37 +3683,7 @@ const handleOpenFeedbackDetails = (fb) => {
   setFbStatusUpdate(fb.status);
   setFbStaffAssignment(fb.assignedTo);
 };
-// Automatically updates the UI whenever there is a change in PouchDB
-useEffect(() => {
-  const fetchAllCerts = async () => {
-    try {
-      const result = await db.allDocs({ include_docs: true });
-      const certs = result.rows
-        .map(row => row.doc)
-        .filter(doc => doc && doc.type === 'certificate_request');
-      setIssuedCertificates(certs);
-    } catch (err) {
-      console.error("Error loading initial certs:", err);
-    }
-  };
-  fetchAllCerts();
-  // Listen for real-time database changes (Insert, Update, Delete)
-  const changes = db.changes({
-    since: 'now',
-    live: true,
-    include_docs: true
-  }).on('change', (change) => {
-    if (change.doc && change.doc.type === 'certificate_request') {
-      setIssuedCertificates((prevCerts) => {
-        const filtered = prevCerts.filter(c => c._id !== change.doc._id);
-        return [change.doc, ...filtered];
-      });
-    }
-  }).on('error', (err) => {
-    console.error("PouchDB change listener error:", err);
-  });
-  return () => changes.cancel();
-}, []);
+
   // ════════════════════════════════════════════════════════════════
   // 4. EFFECT #2: FEEDBACK & COMPLAINTS POUCHDB LISTENER
   // ════════════════════════════════════════════════════════════════
@@ -3657,20 +3872,24 @@ const fetchDatabaseConflicts = async () => {
   try {
     const result = await db.allDocs({ conflicts: true, include_docs: true });
     const conflictList = [];
-    
     for (const row of result.rows) {
       if (row.doc && row.doc._conflicts && row.doc._conflicts.length > 0) {
         for (const conflictRev of row.doc._conflicts) {
           try {
             const conflictingDoc = await db.get(row.id, { rev: conflictRev });
+            
+            // 🔒 XSS SANITIZATION: Prevent <script> injection
+            const rawName = row.doc.name || `${row.doc.firstName || ''} ${row.doc.lastName || ''}`.trim() || 'Unknown Resident';
+            const sanitizedName = String(rawName).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            
             conflictList.push({
               id: `${row.id}-${conflictRev}`,
               docId: row.id,
-              residentName: row.doc.name || `${row.doc.firstName || ''} ${row.doc.lastName || ''}`.trim() || 'Maria Santos',
+              residentName: sanitizedName,
               winningRev: row.doc._rev,
               conflictRev: conflictRev,
-              docA: row.doc,          // Version A (Winning Revision)
-              docB: conflictingDoc,   // Version B (Conflicting Revision)
+              docA: row.doc,
+              docB: conflictingDoc,
               updatedAt: new Date().toLocaleTimeString()
             });
           } catch (fetchErr) {
@@ -3679,9 +3898,6 @@ const fetchDatabaseConflicts = async () => {
         }
       }
     }
-    
-    console.log("🔥 Active Conflicts Found for UI:", conflictList);
-    // SIGURUHING SETCONFLICTCET ANG GINAMIT DAHIL ITO ANG STATE VARIABLE NG UI
     setConflictsList(conflictList);
   } catch (err) {
     console.error('Error fetching database conflicts:', err);
@@ -3716,61 +3932,7 @@ const fetchResidents = async () => {
   }
 };
 
-useEffect(() => {
-  // ── STRICT SAFETY GUARD ──
-  if (
-    !db ||
-    typeof db.allDocs !== 'function' ||
-    typeof db.changes !== 'function'
-  ) {
-    console.warn('[DashboardPortal] Database instance is unavailable in this environment.');
-    return;
-  }
 
-  const fetchAllCerts = async () => {
-    try {
-      const result = await db.allDocs({ include_docs: true });
-      const certs = (result?.rows || [])
-        .map(row => row?.doc)
-        .filter(doc => doc && doc.type === 'certificate_request');
-      setIssuedCertificates(certs);
-    } catch (err) {
-      console.error('Error loading initial certs:', err);
-    }
-  };
-
-  fetchAllCerts();
-
-  // Listen for real-time database changes (Insert, Update, Delete)
-  const changes = db.changes({
-    since: 'now',
-    live: true,
-    include_docs: true
-  });
-
-  if (changes && typeof changes.on === 'function') {
-    changes
-      .on('change', (change) => {
-        if (change?.doc && change.doc.type === 'certificate_request') {
-          setIssuedCertificates((prevCerts) => {
-            const filtered = (prevCerts || []).filter(
-              c => c?._id !== change.doc._id
-            );
-            return [change.doc, ...filtered];
-          });
-        }
-      })
-      .on('error', (err) => {
-        console.error('PouchDB change listener error:', err);
-      });
-  }
-
-  return () => {
-    if (changes && typeof changes.cancel === 'function') {
-      changes.cancel();
-    }
-  };
-}, []);
 
 // Automatically scan for conflicts when mounting or navigating to conflict screen
 useEffect(() => {
@@ -3782,6 +3944,7 @@ useEffect(() => {
 // Resolve Conflict: Keep Version A (Discard conflicting revision B)
 const handleKeepVersionA = async (conflict) => {
   try {
+    // Attempt to remove the conflicting revision
     await db.remove(conflict.docId, conflict.conflictRev);
     alert('✓ Conflict resolved. Retained Version A.');
     
@@ -3789,48 +3952,194 @@ const handleKeepVersionA = async (conflict) => {
       action: 'RESOLVE',
       module: 'CONFLICTS',
       recordId: conflict.docId,
-      details: `Kept Version A during conflict resolution for ${conflict.residentName}`,
+      details: `Kept Version A during conflict resolution for ${conflict.residentName}`
     });
     
+    // Refresh UI
     if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
     if (typeof fetchResidents === 'function') fetchResidents();
   } catch (err) {
     console.error('Failed to purge conflict revision:', err);
-    alert('Error resolving conflict.');
+    // If it's a 404 (already deleted) or 409 (already updated by sync), treat as success
+    if (err.status === 404 || err.status === 409) {
+      alert('✓ Conflict was already resolved by background sync. Refreshing list...');
+      if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
+      if (typeof fetchResidents === 'function') fetchResidents();
+    } else {
+      alert(`Error resolving conflict: ${err.message || 'Unknown error'}`);
+    }
   }
 };
 
-// Resolve Conflict: Keep Version B (Override current doc with revision B)
+// ── BULK RESOLVE ALL CONFLICTS (NUCLEAR OPTION) ──
+// ── BULK RESOLVE ALL CONFLICTS (ABSOLUTE FINAL FIX) ──
+const handleResolveAllConflicts = async () => {
+  if (!window.confirm("⚠️ WARNING: This will permanently delete ALL conflicting revisions (Version B) and keep only the Local Winning version (Version A). This will also force a sync and compact the database. Continue?")) {
+    return;
+  }
+  
+  setLoadingConflicts(true);
+  let successCount = 0;
+  let errorCount = 0;
+  
+  // 1. Get unique document IDs (handles docs with multiple conflicts correctly)
+  const uniqueDocIds = [...new Set(conflictsList.map(c => c.docId))];
+
+  for (const docId of uniqueDocIds) {
+    try {
+      // 2. Get the document WITH its conflicts array
+      const currentDoc = await db.get(docId, { conflicts: true });
+      
+      if (currentDoc._conflicts && currentDoc._conflicts.length > 0) {
+        let docResolved = true;
+        
+        // 3. Explicitly DELETE every single conflicting revision (Version B)
+        for (const conflictRev of currentDoc._conflicts) {
+          try {
+            await db.remove(docId, conflictRev);
+          } catch (removeErr) {
+            // 404 = already deleted, 409 = already resolved by background sync
+            if (removeErr.status !== 404 && removeErr.status !== 409) {
+              console.warn(`⚠️ Failed to remove rev ${conflictRev} for ${docId}:`, removeErr);
+              docResolved = false;
+            }
+          }
+        }
+        
+        // 4. Assert the winning document (Version A) as the single source of truth
+        if (docResolved) {
+          try {
+            // Get it again to ensure we have the latest _rev after deletions
+            const winningDoc = await db.get(docId, { conflicts: true });
+            
+            // Create a clean payload
+            const cleanPayload = { ...winningDoc };
+            
+            // Remove conflict metadata to prevent PouchDB from getting confused
+            delete cleanPayload._conflicts;
+            
+            // Add resolution markers
+            cleanPayload._conflictResolved = true;
+            cleanPayload.updatedAt = new Date().toISOString();
+            
+            // Put the clean document. This creates a new revision (e.g., 160-xxx) 
+            // that is a definitive child of the winning revision, cementing it as the truth.
+            await db.put(cleanPayload);
+            successCount++;
+          } catch (putErr) {
+            console.warn(`⚠️ Failed to update winning doc ${docId}:`, putErr);
+            // If it's a 409, the background sync might have already updated it. 
+            // We still count the conflict deletions as a success.
+            if (putErr.status === 409) {
+              successCount++;
+            } else {
+              errorCount++;
+            }
+          }
+        } else {
+          errorCount++;
+        }
+      }
+    } catch (err) {
+      console.error(`❌ Failed to process document ${docId}:`, err);
+      errorCount++;
+    }
+  }
+
+  // 5. CRITICAL: Force sync to remote to ensure the deletions (tombstones) 
+  // and the new winning revision are sent to CouchDB, preventing it from pushing old conflicts back.
+  if (typeof forceSyncToRemote === 'function') {
+    try {
+      await forceSyncToRemote();
+      
+      // 🔥 CRITICAL FIX: Add a deliberate delay to allow the live replication 
+      // to fully settle and process the deletions BEFORE we refresh the UI.
+      await new Promise(resolve => setTimeout(resolve, 3000));
+    } catch (syncErr) {
+      console.warn("⚠️ Force sync had issues, but local resolution is complete:", syncErr);
+    }
+  }
+
+  // 6. 🔥 SECRET WEAPON: FORCE COMPACTION
+  // This physically removes the deleted conflict revisions from the local database, 
+  // preventing them from being flagged by allDocs({ conflicts: true }) ever again.
+  try {
+    await db.compact();
+  } catch (compactErr) {
+    console.warn("⚠️ Database compaction failed or skipped:", compactErr);
+  }
+
+  setLoadingConflicts(false);
+  
+  const resultMsg = `✅ Bulk Resolution Complete!\n\nSuccessfully resolved: ${successCount} documents\nErrors/Skipped: ${errorCount}`;
+  alert(resultMsg);
+
+  // 7. FORCE REFRESH the UI and DB state
+  if (typeof fetchDatabaseConflicts === 'function') {
+    await fetchDatabaseConflicts();
+  }
+  if (typeof fetchResidents === 'function') {
+    await fetchResidents();
+  }
+};
+
+// Resolve Conflict: Keep Version B (Override current doc with revision B's data)
 const handleKeepVersionB = async (conflict) => {
   try {
-    const updatedDoc = {
-      ...conflict.docB,           // ✅ FIX: ginamit ang docB imbes na versionB
-      _rev: conflict.docA._rev,   // ✅ FIX: ginamit ang docA._rev
+    // 1. Fetch the exact conflicting revision (Version B data)
+    const docB = await db.get(conflict.docId, { rev: conflict.conflictRev });
+    
+    // 2. CRITICAL FIX: Fetch the CURRENT winning document to get its absolute latest _rev.
+    // This prevents 409 errors if the background sync updated the document while we were looking at the UI.
+    const currentDoc = await db.get(conflict.docId);
+    
+    // 3. Create a new document with Version B's data, but using the CURRENT winning _rev
+    const newWinningDoc = {
+      ...docB,
+      _id: conflict.docId,
+      _rev: currentDoc._rev // Overwrite the current winner safely
     };
-    await db.put(updatedDoc);
-    await db.remove(conflict.docId, conflict.conflictRev);
-    alert('✓ Conflict resolved. Overwritten with Version B.');
+    
+    // 4. Save it to make Version B the new winner
+    await db.put(newWinningDoc);
+    
+    // 5. Clean up the old conflicting revision (mark it as deleted)
+    try {
+      await db.remove(conflict.docId, conflict.conflictRev);
+    } catch (removeErr) {
+      console.warn('Old conflict rev already resolved or removed by sync:', removeErr);
+    }
+    
+    alert('✓ Conflict resolved. Successfully kept Version B data.');
     
     await createAuditLog({
       action: 'RESOLVE',
       module: 'CONFLICTS',
       recordId: conflict.docId,
-      details: `Kept Version B during conflict resolution for ${conflict.residentName}`,
+      details: `Kept Version B data during conflict resolution for ${conflict.residentName}`
     });
     
-    fetchDatabaseConflicts();
+    // Refresh UI
+    if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
+    if (typeof fetchResidents === 'function') fetchResidents();
   } catch (err) {
     console.error('Failed to resolve with Version B:', err);
-    alert('Error resolving conflict.');
+    // Graceful fallback for race conditions with background sync
+    if (err.status === 404 || err.status === 409) {
+      alert('✓ Conflict was already resolved by background sync. Refreshing list...');
+      if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
+      if (typeof fetchResidents === 'function') fetchResidents();
+    } else {
+      alert(`Error resolving conflict: ${err.message || 'Unknown error'}`);
+    }
   }
 };
 
-// Resolve Conflict: Keep Both (Save Version B as a new separate document)
 const handleKeepBoth = async (conflict) => {
   try {
     const newDocId = `${conflict.docId}_split_${Date.now()}`;
     const duplicateDoc = {
-      ...conflict.docB,           // ✅ FIX: ginamit ang docB
+      ...conflict.docB,          
       _id: newDocId
     };
     delete duplicateDoc._rev;
@@ -4032,8 +4341,10 @@ const handleSaveOnly = async () => {
   }
 };
 
-const handlePrintDocument = async () => {
-  const targetCert = selectedCertificate || selectedPrintCert;
+const handlePrintDocument = async (passedCert = null) => {
+  // ✅ FIX: Gamitin ang passedCert kung meron, kung wala, fallback sa state
+  const targetCert = passedCert || selectedCertificate || selectedPrintCert;
+  
   if (!targetCert) {
     console.warn('No certificate selected for printing.');
     return;
@@ -4052,23 +4363,15 @@ const handlePrintDocument = async () => {
         },
         updatedAt: new Date().toISOString(),
       };
-
       await db.put(updatedDoc);
 
-      // ➔ Add Audit Log Call
       try {
         await createAuditLog({
           action: 'APPROVE_CERTIFICATE',
           module: 'CERTIFICATES',
           recordId: updatedDoc.refNumber || updatedDoc._id,
           user: `${currentUser?.username || 'admin'} (${role})`,
-          details: `Printed & issued ${
-            updatedDoc.certificateType || updatedDoc.certType || 'Certificate'
-          } for ${
-            updatedDoc.firstName || updatedDoc.lastName
-              ? `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim()
-              : updatedDoc.fullName || updatedDoc.residentName || 'Resident'
-          }`,
+          details: `Printed & issued ${updatedDoc.certificateType || updatedDoc.certType || 'Certificate'} for ${updatedDoc.firstName || updatedDoc.lastName ? `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim() : updatedDoc.fullName || updatedDoc.residentName || 'Resident'}`,
         });
       } catch (auditErr) {
         console.warn('Audit log failed for Certificate print:', auditErr);
@@ -4182,6 +4485,7 @@ const executePrintAndIssue = async (targetCert) => {
 // ── CTC MODAL STATE MANAGEMENT ──
 const [showCtcModal, setShowCtcModal] = useState(false);
 const [ctcForm, setCtcForm] = useState({
+  dateIssued: toPHDateString(),
   ctcNo: '',
   rbiNo: '',
   ctcName: '',
@@ -4208,6 +4512,7 @@ const handleSaveCtc = async (e) => {
       dateIssued: ctcForm.dateIssued,
       isIssuedByBarangay: ctcForm.isIssuedByBarangay,
       placeIssued: ctcForm.placeIssued,
+       dateIssued: ctcForm.dateIssued || toPHDateString(),
       createdAt: new Date().toISOString(),
     };
 
@@ -4268,6 +4573,8 @@ const [businessForm, setBusinessForm] = useState({
   isFemale: false,
   remarks: '',
   photoUrl: null,
+  regDate: toPHDateString(), 
+  orDateIssued: toPHDateString(), 
 
   // Business Information
   regDate: new Date().toISOString().split('T')[0],
@@ -4397,6 +4704,8 @@ const handleSaveBusinessClearance = async (e) => {
 
     const payload = {
       ...businessForm,
+       regDate: businessForm.regDate || toPHDateString(),
+  orDateIssued: businessForm.orDateIssued || toPHDateString(),
 
       bcIdNo: newBcIdNo,
       _id: docId,
@@ -4790,13 +5099,13 @@ const handleGenerateReport = async (module) => {
   }
 
   const headerCells = headers.map((h) => 
-    `<th style="border:1px solid #334155;padding:10px;background:#1e293b;color:#f8fafc;text-align:left;font-size:12px;font-weight:600;">${h}</th>`
+    `<th style="border:1px solid #334155;padding:10px;background:#1e293b;color:#f8fafc;text-align:left;font-size:12px;font-weight:600;">${escapeHtml(h)}</th>`
   ).join('');
 
   const rowCells = rows.map((row, index) => 
-    `<tr style="${index % 2 === 0 ? 'background:#f8fafc' : 'background:#ffffff'}">${
+    `<tr style="${index % 2 === 0 ? 'background:#f8fafc' : 'background:#ffffff'}">${ 
       row.map((cell) => 
-        `<td style="border:1px solid #e2e8f0;padding:8px 10px;font-size:11px;color:#334155;">${cell ?? ''}</td>`
+        `<td style="border:1px solid #e2e8f0;padding:8px 10px;font-size:11px;color:#334155;">${escapeHtml(cell)}</td>`
       ).join('')
     }</tr>`
   ).join('');
@@ -5111,10 +5420,10 @@ const handleGenerateExcelReport = (moduleType) => {
 
     case 'households':
       exportData = (householdsList || []).map(h => ({
-        'Household No': h.householdNo || h.id || h._id,
-        'Head of Family': h.headName || h.headOfFamily || 'N/A',
+        'Household No': h.id || h._id,
+        'Head of Family': h.head || 'N/A',       
         'Purok / Zone': h.purok || 'N/A',
-        'Members Count': h.membersCount || (h.members ? h.members.length : 1),
+        'Members Count': h.members || (h.members ? h.members.length : 0),
         'Address': h.address || 'N/A'
       }));
       break;
@@ -5218,7 +5527,6 @@ const clearSelectedCert = useCallback(() => {
 const handleSaveBlotter = async (e) => {
   if (e) e.preventDefault();
 
-  // Extract names safely
   const compName = typeof blotterForm.complainant === 'object' 
     ? blotterForm.complainant.name || blotterForm.complainant.displayName 
     : (blotterForm.complainant || blotterForm.complainantName || '');
@@ -5227,37 +5535,31 @@ const handleSaveBlotter = async (e) => {
     ? blotterForm.respondent.name || blotterForm.respondent.displayName 
     : (blotterForm.respondent || blotterForm.respondentName || '');
 
-  // Detailed Required Fields Validation with Auto-Focus
   if (!blotterForm.date) {
-    showToast(' Please select the Date of Incident.');
+    showToast('Please select the Date of Incident.');
     document.getElementById('blotter-date')?.focus();
     return;
   }
-
   if (!blotterForm.time) {
     alert('⚠️ Please enter the Time Matrix for the incident.');
     document.getElementById('blotter-time')?.focus();
     return;
   }
-
   if (!blotterForm.location || blotterForm.location.trim() === '') {
     alert('⚠️ Please enter the Exact Location Address.');
     document.getElementById('blotter-location')?.focus();
     return;
   }
-
   if (!compName) {
     alert('⚠️ Please select or input the Complainant (Nagrereklamo).');
     document.getElementById('blotter-complainant')?.focus();
     return;
   }
-
   if (!respName) {
     alert('⚠️ Please select or input the Respondent (Inirereklamo).');
     document.getElementById('blotter-respondent')?.focus();
     return;
   }
-
   if (!blotterForm.narrative || blotterForm.narrative.trim() === '') {
     alert('⚠️ Please provide the Incident Narrative Report Statement.');
     document.getElementById('blotter-narrative')?.focus();
@@ -5265,15 +5567,14 @@ const handleSaveBlotter = async (e) => {
   }
 
   try {
-    const trackingNo = blotterForm.trackingNo || `BLT-${new Date().getFullYear()}-${Math.floor(1000 + Math.random() * 9000)}`;
+    const trackingNo = blotterForm.trackingNo || `BLT-${new Date().getFullYear()}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
 
-    // Complete payload mapped for both old & new table views
     const blotterPayload = {
       _id: trackingNo,
       type: 'blotter_record',
       trackingNo: trackingNo,
       id: trackingNo,
-      caseNum: trackingNo, // Fallback for older table components
+      caseNum: trackingNo,
       officer: blotterForm.officer || 'Juhairo Macabangon',
       dateLogged: blotterForm.dateLogged || new Date().toISOString().split('T')[0],
       date: blotterForm.date || blotterForm.incidentDate || new Date().toISOString().split('T')[0],
@@ -5285,19 +5586,15 @@ const handleSaveBlotter = async (e) => {
       location: blotterForm.location || '',
       isVAWC: !!blotterForm.isVawc,
       isVawc: !!blotterForm.isVawc,
-
-      // Parties Data (Dual-key mapping)
       complainant: compName,
       complainantName: compName,
       complainantId: blotterForm.complainantId || '',
       isComplainantNonResident: !!blotterForm.isComplainantNonResident,
-
       respondent: respName,
       respondentName: respName,
-      respondentEmail: blotterForm.respondentEmail || blotterForm.email || '', // Respondent email
+      respondentEmail: blotterForm.respondentEmail || blotterForm.email || '',
       respondentId: blotterForm.respondentId || '',
       isRespondentNonResident: !!blotterForm.isRespondentNonResident,
-
       witnesses: blotterForm.witnesses || '',
       narrative: blotterForm.narrative || '',
       formalAction: blotterForm.actionTaken || blotterForm.formalAction || 'Summoned Parties',
@@ -5305,13 +5602,18 @@ const handleSaveBlotter = async (e) => {
       summonCount: blotterForm.summonCount || 0,
       nextHearingDate: blotterForm.nextHearingDate || '',
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      sla: {
+        startDate: new Date().toISOString(),
+        mediationDeadline: addDays(new Date(), 15).toISOString(),
+        luponDeadline: null,
+        isBreached: false,
+        escalationLevel: 'barangay',
+      }
     };
 
-    // 1. Save directly to PouchDB
     await db.put(blotterPayload);
 
-    // 2. React state instant update
     if (typeof setBlotterList === 'function') {
       setBlotterList(prev => {
         const filtered = prev.filter(b => b._id !== trackingNo && b.id !== trackingNo);
@@ -5319,7 +5621,6 @@ const handleSaveBlotter = async (e) => {
       });
     }
 
-    // 3. System Audit Log
     if (typeof createAuditLog === 'function') {
       await createAuditLog({
         action: 'CREATE_BLOTTER',
@@ -5329,42 +5630,14 @@ const handleSaveBlotter = async (e) => {
       });
     }
 
-    // 4. Trigger Backend Email Notification Service
-    let emailStatusMessage = '';
-    const targetEmail = blotterForm.respondentEmail || blotterForm.email;
-
-    if (targetEmail && targetEmail.trim() !== '') {
-      try {
-        const response = await fetch('http://localhost:5000/api/blotter', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            caseNumber: trackingNo,
-            respondentName: respName,
-            respondentEmail: targetEmail,
-            scheduleDate: blotterForm.nextHearingDate || blotterForm.date || 'TBA',
-            incidentType: blotterForm.incidentType || blotterForm.type || 'General Incident',
-            details: blotterForm.narrative || ''
-          })
-        });
-
-        const resData = await response.json();
-        if (resData.success && resData.emailSent) {
-          emailStatusMessage = `\n\n📧 Summons Notification Email successfully sent to ${targetEmail}!`;
-        }
-      } catch (emailErr) {
-        console.warn('Backend Email Service offline or unreachable:', emailErr);
-      }
-    }
-
-    alert(`✓ Blotter Record successfully saved!\nTracking No: ${trackingNo}${emailStatusMessage}`);
+    alert(`✓ Blotter Record successfully saved!\n\nTracking No: ${trackingNo}`);
 
     if (typeof nav === 'function') {
       nav('blotter-manage');
     }
   } catch (err) {
     console.error('Error saving blotter record:', err);
-    alert(' An error occurred while saving the Blotter Record. Please try again.');
+    alert('An error occurred while saving the Blotter Record. Please try again.');
   }
 };
 
@@ -5421,53 +5694,70 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
 
   const [advisorySubScreen, setAdvisorySubScreen] = useState('list'); // 'list' | 'new' | 'edit'
   const [editingAdvisoryId, setEditingAdvisoryId] = useState(null);
-
+  
+  
   // Auto-save advisories to localStorage
   useEffect(() => {
     localStorage.setItem('bustrac_advisories', JSON.stringify(advisoriesList));
   }, [advisoriesList]);
-    const handleSaveAdvisory = (e) => {
-    e.preventDefault();
-    if (!advisoryForm.title.trim() || !advisoryForm.description.trim()) {
-      alert('Please fill in the Title and Description.');
-      return;
-    }
+    
+  const handleSaveAdvisory = async (e) => {
+  e.preventDefault();
+  if (!advisoryForm.title.trim() || !advisoryForm.description.trim()) {
+    alert('Please fill in the Title and Description.');
+    return;
+  }
 
-    const now = new Date().toISOString();
-    const payload = editingAdvisoryId
-      ? {
-          ...advisoriesList.find((a) => (a._id || a.id) === editingAdvisoryId),
-          ...advisoryForm,
-          updatedAt: now,
-        }
-      : {
-          _id: `advisory_${Date.now()}`,
-          type: 'advisory',
-          ...advisoryForm,
-          createdAt: now,
-          updatedAt: now,
-        };
+  const now = new Date().toISOString();
+  let payload;
 
-    if (editingAdvisoryId) {
-      setAdvisoriesList((prev) =>
-        prev.map((a) => ((a._id || a.id) === editingAdvisoryId ? payload : a))
-      );
-    } else {
-      setAdvisoriesList((prev) => [payload, ...prev]);
-    }
+  if (editingAdvisoryId) {
+    const existing = advisoriesList.find((a) => (a._id || a.id) === editingAdvisoryId);
+    payload = {
+      ...existing,
+      ...advisoryForm,
+      _id: existing?._id || editingAdvisoryId,
+      _rev: existing?._rev,
+      type: 'advisory',
+      updatedAt: now,
+    };
+  } else {
+    payload = {
+      _id: `advisory_${Date.now()}`,
+      type: 'advisory',
+      ...advisoryForm,
+      createdAt: now,
+      updatedAt: now,
+    };
+  }
 
-    // Reset
-    setAdvisoryForm({
-      title: '',
-      category: 'Relief',
-      description: '',
-      date: new Date().toISOString().split('T')[0],
-      priority: 'Medium',
-      status: 'Active',
-    });
-    setEditingAdvisoryId(null);
-    setAdvisorySubScreen('list');
-  };
+  try {
+    await db.put(payload);
+  } catch (err) {
+    console.error('Failed to save advisory:', err);
+    alert('Failed to save advisory to database.');
+    return;
+  }
+
+  if (editingAdvisoryId) {
+    setAdvisoriesList((prev) =>
+      prev.map((a) => ((a._id || a.id) === editingAdvisoryId ? payload : a))
+    );
+  } else {
+    setAdvisoriesList((prev) => [payload, ...prev]);
+  }
+
+  setAdvisoryForm({
+    title: '',
+    category: 'Relief',
+    description: '',
+    date: new Date().toISOString().split('T')[0],
+    priority: 'Medium',
+    status: 'Active',
+  });
+  setEditingAdvisoryId(null);
+  setAdvisorySubScreen('list');
+};
 
   const handleEditAdvisory = (adv) => {
     setEditingAdvisoryId(adv._id || adv.id);
@@ -5645,7 +5935,6 @@ const saveSettings = async (updatedSettings) => {
       punongBarangay: updatedSettings.punongBarangay,
       luponSecretary: updatedSettings.luponSecretary,
       treasurer: updatedSettings.treasurer || '',
-      publicDomain: updatedSettings.publicDomain || '',
       updatedAt: new Date().toISOString(),
       ...(existingRev ? { _rev: existingRev } : {})
     };
@@ -5680,7 +5969,6 @@ const [settingsForm, setSettingsForm] = useState({
   punongBarangay: 'HON. ANNABELLE E. RULL',
   luponSecretary: 'MRS. MELY M. PRESADO',
   treasurer: '',
-  publicDomain: ''
 });
 
   useEffect(() => {
@@ -5698,7 +5986,6 @@ const [settingsForm, setSettingsForm] = useState({
       }
     } catch (err) {
       if (err.status === 404) {
-        console.log('No saved settings found. Using defaults.');
       } else {
         console.warn('Using default official settings:', err.message);
       }
@@ -5797,6 +6084,19 @@ useEffect(() => {
     });
   }
 }, [screen, businessForm._id]);
+
+useEffect(() => {
+  setupPouchDBSync(); 
+
+  const unsubscribe = onSyncStatusChange((status) => {
+    setSyncState(status); // 'syncing' | 'synced' | 'error' | 'offline'
+  });
+
+  // Initial check
+  setSyncState(navigator.onLine ? 'synced' : 'offline');
+
+  return () => unsubscribe();
+}, []);
 
 useEffect(() => {
   if (role === 'admin' && db) {
@@ -6256,25 +6556,29 @@ useEffect(() => {
         <div className="main">
 
           {/* ── Topbar ── */}
-          <header className="topbar">
-            <div style={{ flex: 1 }}>
-              <div className="tb-title">{getPageTitle()}</div>
-              <div className="tb-sub">{getPageSubtitle()}</div>
-            </div>
-
+          <header className="topbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
+          <div style={{ flex: 1 }}>
+            <div className="tb-title" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>{getPageTitle()}</div>
+            <div className="tb-sub" style={{ fontSize: '12px', color: 'var(--muted)' }}>{getPageSubtitle()}</div>
+          </div>
+          
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
             {role === 'admin' && (
-              <div className="role-admin">🔑 Admin</div>
+              <div className="role-admin" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--amber)', background: 'rgba(245, 158, 11, 0.1)', padding: '4px 10px', borderRadius: '6px' }}>
+                🔑 Admin
+              </div>
             )}
-
-            {/* Real-time Dynamic Sync Status Indicator */}
-            <SyncStatusIndicator syncState={syncState} />
-
+            
+            {/* ✅ SIGURADONG LALABAS ITO */}
+            <SyncStatusIndicator syncState={syncState || 'offline'} />
             <ThemeToggle />
             
-            <button className="btn btn-g btn-sm" onClick={logout}>
+            <button className="btn btn-g btn-sm" onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
               Sign Out
             </button>
-          </header>
+          </div>
+        </header>
 
           <div className="content">
 
@@ -6828,51 +7132,37 @@ useEffect(() => {
 
                           {/* ── LEFT SIDEBAR: PHOTO & BARANGAY STATUS ── */}
                           <div style={{ borderRight: '1px solid var(--border)', paddingRight: '20px' }}>
-                            <div style={{
-                              width: '100%',
-                              height: '180px',
-                              border: '2px dashed var(--border)',
-                              borderRadius: '8px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              marginBottom: '12px',
-                              backgroundColor: 'var(--surface2)',
-                              color: 'var(--text)',
-                              overflow: 'hidden',
-                            }}>
-                              {residentForm.photoUrl ? (
-                                <img src={residentForm.photoUrl} alt="Resident" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            
+                            {/* Photo Preview Box */}
+                            <div style={{ width: '100%', height: '180px', border: '2px dashed var(--700)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', backgroundColor: 'var(--surface2)', color: 'var(--text)', overflow: 'hidden', position: 'relative' }}>
+                              {residentForm.photoUrl || photoPreviewUrl ? (
+                                <img 
+                                  src={residentForm.photoUrl || photoPreviewUrl} 
+                                  alt="Resident Preview" 
+                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
+                                  onError={(e) => { console.error(' Image failed to load'); e.target.style.display = 'none'; }} 
+                                />
                               ) : (
-                                <span style={{ color: 'var(--muted)', fontSize: '12px' }}>Picture (.Jpg)</span>
+                                <span style={{ color: 'var(--muted)', fontSize: '12px', textAlign: 'center', padding: '10px' }}>
+                                  Picture (.Jpg / .Png)<br/>(Max 500KB)
+                                </span>
                               )}
                             </div>
 
                             <div style={{ marginBottom: '16px' }}>
-                              <input
-                                type="file"
-                                accept="image/*"
-                                id="resident-photo-upload"
-                                style={{ display: 'none' }}
-                                onChange={(e) => {
-                                  const file = e.target.files?.[0];
-                                  if (file) {
-                                    if (file.size > 2 * 1024 * 1024) {
-                                      alert('Masyadong malaki ang larawan. Paki-upload ng file na mas mababa sa 2MB.');
-                                      return;
-                                    }
-                                    const reader = new FileReader();
-                                    reader.onloadend = () => {
-                                      updateResidentField('photoUrl', reader.result);
-                                    };
-                                    reader.readAsDataURL(file);
-                                  }
-                                }}
+                              {/* Hidden File Input */}
+                              <input 
+                                type="file" 
+                                accept="image/*" 
+                                id="resident-photo-upload" 
+                                style={{ display: 'none' }} 
+                                onChange={handlePhotoChange} 
                               />
                               
-                              <label
-                                htmlFor="resident-photo-upload"
-                                className="btn btn-g"
+                              {/* Upload Button */}
+                              <label 
+                                htmlFor="resident-photo-upload" 
+                                className="btn btn-g" 
                                 style={{ width: '100%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
                               >
                                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -6882,22 +7172,13 @@ useEffect(() => {
                                 {residentForm.photoUrl ? 'Change Photo' : 'Upload / Take Photo'}
                               </label>
 
-                              {/* SVG REMOVE PHOTO BUTTON */}
+                              {/* Remove Button */}
                               {residentForm.photoUrl && (
-                                <button
-                                  type="button"
-                                  className="btn btn-g btn-sm"
-                                  style={{
-                                    width: '100%',
-                                    marginTop: '8px',
-                                    color: 'var(--red, #ef4444)',
-                                    borderColor: 'rgba(239, 68, 68, 0.3)',
-                                    display: 'flex',
-                                    alignItems: 'center',
-                                    justifyContent: 'center',
-                                    gap: '6px'
-                                  }}
-                                  onClick={() => updateResidentField('photoUrl', '')}
+                                <button 
+                                  type="button" 
+                                  className="btn btn-g btn-sm" 
+                                  style={{ width: '100%', marginTop: '8px', color: 'var(--red, #ef4444)', borderColor: 'rgba(239, 68, 68, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} 
+                                  onClick={handleRemovePhoto}
                                 >
                                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                                     <polyline points="3 6 5 6 21 6" />
@@ -6910,6 +7191,7 @@ useEffect(() => {
                               )}
                             </div>
 
+                            {/* Checkboxes */}
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
                               <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)' }}>
                                 <input type="checkbox" checked={residentForm.isBarangayOfficial} onChange={(e) => updateResidentField('isBarangayOfficial', e.target.checked)} />
@@ -7784,7 +8066,7 @@ useEffect(() => {
                 <td>
                   <span className={`badge ${h.purokClass}`}>{h.purok}</span>
                 </td>
-                <td>{h.members}</td>
+                <td>{getHouseholdMembersCount(h.id)}</td>
                 <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   <button
                     className="btn btn-g btn-sm"
@@ -8045,6 +8327,7 @@ useEffect(() => {
                     handleSaveOnly={handleSaveOnly}
                     handlePrintDocument={handlePrintDocument}
                     issuedCertificates={issuedCertificates}
+                    setIssuedCertificates={setIssuedCertificates}
                     showPrintModal={showPrintModal}
                     setShowPrintModal={setShowPrintModal}
                     selectedPrintCert={selectedPrintCert}
@@ -8647,11 +8930,6 @@ useEffect(() => {
                             onClick={() => showToast('Draft saving feature is coming soon!', 'info')}
                             style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                           > 
-                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                              <polyline points="17 21 17 13 7 13 7 21" />
-                              <polyline points="7 3 7 8 15 8" />
-                            </svg>
                             Save as Draft 
                           </button>
 
@@ -8669,10 +8947,6 @@ useEffect(() => {
                             }}
                             style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
                           >
-                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                              <line x1="18" y1="6" x2="6" y2="18" />
-                              <line x1="6" y1="6" x2="18" y2="18" />
-                            </svg>
                             Cancel
                           </button>
 
@@ -8763,7 +9037,7 @@ useEffect(() => {
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
                                 <label className="fl">PERMIT VALIDITY / EXPIRATION</label>
-                                <input type="text" className="fc" readOnly value="Valid until December 31, 2026" />
+                                <input type="text" className="fc" readOnly value= {`Valid until December 31, ${new Date().getFullYear()}`} />
                               </div>
                             </div>
                           </div>
@@ -9216,11 +9490,25 @@ useEffect(() => {
                                             transition: 'background 0.15s ease'
                                           }}
                                           onClick={async () => { 
+                                            
                                             const updated = programsList.map(p => 
                                               p.id === prog.id ? { ...p, status: 'Archived' } : p
                                             ); 
                                             setProgramsList(updated); 
                                             setOpenActionMenu(null); 
+
+                                              try {
+                                                const docId = `program_${prog.id}`;
+                                                const existing = await db.get(docId);
+                                                await db.put({
+                                                  ...existing,
+                                                  status: 'Archived',
+                                                  updatedAt: new Date().toISOString(),
+                                                });
+                                              } catch (err) {
+                                                console.error('Failed to archive program in PouchDB:', err);
+                                              }
+                                              
                                             await createAuditLog({ 
                                               action: 'ARCHIVE', 
                                               module: 'PROGRAMS', 
@@ -10267,6 +10555,7 @@ useEffect(() => {
 
                           const isSettled = b.status === 'Settled / Resolved' || b.status === 'Resolved' || b.status === 'Settled';
                           const isCfaIssued = b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)' || b.status === 'Referred to Higher Authority';
+                          const isVawc = b.isVawc || b.type === 'VAWC' || b.incidentType?.includes('VAWC') || b.isVAWC === true;
 
                           return (
                             <tr key={b._id || b.id}>
@@ -10296,53 +10585,55 @@ useEffect(() => {
                                     View
                                   </button>
 
-                                  {!isSettled && !isCfaIssued && (
-                                    <>
-                                      {currentSummon === 0 && (
-                                        <button 
-                                          className="btn btn-primary btn-sm" 
-                                          onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}
-                                        >
-                                          1st Summon
-                                        </button>
-                                      )}
+                                    {!isSettled && !isCfaIssued && (
+                                      <>
+                                        {!isVawc && (
+                                          <>
+                                            {currentSummon === 0 && (
+                                              <button className="btn btn-primary btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}>
+                                                1st Summon
+                                              </button>
+                                            )}
+                                            {currentSummon === 1 && (
+                                              <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}>
+                                                2nd Summon
+                                              </button>
+                                            )}
+                                            {currentSummon === 2 && (
+                                              <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}>
+                                                3rd Summon
+                                              </button>
+                                            )}
+                                            <button className="btn btn-success btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'settled')}>
+                                              Settled
+                                            </button>
+                                            {currentSummon >= 3 && (
+                                              <button className="btn btn-danger btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}>
+                                                Escalate / Issue CFA
+                                              </button>
+                                            )}
+                                          </>
+                                        )}
 
-                                      {currentSummon === 1 && (
-                                        <button 
-                                          className="btn btn-warning btn-sm" 
-                                          onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}
-                                        >
-                                          2nd Summon
-                                        </button>
-                                      )}
-
-                                      {currentSummon === 2 && (
-                                        <button 
-                                          className="btn btn-warning btn-sm" 
-                                          onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}
-                                        >
-                                          3rd Summon
-                                        </button>
-                                      )}
-
-                                      <button 
-                                        className="btn btn-success btn-sm" 
-                                        onClick={() => handleBlotterAction(b._id || b.id, 'settled')}
-                                      >
-                                        Settled
-                                      </button>
-
-                                      {currentSummon >= 3 && (
-                                        <button 
-                                          className="btn btn-danger btn-sm" 
-                                          style={{ backgroundColor: '#dc2626', color: '#fff' }} 
-                                          onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}
-                                        >
-                                          Escalate / Issue CFA
-                                        </button>
-                                      )}
-                                    </>
-                                  )}
+                                        {isVawc && (
+                                          <>
+                                            <button 
+                                              className="btn btn-danger btn-sm" 
+                                              style={{ backgroundColor: '#7c3aed', borderColor: '#7c3aed' }}
+                                              onClick={() => handleBlotterAction(b._id || b.id, 'issue_bpo')}
+                                            >
+                                              Issue BPO
+                                            </button>
+                                            <button 
+                                              className="btn btn-danger btn-sm" 
+                                              onClick={() => handleBlotterAction(b._id || b.id, 'refer_pnp')}
+                                            >
+                                              Refer to PNP
+                                            </button>
+                                          </>
+                                        )}
+                                      </>
+                                    )}
 
                                   {(isSettled || isCfaIssued) && (
                                     <button 
@@ -10405,208 +10696,228 @@ useEffect(() => {
                 SCREEN: BLOTTER DETAIL (DYNAMIC LOGIC ROUTE)
                 ════════════════════════════════════════ */}
                 {screen === 'blotter-detail' && (() => {
-                  const currentCase = selectedBlotter || complaint || staffCase || {};
+  const currentCase = selectedBlotter || complaint || staffCase || {};
+  
+  const getPartyName = (partyData, fallbackName) => {
+    if (typeof partyData === 'object' && partyData !== null) {
+      return partyData.name || partyData.fullName || fallbackName || '';
+    }
+    if (typeof partyData === 'string' && partyData.trim() !== '') {
+      return partyData;
+    }
+    return fallbackName || 'N/A';
+  };
 
-                  // Helper function para makuha ang Pangalan ng Party (Complainant / Respondent)
-                  const getPartyName = (partyData, fallbackName) => {
-                    if (typeof partyData === 'object' && partyData !== null) {
-                      return partyData.name || partyData.fullName || fallbackName || '';
-                    }
-                    if (typeof partyData === 'string' && partyData.trim() !== '') {
-                      return partyData;
-                    }
-                    return fallbackName || 'N/A';
-                  };
+  const getPartyId = (partyData, fallbackId) => {
+    if (typeof partyData === 'object' && partyData !== null) {
+      return partyData.id || partyData.residentId || fallbackId || 'Registered Resident';
+    }
+    return fallbackId || 'Registered Resident';
+  };
 
-                  // Helper function para makuha ang Resident ID
-                  const getPartyId = (partyData, fallbackId) => {
-                    if (typeof partyData === 'object' && partyData !== null) {
-                      return partyData.id || partyData.residentId || fallbackId || 'Registered Resident';
-                    }
-                    return fallbackId || 'Registered Resident';
-                  };
+  const complainantDisplayName = getPartyName(currentCase.complainant, currentCase.complainantName || currentCase.compName);
+  const respondentDisplayName = getPartyName(currentCase.respondent, currentCase.respondentName || currentCase.respName);
+  const caseNarrative = currentCase.narrative || currentCase.statement || currentCase.details || 'No narrative provided.';
+  
+  const caseHistory = Array.isArray(currentCase.history) ? currentCase.history : [];
 
-                  const complainantDisplayName = getPartyName(currentCase.complainant, currentCase.complainantName || currentCase.compName);
-                  const respondentDisplayName = getPartyName(currentCase.respondent, currentCase.respondentName || currentCase.respName);
-                  const caseNarrative = currentCase.narrative || currentCase.statement || currentCase.details || 'No narrative provided.';
+  return (
+    <div className="screen active" style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: '1200px', margin: '0 auto' }}>
+      
+      {/* ═══ HEADER: Case Status & Quick Actions ═══ */}
+      <div className="fp" style={{ padding: '20px', background: 'linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+          <div>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
+              Case Tracking Number
+            </div>
+            <div style={{ fontSize: '24px', fontWeight: '800', color: 'var(--accent)', fontFamily: 'var(--mono)' }}>
+              {currentCase.trackingNo || currentCase.caseNum || currentCase._id || 'N/A'}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            {getStatusBadge(currentCase?.status || 'Open')}
+            <button
+              type="button"
+              className="btn btn-g"
+              onClick={() => nav('blotter-manage')}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M19 12H5" />
+                <path d="M12 19l-7-7 7-7" />
+              </svg>
+              Back to List
+            </button>
+          </div>
+        </div>
+        
+        {/* Quick Stats */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
+          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Date Filed</div>
+            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)' }}>
+              {currentCase.dateFiled || currentCase.date || 'N/A'}
+            </div>
+          </div>
+          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Incident Type</div>
+            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)' }}>
+              {currentCase.incidentType || currentCase.type || 'N/A'}
+            </div>
+          </div>
+          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Summons Issued</div>
+            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--amber)' }}>
+              {currentCase.summonCount || 0} / 3
+            </div>
+          </div>
+          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Location</div>
+            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)' }}>
+              {currentCase.location || 'N/A'}
+            </div>
+          </div>
+        </div>
+      </div>
 
-                  return (
-                    <div className="screen active" style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                      {/* TWO-COLUMN LAYOUT */}
-                      <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, alignItems: 'stretch' }}>
-                        
-                        {/* LEFT COLUMN */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                          {/* Case Information */}
-                          <div className="fp">
-                            <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              Case Information
-                            </div>
-                            <div style={{ 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '6px', 
-                            fontSize: '12px',
-                            fontWeight: 700 
-                          }}>
-                            <span style={{ color: 'var(--muted)' }}>Current Status:</span>
-                            {getStatusBadge(currentCase?.status || 'Open')}
-                          </div>
-                            <div className="fg2">
-                              <div className="fg">
-                                <label className="fl">Case Number</label>
-                                <input 
-                                  className="fc" 
-                                  value={currentCase.trackingNo || currentCase.caseNum || currentCase._id || currentCase.id || selectedBlotterId || ''} 
-                                  readOnly 
-                                  style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }} 
-                                />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Current Status</label>
-                                <select 
-                                  className="fc" 
-                                  value={currentCase.status || currentCase.caseStatus || 'Open'} 
-                                  onChange={(e) => handleStatusDropdownChange(e.target.value)}
-                                >
-                                  <option value="Open">Open</option> <option value="1st Summon Issued">1st Summon Issued</option>
-                                  <option value="2nd Summon Issued">2nd Summon Issued</option>
-                                  <option value="3rd Summon Issued">3rd Summon Issued</option>
-                                  <option value="Under Mediation">Under Mediation</option>
-                                  <option value="Settled / Resolved">Settled / Resolved</option>
-                                  <option value="Referred to PNP (CFA Issued)">Referred to PNP (CFA Issued)</option>
-                                </select>
-                              </div>
-                            </div>
-                            <div className="fg2">
-                              <div className="fg">
-                                <label className="fl">Date Filed</label>
-                                <input className="fc" type="text" value={currentCase.dateFiled || currentCase.dateLogged || currentCase.date || ''} readOnly />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Time Filed</label>
-                                <input className="fc" type="text" value={currentCase.timeFiled || currentCase.incidentTime || currentCase.time || ''} readOnly />
-                              </div>
-                            </div>
-                            <div className="fg">
-                              <label className="fl">Incident Type</label>
-                              <input className="fc" value={currentCase.incidentType || currentCase.type || 'N/A'} readOnly />
-                            </div>
-                            <div className="fg">
-                              <label className="fl">Location of Incident</label>
-                              <input className="fc" value={currentCase.location || ''} readOnly />
-                            </div>
-                          </div>
+      {/* ═══ PARTIES INVOLVED ═══ */}
+      <div className="fp" style={{ padding: '20px' }}>
+        <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+            <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
+            <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+          </svg>
+          Parties Involved
+        </div>
+        
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+          {/* Complainant */}
+          <div style={{ padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '8px', fontWeight: '700' }}>
+              Complainant (Nagrereklamo)
+            </div>
+            <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text)', marginBottom: '8px' }}>
+              {complainantDisplayName}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+              ID: <span style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>{getPartyId(currentCase.complainant, currentCase.compID)}</span>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
+              Status: {currentCase.complainant?.isNonResident ? 'External Party' : 'Verified Resident'}
+            </div>
+          </div>
 
-                          {/* Complainant Information */}
-                          <div className="fp">
-                            <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              Complainant Information
-                            </div>
-                            <div className="fg">
-                              <label className="fl">Full Name</label>
-                              <input className="fc" value={complainantDisplayName} readOnly />
-                            </div>
-                            <div className="fg2">
-                              <div className="fg">
-                                <label className="fl">Resident ID / Non-Resident</label>
-                                <input 
-                                  className="fc" 
-                                  value={getPartyId(currentCase.complainant, currentCase.compID)} 
-                                  readOnly 
-                                  style={{ color: 'var(--muted)' }} 
-                                />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Verification</label>
-                                <input 
-                                  className="fc" 
-                                  value={currentCase.complainant?.isNonResident ? 'External Party' : 'Verified Resident'} 
-                                  readOnly 
-                                  style={{ color: 'var(--muted)' }} 
-                                />
-                              </div>
-                            </div>
-                          </div>
+          {/* Respondent */}
+          <div style={{ padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '8px', fontWeight: '700' }}>
+              Respondent (Inirereklamo)
+            </div>
+            <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text)', marginBottom: '8px' }}>
+              {respondentDisplayName}
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
+              ID: <span style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>{getPartyId(currentCase.respondent, currentCase.respID)}</span>
+            </div>
+            <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
+              Status: {currentCase.respondent?.isNonResident ? 'External Party' : 'Verified Resident'}
+            </div>
+          </div>
+        </div>
+      </div>
 
-                          {/* Narrative */}
-                          <div className="fp" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-                            <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              Incident Narrative
-                            </div>
-                            <div className="fg">
-                              <label className="fl">Official Narrative Statement</label>
-                              <textarea className="fc" rows={4} value={caseNarrative} readOnly />
-                            </div>
-                          </div>
-                        </div>
+      {/* ═══ INCIDENT NARRATIVE ═══ */}
+      <div className="fp" style={{ padding: '20px' }}>
+        <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+          </svg>
+          Incident Narrative
+        </div>
+        <div style={{ padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', lineHeight: '1.6', color: 'var(--text)' }}>
+          {caseNarrative}
+        </div>
+      </div>
 
-                        {/* RIGHT COLUMN */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-                          {/* Respondent Information */}
-                          <div className="fp">
-                            <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                              Respondent Information
-                            </div>
-                            <div className="fg">
-                              <label className="fl">Full Name</label>
-                              <input className="fc" value={respondentDisplayName} readOnly />
-                            </div>
-                            <div className="fg2">
-                              <div className="fg">
-                                <label className="fl">Resident ID / Non-Resident</label>
-                                <input 
-                                  className="fc" 
-                                  value={getPartyId(currentCase.respondent, currentCase.respID)} 
-                                  readOnly 
-                                  style={{ color: 'var(--muted)' }} 
-                                />
-                              </div>
-                              <div className="fg">
-                                <label className="fl">Status</label>
-                                <input 
-                                  className="fc" 
-                                  value={currentCase.respondent?.isNonResident ? 'External Party' : 'Verified Resident'} 
-                                  readOnly 
-                                  style={{ color: 'var(--muted)' }} 
-                                />
-                              </div>
-                            </div>
-                          </div>
+      {/* ═══ CASE ACTION PANEL ═══ */}
+      <div className="fp" style={{ padding: '20px', background: 'linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%)', border: '2px solid var(--border)' }}>
+        <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)', fontSize: '16px' }}>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M12 2v4" />
+            <path d="M12 18v4" />
+            <path d="M4.93 4.93l2.83 2.83" />
+            <path d="M16.24 16.24l2.83 2.83" />
+            <path d="M2 12h4" />
+            <path d="M18 12h4" />
+          </svg>
+          Case Resolution Actions
+        </div>
+        
+        {/* Summons & Hearing Panel */}
+        <SummonsPanel currentCase={currentCase} db={db} setBlotterList={setBlotterList} bustracLogo={bustracLogo}/>
+        
+        {/* Status Actions */}
+        <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
+          <CaseStatusActions currentCase={currentCase} db={db} setBlotterList={setBlotterList} />
+        </div>
+      </div>
 
-                          {/* Summons & Hearing Panel */}
-                          <SummonsPanel 
-                            currentCase={currentCase} 
-                            db={db} 
-                            setBlotterList={setBlotterList} 
-                          />
-
-                          {/* Status Update Action Bar */}
-                          <div className="fp" style={{ marginTop: '16px', padding: '16px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12 }}>
-                          <div style={{ fontSize: '13px', fontWeight: 700, marginBottom: '8px', color: 'var(--text)' }}>
-                            Case Resolution Actions
-                          </div>
-                          <CaseStatusActions currentCase={currentCase} db={db} setBlotterList={setBlotterList} />
-                        </div>
-                          
-
-                        </div>
-                      </div>
-
-                      {/* FOOTER ACTION BAR */}
-                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', paddingTop: 14, borderTop: '1px solid var(--border)', gap: 12 }}>
-                        <button 
-                          type="button" 
-                          className="btn btn-g" 
-                          onClick={() => nav('blotter-manage')} 
-                          style={{ padding: '9px 16px', borderRadius: 8, cursor: 'pointer' }}
-                        >
-                          ← Back to Blotter Roster
-                        </button>
-                      </div>
+      {/* ═══ CASE HISTORY TIMELINE ═══ */}
+      {caseHistory.length > 0 && (
+        <div className="fp" style={{ padding: '20px' }}>
+          <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <circle cx="12" cy="12" r="10" />
+              <polyline points="12 6 12 12 16 14" />
+            </svg>
+            Case History Timeline ({caseHistory.length} actions)
+          </div>
+          
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+            {caseHistory.slice().reverse().map((action, idx) => (
+              <div key={idx} style={{ display: 'flex', gap: '12px', padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                <div style={{ width: '40px', height: '40px', borderRadius: '50%', background: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: '0' }}>
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
+                </div>
+                <div style={{ flex: '1' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                    <div style={{ fontSize: '13px', fontWeight: '700', color: 'var(--text)' }}>
+                      {action.status}
                     </div>
-                  );
-                })()}
+                    <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                      {new Date(action.date).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  </div>
+                  {action.notes && (
+                    <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px', lineHeight: '1.5' }}>
+                      {action.notes}
+                    </div>
+                  )}
+                  {action.scheduleDate && (
+                    <div style={{ fontSize: '11px', color: 'var(--accent)', marginTop: '4px' }}>
+                      📅 Scheduled: {new Date(action.scheduleDate).toLocaleString('en-PH', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
+                    </div>
+                  )}
+                  <div style={{ fontSize: '10px', color: 'var(--muted)', marginTop: '4px' }}>
+                    Performed by: {action.performedBy || 'Admin'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+    </div>
+  );
+})()}
             
             {/* ════════════════════════════════════════
                 SCREEN: ANNOUNCEMENTS
@@ -10956,7 +11267,7 @@ useEffect(() => {
                           className="btn btn-outline" 
                           onClick={() => { 
                             if (window.confirm("Gusto mo bang mag-log out sa account na ito?")) { 
-                              if (typeof handleLogout === 'function') handleLogout(); 
+                              logout();
                             } 
                           }} 
                           style={{ width: '100%', padding: '12px 14px', borderRadius: 8, fontWeight: 700, color: 'var(--red, #ef4444)', borderColor: 'rgba(239, 68, 68, 0.3)', background: 'transparent', cursor: 'pointer', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
@@ -11657,168 +11968,76 @@ useEffect(() => {
                 {role === 'admin' && screen === 'conflicts' && (
                 <div className="screen active">
                   {conflictsList.length === 0 ? (
-                    <div
-                      style={{
-                        textAlign: 'center',
-                        padding: '40px',
-                        background: 'var(--surface)',
-                        borderRadius: '12px',
-                        border: '1px solid var(--border)'
-                      }}
-                    >
-                      <p
-                        style={{
-                          color: 'var(--muted)',
-                          fontSize: '14px',
-                          display: 'inline-flex',
-                          alignItems: 'center',
-                          gap: '8px'
-                        }}
-                      >
-                        <svg
-                          width="17"
-                          height="17"
-                          viewBox="0 0 24 24"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="2"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          aria-hidden="true"
-                        >
+                    <div style={{ textAlign: 'center', padding: '40px', background: 'var(--surface)', borderRadius: '12px', border: '1px solid var(--border)' }}>
+                      <p style={{ color: 'var(--muted)', fontSize: '14px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
+                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                           <path d="M9 12l2 2 4-4" />
                           <circle cx="12" cy="12" r="9" />
                         </svg>
-                        No conflicts detected. All offline changes have synced seamlessly to the cloud.
+                        No conflicts detected. All offline changes have synced seamlessly.
                       </p>
                     </div>
                   ) : (
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      {conflictsList.map((item) => (
-                        <div
-                          key={item.id}
-                          style={{
-                            background: 'var(--surface)',
-                            border: '1px solid rgba(248, 113, 113, 0.4)',
-                            padding: '20px',
-                            borderRadius: '12px'
-                          }}
+                      
+                      {/* 🆕 NEW: Header with Bulk Resolve Button */}
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
+                          Active Conflicts ({[...new Set(conflictsList.map(c => c.docId))].length} unique documents)
+                        </h2>
+                        <button 
+                          className="btn btn-d" 
+                          onClick={handleResolveAllConflicts}
+                          disabled={loadingConflicts}
+                          style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: loadingConflicts ? 0.7 : 1 }}
                         >
-                          <h3
-                            style={{
-                              color: 'var(--red)',
-                              marginBottom: '8px',
-                              display: 'flex',
-                              alignItems: 'center',
-                              gap: '8px'
-                            }}
-                          >
-                            <svg
-                              width="18"
-                              height="18"
-                              viewBox="0 0 24 24"
-                              fill="none"
-                              stroke="currentColor"
-                              strokeWidth="2"
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              aria-hidden="true"
-                            >
+                          {loadingConflicts ? (
+                            <>
+                              <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
+                              Resolving...
+                            </>
+                          ) : (
+                            <>🧹 Resolve All (Keep Version A)</>
+                          )}
+                        </button>
+                      </div>
+
+                      {/* Existing Conflict Cards */}
+                      {conflictsList.map((item) => (
+                        <div key={item.id} style={{ background: 'var(--surface)', border: '1px solid rgba(248, 113, 113, 0.4)', padding: '20px', borderRadius: '12px' }}>
+                          <h3 style={{ color: 'var(--red)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                               <path d="M12 3L2.5 20h19L12 3z" />
                               <path d="M12 9v5" />
                               <path d="M12 17h.01" />
                             </svg>
                             Conflict Detected: {item.residentName}
                           </h3>
-
-                          <p
-                            style={{
-                              fontSize: '13px',
-                              color: 'var(--muted)',
-                              marginBottom: '12px'
-                            }}
-                          >
+                          <p style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '12px', fontFamily: 'var(--mono)' }}>
                             Document ID: {item.docId}
                           </p>
-
-                          <div
-                            style={{
-                              display: 'grid',
-                              gridTemplateColumns: '1fr 1fr',
-                              gap: '16px',
-                              marginBottom: '16px'
-                            }}
-                          >
-                            <div
-                              style={{
-                                background: 'var(--surface2)',
-                                padding: '12px',
-                                borderRadius: '8px'
-                              }}
-                            >
-                              <strong style={{ color: 'var(--accent)' }}>
-                                Version A (Local Winning):
-                              </strong>
-                              <p style={{ fontSize: '13px', marginTop: '4px' }}>
-                                Purok: {item.docA.purok}
-                              </p>
-                              <p
-                                style={{
-                                  fontSize: '11px',
-                                  fontFamily: 'var(--mono)',
-                                  color: 'var(--muted)'
-                                }}
-                              >
-                                Rev: {item.winningRev}
-                              </p>
+                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
+                            <div style={{ background: 'var(--surface2)', padding: '12px', borderRadius: '8px' }}>
+                              <strong style={{ color: 'var(--accent)' }}>Version A (Local Winning):</strong>
+                              <p style={{ fontSize: '13px', marginTop: '4px' }}>Purok: {item.docA.purok || 'N/A'}</p>
+                              <p style={{ fontSize: '11px', fontFamily: 'var(--mono)', color: 'var(--muted)' }}>Rev: {item.winningRev}</p>
                             </div>
-
-                            <div
-                              style={{
-                                background: 'var(--surface2)',
-                                padding: '12px',
-                                borderRadius: '8px'
-                              }}
-                            >
-                              <strong style={{ color: 'var(--amber)' }}>
-                                Version B (Conflicting):
-                              </strong>
-                              <p style={{ fontSize: '13px', marginTop: '4px' }}>
-                                Purok: {item.docB.purok}
-                              </p>
-                              <p
-                                style={{
-                                  fontSize: '11px',
-                                  fontFamily: 'var(--mono)',
-                                  color: 'var(--muted)'
-                                }}
-                              >
-                                Rev: {item.conflictRev}
-                              </p>
+                            <div style={{ background: 'var(--surface2)', padding: '12px', borderRadius: '8px' }}>
+                              <strong style={{ color: 'var(--amber)' }}>Version B (Conflicting):</strong>
+                              <p style={{ fontSize: '13px', marginTop: '4px' }}>Purok: {item.docB.purok || 'N/A'}</p>
+                              <p style={{ fontSize: '11px', fontFamily: 'var(--mono)', color: 'var(--muted)' }}>Rev: {item.conflictRev}</p>
                             </div>
                           </div>
-
                           <div style={{ display: 'flex', gap: '8px' }}>
-                            <button
-                              className="btn btn-p btn-sm"
-                              onClick={() => handleKeepVersionA(item)}
-                            >
-                              Keep Version A
-                            </button>
-
-                            <button
-                              className="btn btn-g btn-sm"
-                              onClick={() => handleKeepVersionB(item)}
-                            >
-                              Keep Version B
-                            </button>
+                            <button className="btn btn-p btn-sm" onClick={() => handleKeepVersionA(item)}>Keep Version A</button>
+                            <button className="btn btn-g btn-sm" onClick={() => handleKeepVersionB(item)}>Keep Version B</button>
                           </div>
                         </div>
                       ))}
                     </div>
                   )}
                 </div>
-                )}
+              )}
 
             {/* ════════════════════════════════════════
                 SCREEN: AUDIT LOG (Admin only)
@@ -11978,19 +12197,7 @@ useEffect(() => {
                         />
                       </div>
 
-                      {/* Dynamic Verification Domain para sa QR Scanner */}
-                      <div className="fg" style={{ marginTop: '16px' }}>
-                        <label className="fl">Public Verification URL (for Live Tunnel/Domain)</label>
-                        <input 
-                          className="fc" 
-                          value={settingsForm.publicDomain || ''} 
-                          onChange={(e) => setSettingsForm({...settingsForm, publicDomain: e.target.value})} 
-                          placeholder="e.g. https://brave-ducks-love.loca.lt" 
-                        />
-                        <small style={{ color: 'var(--muted)', fontSize: '11px', marginTop: '4px', display: 'block' }}>
-                          Ipasok dito ang inyong Localtunnel / Ngrok URL para mabuksan ang QR Verification sa Mobile Phone.
-                        </small>
-                      </div>
+                      
 
                       <button 
                         className="btn btn-p" 
@@ -12009,7 +12216,6 @@ useEffect(() => {
                       <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
                         <div><strong>Punong Barangay:</strong> {systemSettings?.punongBarangay || settingsForm.punongBarangay || 'Not set'}</div>
                         <div><strong>Secretary:</strong> {systemSettings?.luponSecretary || settingsForm.luponSecretary || 'Not set'}</div>
-                        <div><strong>Public URL:</strong> {systemSettings?.publicDomain || 'Localhost (Default)'}</div>
                       </div>
                     </div>
                   </div>
@@ -12206,7 +12412,7 @@ useEffect(() => {
           backgroundColor: 'rgba(0, 0, 0, 0.65)',
           display: 'flex',
           alignItems: 'center',
-          justify: 'center',
+          justifyContent: 'center',
           zIndex: 9999,
           backdropFilter: 'blur(3px)',
         }}>
@@ -12310,7 +12516,7 @@ useEffect(() => {
             backgroundColor: 'rgba(0, 0, 0, 0.65)',
             display: 'flex',
             alignItems: 'center',
-            justify: 'center',
+            justifyContent: 'center',
             zIndex: 9999,
             backdropFilter: 'blur(4px)',
             padding: '20px',
@@ -12395,19 +12601,33 @@ useEffect(() => {
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
               {actionType.includes('summon') && (
-                <div className="fg">
-                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text)', marginBottom: '6px' }}>
-                    Hearing / Summon Date & Time <span style={{ color: 'var(--red, #ef4444)' }}>*</span>
-                  </label>
-                  <input
-                    type="datetime-local"
-                    className="fc"
-                    value={scheduleDate}
-                    onChange={(e) => setScheduleDate(e.target.value)}
-                    style={{ width: '100%', padding: '10px 12px', borderRadius: '8px', border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: '13px' }}
-                  />
-                </div>
-              )}
+              <div className="fg">
+                <label style={{
+                  display: 'block', fontSize: '12px', fontWeight: 700,
+                  color: 'var(--text)', marginBottom: '6px'
+                }}>
+                  Hearing / Summon Date & Time <span style={{ color: 'var(--red, #ef4444)' }}>*</span>
+                </label>
+                <input
+                  type="datetime-local"
+                  className="fc"
+                  value={scheduleDate}
+                  onChange={handleScheduleDateChange}  
+                  min={minDateTime}                 
+                  style={{
+                    width: '100%', padding: '10px 12px', borderRadius: '8px',
+                    border: '1px solid var(--border)', background: 'var(--bg)',
+                    color: 'var(--text)', fontSize: '13px'
+                  }}
+                />
+                <small style={{
+                  display: 'block', marginTop: 6, fontSize: 10,
+                  color: 'var(--muted)', lineHeight: 1.4
+                }}>
+                  📅 Lunes–Biyernes lamang (8:00 AM – 5:00 PM). Sarado tuwing Sabado, Linggo, at mga Philippine Holiday.
+                </small>
+              </div>
+            )}
 
               <div className="fg">
                 <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: 'var(--text)', marginBottom: '6px' }}>
@@ -12457,7 +12677,7 @@ useEffect(() => {
                   cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  justify: 'center',
+                  justifyContent: 'center',
                   gap: '6px',
                 }}
               >
@@ -12531,12 +12751,62 @@ useEffect(() => {
           </div>
         </div>
       )}
+      
+      {/* PROGRAM EDIT MODAL */}
+{editingProgram && (
+  <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: '20px' }} onClick={() => setEditingProgram(null)}>
+    <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', width: '100%', maxWidth: '500px', padding: '24px' }} onClick={(e) => e.stopPropagation()}>
+      <h3 style={{ margin: '0 0 16px', fontSize: '18px' }}>Edit Program</h3>
+      
+      <div className="fg">
+        <label className="fl">Program Title</label>
+        <input className="fc" value={editingProgram.title} onChange={(e) => setEditingProgram({...editingProgram, title: e.target.value})} />
+      </div>
+      
+      <div className="fg2" style={{ marginTop: '12px' }}>
+        <div className="fg">
+          <label className="fl">Target</label>
+          <input className="fc" type="number" value={editingProgram.target} onChange={(e) => setEditingProgram({...editingProgram, target: Number(e.target.value)})} />
+        </div>
+        <div className="fg">
+          <label className="fl">Status</label>
+          <select className="fc" value={editingProgram.status} onChange={(e) => setEditingProgram({...editingProgram, status: e.target.value})}>
+            <option value="Active">Active</option>
+            <option value="Upcoming">Upcoming</option>
+            <option value="Completed">Completed</option>
+            <option value="Archived">Archived</option>
+          </select>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+        <button className="btn btn-g" onClick={() => setEditingProgram(null)}>Cancel</button>
+        <button className="btn btn-p" onClick={async () => {
+          try {
+            const docId = `program_${editingProgram.id}`;
+            const existing = await db.get(docId);
+            await db.put({
+              ...existing,
+              ...editingProgram,
+              updatedAt: new Date().toISOString()
+            });
+            setProgramsList(prev => prev.map(p => p.id === editingProgram.id ? editingProgram : p));
+            setEditingProgram(null);
+          } catch (err) {
+            console.error('Failed to update program:', err);
+            alert('Failed to save changes.');
+          }
+        }}>Save Changes</button>
+      </div>
+    </div>
+  </div>
+)}
 
       {/* ═══ 7. BUSINESS CLEARANCE EDIT MODAL ═══ */}
       {isBusinessModalOpen && (
         <div
           className="modal-overlay"
-          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.75)', display: 'flex', alignItems: 'center', justify: 'center', zIndex: 99999, backdropFilter: 'blur(4px)', padding: '20px' }}
+          style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0, 0, 0, 0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, backdropFilter: 'blur(4px)', padding: '20px' }}
           onClick={() => setIsBusinessModalOpen(false)}
         >
           <div

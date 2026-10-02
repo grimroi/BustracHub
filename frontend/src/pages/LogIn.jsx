@@ -131,11 +131,6 @@ export default function LogIn() {
           body: JSON.stringify({ username: trimmedUsername, password }),
         });
 
-        // ==================== DEBUG: HTTP LEVEL ====================
-        console.log('>>> [LOGIN] API URL:', `${API_BASE_URL}/api/login`);
-        console.log('>>> [LOGIN] HTTP Status:', response.status, response.statusText);
-        console.log('>>> [LOGIN] response.ok:', response.ok);
-        // ==========================================================
 
         if (response.ok) {
           const data = await response.json();
@@ -329,9 +324,6 @@ export default function LogIn() {
           </div>
           <div className="form-header">
             <h2 className="form-title">Sign In</h2>
-            <p className="form-sub">
-              Enter your credentials to access the administrative portal
-            </p>
           </div>
 
           {showError && (

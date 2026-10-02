@@ -17,7 +17,6 @@ transporter.verify((error, success) => {
   if (error) {
     console.error('❌ [GMAIL SMTP ERROR] Connection failed:', error.message);
   } else {
-    console.log('✅ [GMAIL SMTP SUCCESS] Server is ready to send emails!');
   }
 });
 

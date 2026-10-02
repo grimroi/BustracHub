@@ -221,15 +221,15 @@ export default function CertPrintScreen({
   // ──────────────────────────────────────────────────────────────
   // 2. DATA DERIVATION (useMemo)
   // ──────────────────────────────────────────────────────────────
-  const issuedAndReleased = useMemo(() => {
-    const sourceList = dbIssuedCertificates.length > 0 
-      ? dbIssuedCertificates 
-      : (Array.isArray(issuedCertificates) ? issuedCertificates : []);
-    return sourceList.filter((c) => 
-      [5, 6].includes(Number(c.step)) || 
-      ['Issued', 'Released'].includes(c.status)
-    );
-  }, [dbIssuedCertificates, issuedCertificates]);
+     const issuedAndReleased = useMemo(() => {
+      const sourceList = Array.isArray(issuedCertificates) ? issuedCertificates : [];
+      
+      return sourceList.filter((c) => {
+        const step = Number(c.step);
+        const status = String(c.status || '').trim();
+        return step === 5 || step === 6 || status === 'Issued' || status === 'Released';
+      });
+    }, [issuedCertificates]);
 
   const [issuedSearchQuery, setIssuedSearchQuery] = useState('');
   const filteredIssuedAndReleased = useMemo(() => {
@@ -333,38 +333,44 @@ export default function CertPrintScreen({
     } catch (err) {
       alert('Cannot print because saving failed: ' + err.message);
     } finally {
-      setPrinting(false); // ⬅️ CRITICAL: Prevents permanent "Printing..." state
+      setPrinting(false); 
     }
   };
 
   const handleReprint = useCallback((cert) => {
-    if (!cert) return;
-    setPrintingId(cert._id); // Set ID para mag-disable ang button
-    setSelectedCertificate(cert);
-    if (typeof setSelectedPrintCertFn === 'function') setSelectedPrintCertFn(cert);
-    if (typeof setPrintModeFn === 'function') setPrintModeFn('copy');
-    
-    createAuditLog({
-      action: 'REPRINT_CERTIFICATE',
-      module: 'CERTIFICATES',
-      recordId: cert._id,
-      details: `Reprinted ${cert.certificateType || 'Certificate'} for ${getApplicantName(cert)}`,
-    }).catch(console.warn);
+  if (!cert) {
+    console.warn('Reprint failed: No certificate provided.');
+    return;
+  }
 
-    setTimeout(() => {
-      try {
-        if (typeof handlePrintDocument === 'function') {
-          handlePrintDocument(cert);
-        } else {
-          window.print();
-        }
-      } catch (err) {
-        console.error('Print failed:', err);
-      } finally {
-        setPrintingId(null); // Reset ID after print
-      }
-    }, 300);
-  }, [setSelectedCertificate, setSelectedPrintCertFn, setPrintModeFn, handlePrintDocument]);
+  // 1. I-set ang target certificate sa parent state para mabasa ng Modal
+  if (typeof setSelectedPrintCertFn === 'function') {
+    setSelectedPrintCertFn(cert);
+  }
+  
+  if (typeof setPrintModeFn === 'function') {
+    setPrintModeFn('copy');
+  }
+  
+  // 3. DIRETSO-BUKSAN ang Print Modal (Mas safe at mabilis)
+  if (typeof setShowPrintModal === 'function') {
+    setShowPrintModal(true);
+  }
+  
+  // 4. Audit Log for Reprint
+  createAuditLog({
+    action: 'REPRINT_CERTIFICATE',
+    module: 'CERTIFICATES',
+    recordId: cert._id,
+    details: `Reprinted (Copy) ${cert.certificateType || 'Certificate'} for ${getApplicantName(cert)}`,
+  }).catch(console.warn);
+
+  // 5. ✅ CRITICAL FIX: I-reset ang printingId agad para hindi ma-stuck sa "Printing..."
+  // Dahil ang actual printing (window.print) ay mangyayari sa loob ng Modal,
+  // hindi na kailangan i-hold ang button state dito.
+  setPrintingId(null);
+
+}, [setSelectedPrintCertFn, setPrintModeFn, setShowPrintModal, setPrintingId]);
 
   // ──────────────────────────────────────────────────────────────
   // 4. EFFECTS
@@ -582,23 +588,46 @@ export default function CertPrintScreen({
                               setProcessingId(cert._id);
                               try {
                                 const existing = await db.get(cert._id);
-                                await db.put({
+                                const updatedCert = {
                                   ...existing,
+                                  type: 'certificate_request', 
                                   status: 'Released',
                                   step: 6,
                                   releasedAt: new Date().toISOString(),
                                   updatedAt: new Date().toISOString(),
-                                  _rev: existing._rev,
-                                });
+                                };
+                                await db.put(updatedCert);
+
+                                if (typeof setIssuedCertificates === 'function') {
+                                  setIssuedCertificates(prev => 
+                                    prev.map(c => c._id === cert._id ? updatedCert : c)
+                                  );
+                                }
+                                
+                                await db.put(updatedCert);
+                                if (typeof setIssuedCertificates === 'function') {
+                                  setIssuedCertificates(prev => 
+                                    prev.map(c => c._id === cert._id ? updatedCert : c)
+                                  );
+                                }
+
                                 await createAuditLog({
                                   action: 'RELEASE_CERTIFICATE',
                                   module: 'CERTIFICATES',
                                   recordId: cert._id,
-                                  details: `Released ${cert.certificateType || 'Certificate'} to ${getApplicantName(cert)}`
+                                  details: `Released ${cert.certificateType || 'Certificate'} to ${getApplicantName(cert)}`,
                                 });
-                                await loadIssuedCertificates();
+
+                                if (typeof showToast === 'function') {
+                                  showToast('Certificate successfully released!', 'success');
+                                }
                               } catch (e) {
-                                alert('Failed to release: ' + e.message);
+                                console.error('Failed to release:', e);
+                                if (typeof showToast === 'function') {
+                                  showToast('Failed to release: ' + e.message, 'error');
+                                } else {
+                                  alert('Failed to release: ' + e.message);
+                                }
                               } finally {
                                 setProcessingId(null);
                               }

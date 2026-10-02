@@ -205,7 +205,6 @@ export default function CertificateLifecycle() {
   );
 
   const handlePrintCertificate = useCallback((cert) => {
-    console.log('PRINT BUTTON CLICKED! Data:', cert);
     setPrintData(cert);
     logActivity({
       action: 'PRINT_CERTIFICATE',

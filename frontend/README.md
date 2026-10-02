@@ -1,16 +1,29 @@
-# React + Vite
+# BUSTRAC HUB
+## An Offline-First Integrated Management Information System for Barangay Service Operations
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+###  Project Overview
+Bustrac Hub is a comprehensive, offline-first web application designed to digitize and streamline barangay service operations. It features real-time synchronization, conflict resolution, and a dual-portal system (Admin/Staff and Resident) to ensure uninterrupted service delivery even in areas with unstable internet connectivity.
 
-Currently, two official plugins are available:
+###  Key Features
+- **Offline-First Architecture:** Powered by PouchDB & CouchDB for seamless local data storage and background synchronization.
+- **Automated Conflict Resolution:** Advanced UI for detecting and resolving database sync conflicts (Keep Version A/B).
+- **Comprehensive Modules:** Resident Registry, Household Management, Certificate Issuance (with CTC/Blotter verification), Blotter/Case Management, Aid Distribution, and Feedback System.
+- **Real-time Audit Trail:** Immutable logging of all system actions for transparency and security.
+- **Responsive Design:** Fully optimized for both desktop (Admin/Staff) and mobile (Resident Portal) views.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+###  Tech Stack
+- **Frontend:** React 18, Vite, React Router, Tailwind CSS / Custom CSS Variables
+- **Database:** PouchDB (Local) ↔ CouchDB (Remote)
+- **Utilities:** SheetJS (Excel Export), Date-fns / Custom Helpers
 
-## React Compiler
+###  How to Run Locally
+1. Clone the repository.
+2. Install dependencies: `npm install`
+3. Create a `.env` file based on `.env.example` (Ensure CouchDB URL is configured).
+4. Start the development server: `npm run dev`
+5. (Optional) Start the backend notification service: `cd server && npm start`
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+###  Development Team
+- [Your Name / Team Members]
+- Adviser: [Adviser Name]
+- Institution: Camarines Sur Polytechnic Colleges

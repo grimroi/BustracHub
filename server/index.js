@@ -5,6 +5,7 @@ const nano = require('nano');
 const certificateRoutes = require('./routes/certificateRoutes');
 const blotterRoutes = require('./routes/blotterRoutes');
 const { sendBlotterNotification } = require('./services/emailService');
+const { sendBlotterSMS } = require('./services/smsService'); // ⬅️ Inilipat dito sa taas
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -51,7 +52,6 @@ async function initDB() {
       }
     ];
 
-    // Subukang i-insert ang demo accounts kung wala pa
     for (const u of demoUsers) {
       try {
         await db.get(u._id);
@@ -75,14 +75,12 @@ async function initDB() {
     }
   } catch (error) {
     console.error('CouchDB Connection Failed!', error);
+    throw error; // ⬅️ I-throw para hindi tumuloy ang listener kung sabog ang DB
   }
 }
 
-initDB();
-
 // API Routes
 app.use('/api/certificates', certificateRoutes);
-
 app.use('/api/blotter', blotterRoutes);
 
 app.get('/api/status', (req, res) => {
@@ -102,7 +100,7 @@ app.post('/api/login', async (req, res) => {
 
     try {
       userDoc = await db.get(`user_${username.toLowerCase()}`);
-    } catch (e) {}
+    } catch (e) { /* fallthrough */ }
 
     if (!userDoc) {
       const query = { selector: { type: 'user', username: username.trim() }, limit: 1 };
@@ -208,12 +206,7 @@ app.post('/api/blotter', async (req, res) => {
     let emailSent = false;
     if (respondentEmail && respondentEmail.trim() !== '') {
       try {
-        await sendBlotterNotification(
-          respondentEmail,
-          respondentName,
-          caseNumber,
-          scheduleDate
-        );
+        await sendBlotterNotification(respondentEmail, respondentName, caseNumber, scheduleDate);
         emailSent = true;
         console.log(`Email notification successfully sent to ${respondentEmail}`);
       } catch (mailErr) {
@@ -318,8 +311,159 @@ app.get('/api/public', async (req, res) => {
     return res.status(500).json({ success: false, message: 'Internal server error' });
   }
 });
+// ============================================================
+// SERVER-SENT EVENTS (SSE) FOR PUSH NOTIFICATIONS
+// ============================================================
+const sseClients = new Map(); // Stores connected frontend clients
 
-// Start Server
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`Server is listening live on http://0.0.0.0:${PORT}`);
+// SSE Endpoint for Frontend to listen to
+app.get('/api/notifications', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no'); // Isara ang buffering
+  res.setHeader('Access-Control-Allow-Origin', '*');
+
+  // 🟢 MAHALAGA: Magpadala agad ng 200 OK header at initial data
+  res.writeHead(200);
+  res.write(`data: ${JSON.stringify({ type: 'CONNECTED', message: 'SSE Connection Active' })}\n\n`);
+
+  const clientId = Date.now().toString();
+  sseClients.set(clientId, res);
+  console.log(`📡 New SSE client connected: ${clientId}`);
+
+  req.on('close', () => {
+    sseClients.delete(clientId);
+    console.log(`❌ SSE client disconnected: ${clientId}`);
+  });
 });
+
+// Function to broadcast message to all connected clients
+function sendPushNotification(data) {
+  const eventData = `data: ${JSON.stringify(data)}\n\n`;
+  sseClients.forEach((res) => {
+    res.write(eventData);
+  });
+}
+// ============================================================
+// CouchDB Changes Listener para sa Blotter SMS at Push Notification
+// ============================================================
+function startBlotterSMSListener() {
+  if (!db) {
+    console.warn('⚠️ startBlotterSMSListener: DB not initialized, skipping.');
+    return;
+  }
+  console.log('📡 Starting CouchDB Changes Listener for Blotter SMS & SSE...');
+  const processingCases = new Set();
+  const axios = require('axios');
+  const changesUrl = `${COUCHDB_URL}/${DB_NAME}/_changes?feed=continuous&since=now&include_docs=true&heartbeat=10000`;
+
+  let streamBuffer = ''; // 🟢 FIX 1: Stream Buffer para sa naputol na JSON network chunks
+
+  axios({
+    method: 'GET',
+    url: changesUrl,
+    responseType: 'stream',
+    timeout: 0 // 🟢 FIX 2: Pigilan ang kusa at paulit-ulit na pag-disconnect ng Axios socket
+  }).then((response) => {
+    response.data.on('data', (chunk) => {
+      streamBuffer += chunk.toString();
+      const lines = streamBuffer.split('\n');
+      streamBuffer = lines.pop(); // Iwanan ang huling hindi pa buong linya sa buffer
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        try {
+          const change = JSON.parse(line);
+          const doc = change.doc;
+          if (!doc) continue;
+
+          const isBlotter = doc.type === 'blotter_report' || doc.type === 'blotter_record' || doc.docType === 'blotter';
+          const isSummonStatus = doc.status && (
+            doc.status.includes('1st Summon') || 
+            doc.status.includes('2nd Summon') || 
+            doc.status.includes('3rd Summon') ||
+            doc.status.includes('Summons')
+          );
+
+          if (!isBlotter || !isSummonStatus) continue;
+
+          const caseNum = doc.caseNumber || doc.trackingNo || doc.refNumber || doc._id;
+          const currentStatus = doc.status;
+          
+          // Unique processing key bawat status (para gumana sa 1st, 2nd, at 3rd Summon)
+          const processingKey = `${caseNum}_${currentStatus}`;
+
+          if (processingCases.has(processingKey)) continue;
+          processingCases.add(processingKey);
+
+          console.log(`🔔 Summons Update Detected: ${caseNum} [${currentStatus}]`);
+
+          const phone = doc.respondentPhone || doc.contact || (typeof doc.respondent === 'object' ? doc.respondent.phone : null);
+          const name = doc.respondentName || (typeof doc.respondent === 'object' ? doc.respondent.name : 'Respondent');
+          const schedule = doc.scheduleDate || doc.nextHearingDate || doc.summonDate || 'TBA';
+
+          // 🟢 FIX 3: Magpapadala lang ng SMS kapag BAGO ang Summon Status
+          const needsSms = doc.lastSmsStatus !== currentStatus;
+
+          if (needsSms && phone) {
+            sendBlotterSMS(phone, name, caseNum, currentStatus, schedule).then(success => {
+              if (success) {
+                console.log(`✅ SMS successfully sent to ${name} (${phone})`);
+                doc.smsSent = true;
+                doc.lastSmsStatus = currentStatus; // Itala ang huling naisa-text na status
+                doc.smsSentAt = new Date().toISOString();
+                
+                db.insert(doc).catch(err => {
+                  if (err.statusCode !== 409) console.error('Failed to update doc with lastSmsStatus:', err.message);
+                });
+              }
+              processingCases.delete(processingKey);
+            }).catch(err => {
+              console.error(`❌ Failed to send SMS for ${caseNum}:`, err.message);
+              processingCases.delete(processingKey);
+            });
+          } else {
+            processingCases.delete(processingKey);
+          }
+
+          sendPushNotification({
+            type: 'BLOTTER_UPDATE',
+            caseNumber: caseNum,
+            message: `Ang inyong blotter ref ${caseNum} ay may bagong update. Status: ${currentStatus}. ${schedule ? `Patawag: ${schedule}.` : ''}`
+          });
+
+        } catch (err) {
+        }
+      }
+    });
+
+    response.data.on('error', (err) => {
+      console.error('❌ CouchDB changes stream error:', err.message);
+      setTimeout(startBlotterSMSListener, 5000);
+    });
+
+    response.data.on('end', () => {
+      console.log('⚠️ CouchDB changes stream ended. Reconnecting in 5 seconds...');
+      setTimeout(startBlotterSMSListener, 5000);
+    });
+  }).catch((err) => {
+    console.error('❌ Failed to connect to CouchDB changes feed:', err.message);
+    setTimeout(startBlotterSMSListener, 5000);
+  });
+}
+
+// ============================================================
+// Bootstrap: isang initDB() lang, tapos saka simulan ang listener
+// ============================================================
+initDB()
+  .then(() => {
+    startBlotterSMSListener();
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(` Server is listening live on http://0.0.0.0:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error(' Failed to initialize DB. Server not started.', err);
+    process.exit(1);
+  });

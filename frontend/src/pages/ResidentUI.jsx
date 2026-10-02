@@ -32,51 +32,76 @@ export default function ResidentUI() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  /* ── Theme ── */
+  /* ═══════════════════════════════════════════════════════════
+     SECTION 1: ALL useState (nasa pinakataas — walang exception)
+     ═══════════════════════════════════════════════════════════ */
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || 'dark');
+  const [loggedInUser, setLoggedInUser] = useState(getStoredUser);
+  const [activeScreen, setActiveScreen] = useState('s-home');
+  const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+
+  // Data states
+  const [residentProfile, setResidentProfile] = useState(null);
+  const [myRequests, setMyRequests] = useState([]);
+  const [myFeedbacks, setMyFeedbacks] = useState([]);
+  const [myBlotters, setMyBlotters] = useState([]);
+  const [myAssistance, setMyAssistance] = useState([]);
+  const [announcements, setAnnouncements] = useState([]);
+  const [lastSync, setLastSync] = useState(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState(null);
+
+  // Certificate states
+  const [showCertForm, setShowCertForm] = useState(false);
+  const [certForm, setCertForm] = useState(CERT_FORM_INITIAL);
+  const [certSuccess, setCertSuccess] = useState(null);
+  const [filterTab, setFilterTab] = useState('all');
+
+  // Blotter edit states
+  const [editingReport, setEditingReport] = useState(null);
+  const [editForm, setEditForm] = useState({
+    subject: '', details: '', incidentDate: '', zone: 'Zone 1', street: '', respondent: '',
+  });
+
+  const [sseNotification, setSseNotification] = useState(null);
+
+  /* ═══════════════════════════════════════════════════════════
+     SECTION 2: ALL useRef (kasunod ng useState)
+     ═══════════════════════════════════════════════════════════ */
+  const loggedInUserRef = useRef(loggedInUser);
+  const isFetchingRef = useRef(false);
+
+  /* ═══════════════════════════════════════════════════════════
+     SECTION 3: SIMPLE useEffect (no interdependencies)
+     ═══════════════════════════════════════════════════════════ */
+  // 3a. Sync ref with state
+  useEffect(() => {
+    loggedInUserRef.current = loggedInUser;
+  }, [loggedInUser]);
+
+  // 3b. Theme
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     document.body.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
-  const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
 
-  /* ── User State ── */
-  const [loggedInUser, setLoggedInUser] = useState(getStoredUser);
-  
-  /* ── Multi-Tab & Same-Tab Real-time Sync Listener ── */
-useEffect(() => {
-  const handleUserChange = (e) => {
-    if (!e || e.key === 'bustrac_user' || e.type === 'bustrac_user_updated') {
-      setLoggedInUser(getStoredUser());
-    }
-  };
-
-  window.addEventListener('storage', handleUserChange);
-  window.addEventListener('bustrac_user_updated', handleUserChange);
-
-  return () => {
-    window.removeEventListener('storage', handleUserChange);
-    window.removeEventListener('bustrac_user_updated', handleUserChange);
-  };
-}, []);
-
-  const greetingText = useMemo(() => {
-    const h = new Date().getHours();
-    if (h < 12) return 'Good morning';
-    if (h < 18) return 'Good afternoon';
-    return 'Good evening';
+  // 3c. Multi-tab & same-tab user sync
+  useEffect(() => {
+    const handleUserChange = (e) => {
+      if (!e || e.key === 'bustrac_user' || e.type === 'bustrac_user_updated') {
+        setLoggedInUser(getStoredUser());
+      }
+    };
+    window.addEventListener('storage', handleUserChange);
+    window.addEventListener('bustrac_user_updated', handleUserChange);
+    return () => {
+      window.removeEventListener('storage', handleUserChange);
+      window.removeEventListener('bustrac_user_updated', handleUserChange);
+    };
   }, []);
 
-  /* ── Navigation ── */
-  const [activeScreen, setActiveScreen] = useState('s-home');
-  const goToTab = useCallback((id) => {
-    setActiveScreen(id);
-    window.scrollTo(0, 0);
-  }, []);
-
-  /* ── Offline State ── */
-  const [isOffline, setIsOffline] = useState(typeof navigator !== 'undefined' ? !navigator.onLine : false);
+  // 3d. Offline/Online detection
   useEffect(() => {
     const onOnline = () => setIsOffline(false);
     const onOffline = () => setIsOffline(true);
@@ -88,50 +113,24 @@ useEffect(() => {
     };
   }, []);
 
-  /* ── Data States ── */
-  const [residentProfile, setResidentProfile] = useState(null);
-  const [myRequests, setMyRequests] = useState([]);
-  const [myFeedbacks, setMyFeedbacks] = useState([]);
-  const [myBlotters, setMyBlotters] = useState([]);
-  const [myAssistance, setMyAssistance] = useState([]);
-  const [announcements, setAnnouncements] = useState([]);
-  const [lastSync, setLastSync] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loadError, setLoadError] = useState(null);
+  /* ═══════════════════════════════════════════════════════════
+     SECTION 4: SIMPLE useMemo (no callback deps)
+     ═══════════════════════════════════════════════════════════ */
+  const greetingText = useMemo(() => {
+    const h = new Date().getHours();
+    if (h < 12) return 'Good morning';
+    if (h < 18) return 'Good afternoon';
+    return 'Good evening';
+  }, []);
 
-  /* ── Certificate States ── */
-  const [showCertForm, setShowCertForm] = useState(false);
-  const [certForm, setCertForm] = useState(CERT_FORM_INITIAL);
-  const [certSuccess, setCertSuccess] = useState(null);
-  const [filterTab, setFilterTab] = useState('all');
+  /* ═══════════════════════════════════════════════════════════
+     SECTION 5: useCallback — IN DEPENDENCY ORDER ⚠️ CRITICAL
+     
+     Rule: Kung ang Callback A ay may dep na Callback B, si B ay
+     DAPAT mauna sa A.
+     ═══════════════════════════════════════════════════════════ */
 
-  /* ── Blotter Edit States ── */
-  const [editingReport, setEditingReport] = useState(null);
-  const [editForm, setEditForm] = useState({
-    subject: '', details: '', incidentDate: '', zone: 'Zone 1', street: '', respondent: '',
-  });
-
-  /* ── Tab routing ── */
-  useEffect(() => {
-    if (location.state?.activeTab) {
-      const tabMap = {
-        announcements: 's-announcements',
-        tracking: 's-certificates',
-        feedback: 's-feedback',
-        hotlines: 's-home',
-      };
-      const matched = tabMap[location.state.activeTab];
-      if (matched) setActiveScreen(matched);
-      window.history.replaceState({}, document.title);
-    }
-  }, [location.state]);
-
-  /* ── FIX 1: Stable user matching using refs to prevent circular deps ── */
-  const loggedInUserRef = useRef(loggedInUser);
-  useEffect(() => {
-  loggedInUserRef.current = loggedInUser;
-}, [loggedInUser]);
-
+  // 5a. checkUserMatch — no deps, dapat PINAKAUNA
   const checkUserMatch = useCallback((doc) => {
     const user = loggedInUserRef.current;
     if (!doc || !user) return false;
@@ -164,77 +163,79 @@ useEffect(() => {
     return matchesComplainant || matchesRespondent;
   }, []);
 
-  /* ── FIX 1: loadData with stable deps (no loggedInUser in deps) ── */
+  // 5b. goToTab — no deps
+  const goToTab = useCallback((id) => {
+    setActiveScreen(id);
+    window.scrollTo(0, 0);
+  }, []);
+
+  // 5c. handleLogout — deps: navigate
+  const handleLogout = useCallback(() => {
+    if (window.confirm('Are you sure you want to leave the resident portal?')) {
+      clearStoredUser();
+      navigate('/');
+    }
+  }, [navigate]);
+
+  // 5d. loadData — deps: checkUserMatch ✅ SAFE (checkUserMatch nasa taas na)
   const loadData = useCallback(async () => {
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
+
     if (!db) {
       setIsLoading(false);
       setLoadError('Database not available');
+      isFetchingRef.current = false;
       return;
     }
-    const user = loggedInUserRef.current;
+
+    const user = loggedInUserRef.current || loggedInUser;
     if (!user || !user.fullName) {
       setIsLoading(false);
       setLoadError('User not logged in');
+      isFetchingRef.current = false;
       return;
     }
 
     setIsLoading(true);
     setLoadError(null);
+
     try {
       const res = await db.allDocs({ include_docs: true });
       const docs = res.rows.map((r) => r.doc).filter(Boolean);
       const byType = (type) => docs.filter((d) => d.type === type || d.docType === type);
-      const sortTs = (a, b) =>
-        new Date(b.timestamp || b.updatedAt || b.createdAt || b.dateFiled || 0) -
-        new Date(a.timestamp || a.updatedAt || a.createdAt || a.dateFiled || 0);
+      const sortTs = (a, b) => new Date(b.timestamp || b.updatedAt || b.createdAt || b.dateFiled || 0) - new Date(a.timestamp || a.updatedAt || a.createdAt || a.dateFiled || 0);
 
-      const userBlotters = docs
-        .filter((doc) => {
-          const isBlotterDoc = doc.docType === 'blotter' || doc.type === 'blotter' || doc.type === 'blotter_record' ||
-            Boolean(doc.trackingNo || doc.caseNo || doc.caseNum || doc.refNumber);
-          return isBlotterDoc && checkUserMatch(doc);
-        })
-        .map(normalizeBlotterDoc)
-        .filter(Boolean)
-        .sort(sortTs);
+      const userBlotters = docs.filter((doc) => {
+        const isBlotterDoc = doc.docType === 'blotter' || doc.type === 'blotter' || doc.type === 'blotter_record' || Boolean(doc.trackingNo || doc.caseNo || doc.caseNum || doc.refNumber);
+        return isBlotterDoc && checkUserMatch(doc);
+      }).map(normalizeBlotterDoc).filter(Boolean).sort(sortTs);
       setMyBlotters(userBlotters);
 
-      const userRequests = docs
-        .filter((d) => (d.type === 'certificate_request' || d.type === 'request') && checkUserMatch(d))
-        .map(normalizeCertificateDoc)
-        .filter(Boolean)
-        .sort(sortTs);
+      const userRequests = docs.filter((d) => (d.type === 'certificate_request' || d.type === 'request') && checkUserMatch(d))
+        .map(normalizeCertificateDoc).filter(Boolean).sort(sortTs);
       setMyRequests(userRequests);
 
       setAnnouncements(byType('announcement').sort(sortTs));
-
-      setMyAssistance(
-        docs.filter((d) => d.type === 'aid_distribution' && checkUserMatch(d)).sort(sortTs)
-      );
+      setMyAssistance(docs.filter((d) => d.type === 'aid_distribution' && checkUserMatch(d)).sort(sortTs));
 
       const currentUserId = String(user?.residentId || user?.id || user?._id || '').toLowerCase().trim();
       const currentUsername = String(user?.username || user?.email || '').toLowerCase().trim();
-      const userFeedbacks = docs
-        .filter((doc) => {
-          const isFeedbackDoc = doc.type === 'feedback_report' || doc.type === 'feedback' || doc.docType === 'feedback';
-          if (!isFeedbackDoc) return false;
-          const docUserId = String(doc.residentId || doc.userId || '').toLowerCase().trim();
-          const docUsername = String(doc.username || doc.user || '').toLowerCase().trim();
-          const isMatchById = Boolean(currentUserId && docUserId && currentUserId === docUserId);
-          const isMatchByUsername = Boolean(currentUsername && docUsername && currentUsername === docUsername);
-          return isMatchById || isMatchByUsername || checkUserMatch(doc);
-        })
-        .map(normalizeFeedbackDoc)
-        .filter(Boolean)
-        .sort(sortTs);
+
+      const userFeedbacks = docs.filter((doc) => {
+        const isFeedbackDoc = doc.type === 'feedback_report' || doc.type === 'feedback' || doc.docType === 'feedback';
+        if (!isFeedbackDoc) return false;
+        const docUserId = String(doc.residentId || doc.userId || '').toLowerCase().trim();
+        const docUsername = String(doc.username || doc.user || '').toLowerCase().trim();
+        const isMatchById = Boolean(currentUserId && docUserId && currentUserId === docUserId);
+        const isMatchByUsername = Boolean(currentUsername && docUsername && currentUsername === docUsername);
+        return isMatchById || isMatchByUsername || checkUserMatch(doc);
+      }).map(normalizeFeedbackDoc).filter(Boolean).sort(sortTs);
       setMyFeedbacks(userFeedbacks);
 
-      const residentDoc = docs.find((d) =>
-        (d.docType === 'resident' || d.type === 'resident' || d.residentId) && checkUserMatch(d)
-      );
+      const residentDoc = docs.find((d) => (d.docType === 'resident' || d.type === 'resident' || d.residentId) && checkUserMatch(d));
       if (residentDoc) {
         setResidentProfile({ ...residentDoc, rawDoc: residentDoc });
-        
         const prevUser = loggedInUserRef.current || {};
         const merged = {
           ...prevUser,
@@ -254,149 +255,102 @@ useEffect(() => {
           emergencyContactName: residentDoc.emergencyContactPerson || residentDoc.emergencyContactName || prevUser?.emergencyContactName || '',
           emergencyContactNumber: residentDoc.emergencyContactNo || residentDoc.emergencyContactNumber || prevUser?.emergencyContactNumber || '',
         };
-
         const updatedUser = updateStoredUser(merged);
         setLoggedInUser(updatedUser);
       }
-
       setLastSync(new Date());
     } catch (e) {
-      console.error('Load error in ResidentUI:', e);
+      console.error('❌ Load error in ResidentUI:', e);
       setLoadError(e.message || 'Failed to load data');
     } finally {
       setIsLoading(false);
+      isFetchingRef.current = false;
     }
-  }, [checkUserMatch]); 
+  }, [checkUserMatch]); // ✅ SAFE — checkUserMatch defined above
 
-  /* ── FIX 1: Real-time listener with cleanup ── */
-  useEffect(() => {
-    if (!db) return;
-    let isMounted = true;
-    let changes = null;
-
-    const init = async () => {
-      if (!isMounted) return;
-      await loadData();
-      if (!isMounted) return;
-
-      changes = db.changes({ live: true, since: 'now', include_docs: true });
-      changes.on('change', () => {
-        if (isMounted) loadData();
-      });
-      changes.on('error', (err) => console.error('Changes listener error:', err));
-    };
-
-    init();
-
-    return () => {
-      isMounted = false;
-      if (changes) {
-        try { changes.cancel(); } catch (e) { /* ignore */ }
-      }
-    };
-  }, [loadData]);
-
-  /* ── Handlers ── */
-  const handleLogout = useCallback(() => {
-  if (window.confirm('Are you sure you want to leave the resident portal?')) {
-    clearStoredUser(); // Gamitin ang nilikhang helper sa residentUtils.js
-    navigate('/');
-  }
-}, [navigate]);
-
-  const updateCertField = (field) => (e) => {
-    setCertForm((prev) => ({ ...prev, [field]: e.target.value }));
-  };
-
+  // 5e. submitCert — deps: certForm, loadData (loadData nasa taas na ✅)
   const submitCert = useCallback(
-  async (e) => {
-    e.preventDefault();
-    const { certType, certPurpose } = certForm;
-    const trimmedPurpose = certPurpose.trim();
+    async (e) => {
+      e.preventDefault();
+      const { certType, certPurpose } = certForm;
+      const trimmedPurpose = certPurpose.trim();
+      const currentUser = loggedInUserRef.current;
+      const fullName = currentUser?.fullName?.trim() || '';
+      const nameParts = fullName.split(/\s+/).filter(Boolean);
+      const firstName = nameParts[0] || '';
+      const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
+      const birthdate = currentUser?.birthdate || '';
+      let age = Number(currentUser?.age) || 0;
+      const contact = (currentUser?.contact || '').replace(/\D/g, '');
+      const purok = String(currentUser?.purok || '').trim();
 
-    // FIX 2: Use freshest loggedInUser state
-    const currentUser = loggedInUserRef.current;
-    const fullName = currentUser?.fullName?.trim() || '';
-    const nameParts = fullName.split(/\s+/).filter(Boolean);
-    const firstName = nameParts[0] || '';
-    const lastName = nameParts.length > 1 ? nameParts.slice(1).join(' ') : '';
-    const birthdate = currentUser?.birthdate || '';
-    // FIX 3: `age` must be mutable so it can be derived from birthdate below
-    let age = Number(currentUser?.age) || 0;
-    const contact = (currentUser?.contact || '').replace(/\D/g, '');
-    const purok = String(currentUser?.purok || '').trim();
+      if (!firstName || !lastName) { alert('Resident profile name is incomplete.'); return false; }
+      if (!birthdate || Number.isNaN(new Date(birthdate).getTime())) {
+        alert('Birthdate is missing or invalid in your profile. Please complete your profile first.');
+        return false;
+      }
+      if (!age) age = calculateAge(birthdate);
+      if (!contact || !/^09\d{9}$/.test(contact)) { alert('Please provide a valid 11-digit Philippine contact number.'); return false; }
+      if (!purok) { alert('Purok/Area is missing from profile.'); return false; }
+      if (!certType) { alert('Please select a certificate type.'); return false; }
+      if (!trimmedPurpose) { alert('Please state the purpose of the request.'); return false; }
+      if (!db) { alert('Local database connection is unavailable.'); return false; }
 
-    if (!firstName || !lastName) { alert('Resident profile name is incomplete.'); return false; }
-
-    // FIX 3: Only birthdate is required — age is derived from it when missing/invalid
-    if (!birthdate || Number.isNaN(new Date(birthdate).getTime())) {
-      alert('Birthdate is missing or invalid in your profile. Please complete your profile first.');
-      return false;
-    }
-    if (!age) {
-      age = calculateAge(birthdate);
-    }
-
-    if (!contact || !/^09\d{9}$/.test(contact)) { alert('Please provide a valid 11-digit Philippine contact number.'); return false; }
-    if (!purok) { alert('Purok/Area is missing from profile.'); return false; }
-    if (!certType) { alert('Please select a certificate type.'); return false; }
-    if (!trimmedPurpose) { alert('Please state the purpose of the request.'); return false; }
-    if (!db) { alert('Local database connection is unavailable.'); return false; }
-
-    const now = new Date().toISOString();
-    const refNumber = 'CERT-' + Date.now().toString().slice(-6);
-    const payload = {
-      _id: `cert_${Date.now()}`,
-      type: 'certificate_request',
-      applicantType: 'Resident',
-      residentId: currentUser.residentId || currentUser.username || '',
-      rbiId: currentUser.rbiId || '',
-      residentName: fullName,
-      username: currentUser.username || '',
-      firstName, lastName, birthdate, age, contact, purok,
-      email: (currentUser.email || '').trim(),
-      certificateType: certType,
-      certType,
-      purpose: trimmedPurpose,
-      certPurpose: trimmedPurpose,
-      status: 'Submitted',
-      step: 1,
-      refNumber,
-      requestedAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
-    try {
-      await db.put(payload);
+      const now = new Date().toISOString();
+      const refNumber = 'CERT-' + Date.now().toString().slice(-6);
+      const payload = {
+        _id: `cert_${Date.now()}`,
+        type: 'certificate_request',
+        applicantType: 'Resident',
+        residentId: currentUser.residentId || currentUser.username || '',
+        rbiId: currentUser.rbiId || '',
+        residentName: fullName,
+        username: currentUser.username || '',
+        firstName, lastName, birthdate, age, contact, purok,
+        email: (currentUser.email || '').trim(),
+        certificateType: certType,
+        certType,
+        purpose: trimmedPurpose,
+        certPurpose: trimmedPurpose,
+        status: 'Submitted',
+        step: 1,
+        refNumber,
+        requestedAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
       try {
-        const auditPayload = buildAuditLogPayload({
-          action: 'CREATE_CERTIFICATE_REQUEST',
-          module: 'CERTIFICATES',
-          recordId: refNumber,
-          actor: {
-            username: currentUser.username || currentUser.residentId || 'resident',
-            role: 'resident',
-            fullName: currentUser.fullName || 'Resident',
-          },
-          details: `Requested ${certType} for purpose: "${trimmedPurpose}"`,
-        });
-        await createAuditLog(auditPayload);
-      } catch (auditErr) { console.warn('Audit log entry failed:', auditErr); }
-      sessionStorage.setItem('lastCertRequest', JSON.stringify(payload));
-      setCertSuccess({ firstName, lastName, certType, refNumber });
-      setCertForm(CERT_FORM_INITIAL);
-      setTimeout(() => setCertSuccess(null), 5000);
-      await loadData();
-      return true;
-    } catch (err) {
-      console.error('Cert save error', err);
-      alert('Unable to save your request offline right now.');
-      return false;
-    }
-  },
-  [certForm, loadData]
-);
+        await db.put(payload);
+        try {
+          const auditPayload = buildAuditLogPayload({
+            action: 'CREATE_CERTIFICATE_REQUEST',
+            module: 'CERTIFICATES',
+            recordId: refNumber,
+            actor: {
+              username: currentUser.username || currentUser.residentId || 'resident',
+              role: 'resident',
+              fullName: currentUser.fullName || 'Resident',
+            },
+            details: `Requested ${certType} for purpose: "${trimmedPurpose}"`,
+          });
+          await createAuditLog(auditPayload);
+        } catch (auditErr) { console.warn('Audit log entry failed:', auditErr); }
+        sessionStorage.setItem('lastCertRequest', JSON.stringify(payload));
+        setCertSuccess({ firstName, lastName, certType, refNumber });
+        setCertForm(CERT_FORM_INITIAL);
+        setTimeout(() => setCertSuccess(null), 5000);
+        await loadData();
+        return true;
+      } catch (err) {
+        console.error('Cert save error', err);
+        alert('Unable to save your request offline right now.');
+        return false;
+      }
+    },
+    [certForm, loadData]
+  );
 
+  // 5f. submitFeedback — deps: []
   const submitFeedback = useCallback(
     async ({ feedbackType, subject, message, residentId, residentName, username }) => {
       if (!db) { alert('Local database is unavailable.'); throw new Error('No db'); }
@@ -437,6 +391,7 @@ useEffect(() => {
     []
   );
 
+  // 5g. submitBlotter — deps: loadData ✅
   const submitBlotter = useCallback(
     async ({ subject, details, incidentDate, location, respondent, complainant, residentId }) => {
       if (!db) { alert('Local database is unavailable.'); throw new Error('No db'); }
@@ -492,6 +447,7 @@ useEffect(() => {
     [loadData]
   );
 
+  // 5h. handleCancelRequest — deps: myRequests, loadData ✅
   const handleCancelRequest = useCallback(
     async (certId) => {
       if (!db) { alert('Database unavailable.'); return; }
@@ -512,6 +468,7 @@ useEffect(() => {
     [myRequests, loadData]
   );
 
+  // 5i. handleOpenEdit — deps: []
   const handleOpenEdit = useCallback((report) => {
     const editableStatuses = ['pending', 'needs revision', 'returned', 'open'];
     const currentStatus = (report.status || '').toLowerCase();
@@ -536,6 +493,7 @@ useEffect(() => {
     });
   }, []);
 
+  // 5j. handleSaveEdit — deps: editingReport, editForm, loadData ✅
   const handleSaveEdit = useCallback(
     async (e) => {
       e.preventDefault();
@@ -610,180 +568,151 @@ useEffect(() => {
     [editingReport, editForm, loadData]
   );
 
+  // 5k. handleSaveProfileEdit — deps: db, residentProfile, loggedInUser
   const handleSaveProfileEdit = useCallback(
-  async (editableProfile) => {
-    if (!db) throw new Error('Local database is not connected.');
+    async (editableProfile) => {
+      if (!db) throw new Error('Local database is not connected.');
 
-    const targetDocId =
-      residentProfile?.rawDoc?._id ||
-      residentProfile?._id ||
-      loggedInUserRef.current?._id ||
-      loggedInUserRef.current?.residentId;
+      const targetDocId =
+        residentProfile?.rawDoc?._id ||
+        residentProfile?._id ||
+        loggedInUserRef.current?._id ||
+        loggedInUserRef.current?.residentId;
 
-    let existingDoc = null;
-    if (targetDocId) {
-      try {
-        existingDoc = await db.get(targetDocId);
-      } catch (err) {
-        /* ignore */
+      let existingDoc = null;
+      if (targetDocId) {
+        try { existingDoc = await db.get(targetDocId); } catch (err) { /* ignore */ }
       }
-    }
 
-    if (!existingDoc) {
-      const res = await db.allDocs({ include_docs: true });
-      const currentId = String(
-        loggedInUserRef.current?.residentId || loggedInUserRef.current?.id || ''
-      )
-        .toLowerCase()
-        .trim();
-      const currentName = String(
-        loggedInUserRef.current?.fullName || ''
-      )
-        .toLowerCase()
-        .trim();
+      if (!existingDoc) {
+        const res = await db.allDocs({ include_docs: true });
+        const currentId = String(loggedInUserRef.current?.residentId || loggedInUserRef.current?.id || '').toLowerCase().trim();
+        const currentName = String(loggedInUserRef.current?.fullName || '').toLowerCase().trim();
 
-      existingDoc = res.rows
-        .map((row) => row.doc)
-        .find((doc) => {
-          if (!doc) return false;
-          const isRes =
-            doc.docType === 'resident' ||
-            doc.type === 'resident' ||
-            doc.residentId;
-          if (!isRes) return false;
-          const docId = String(doc.residentId || doc._id || '')
-            .toLowerCase()
-            .trim();
-          const docName = String(
-            doc.fullName || `${doc.firstName || ''} ${doc.lastName || ''}`
-          )
-            .toLowerCase()
-            .trim();
-          return (
-            (currentId && docId === currentId) ||
-            (currentName && docName.includes(currentName))
-          );
+        existingDoc = res.rows
+          .map((row) => row.doc)
+          .find((doc) => {
+            if (!doc) return false;
+            const isRes = doc.docType === 'resident' || doc.type === 'resident' || doc.residentId;
+            if (!isRes) return false;
+            const docId = String(doc.residentId || doc._id || '').toLowerCase().trim();
+            const docName = String(doc.fullName || `${doc.firstName || ''} ${doc.lastName || ''}`).toLowerCase().trim();
+            return (currentId && docId === currentId) || (currentName && docName.includes(currentName));
+          });
+      }
+
+      const firstName = editableProfile.firstName?.trim() || existingDoc?.firstName || '';
+      const lastName = editableProfile.lastName?.trim() || existingDoc?.lastName || '';
+      const fullName =
+        firstName && lastName
+          ? `${firstName} ${lastName}`
+          : existingDoc?.fullName || loggedInUserRef.current?.fullName || 'Resident';
+
+      const updatedDoc = existingDoc
+        ? {
+            ...existingDoc,
+            firstName, lastName, fullName,
+            contact: editableProfile.contact.trim(),
+            phone: editableProfile.contact.trim(),
+            email: editableProfile.email.trim(),
+            purok: editableProfile.purok || existingDoc.purok,
+            zone: editableProfile.purok || existingDoc.zone,
+            address: editableProfile.address.trim(),
+            birthdate: editableProfile.birthdate || existingDoc.birthdate || existingDoc.dateOfBirth || '',
+            dateOfBirth: editableProfile.birthdate || existingDoc.birthdate || existingDoc.dateOfBirth || '',
+            age: calculateAge(editableProfile.birthdate || existingDoc.birthdate || existingDoc.dateOfBirth) || existingDoc.age || 0,
+            gender: editableProfile.gender || existingDoc.gender || '',
+            civilStatus: editableProfile.civilStatus || existingDoc.civilStatus || existingDoc.civil_status || '',
+            emergencyContactPerson: editableProfile.emergencyContactName.trim(),
+            emergencyContactNo: editableProfile.emergencyContactNumber.trim(),
+            updatedAt: new Date().toISOString(),
+          }
+        : {
+            _id: targetDocId || `RES-${Date.now()}`,
+            docType: 'resident',
+            type: 'resident',
+            residentId: loggedInUserRef.current?.residentId || 'RES-0002',
+            firstName, lastName, fullName,
+            contact: editableProfile.contact.trim(),
+            email: editableProfile.email.trim(),
+            purok: editableProfile.purok || 'Purok 1',
+            address: editableProfile.address.trim(),
+            birthdate: editableProfile.birthdate || '',
+            dateOfBirth: editableProfile.birthdate || '',
+            age: calculateAge(editableProfile.birthdate) || 0,
+            gender: editableProfile.gender || '',
+            civilStatus: editableProfile.civilStatus || '',
+            emergencyContactPerson: editableProfile.emergencyContactName.trim(),
+            emergencyContactNo: editableProfile.emergencyContactNumber.trim(),
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+
+      const result = await db.put(updatedDoc);
+
+      try {
+        const auditPayload = buildAuditLogPayload({
+          action: 'UPDATE_PROFILE',
+          module: 'RESIDENTS',
+          recordId: updatedDoc._id || updatedDoc.residentId || 'RES-PROFILE',
+          actor: {
+            username: loggedInUserRef.current?.username || loggedInUserRef.current?.residentId || 'resident',
+            role: 'resident',
+            fullName: updatedDoc.fullName || 'Resident',
+          },
+          details: `Updated profile for ${updatedDoc.fullName} (Contact: ${editableProfile.contact.trim()}, Birthdate: ${updatedDoc.birthdate || 'N/A'})`,
         });
-    }
+        await createAuditLog(auditPayload);
+      } catch (auditErr) {
+        console.warn('Audit log entry failed for profile edit:', auditErr);
+      }
 
-    // Build name fields
-    const firstName = editableProfile.firstName?.trim() || existingDoc?.firstName || '';
-    const lastName = editableProfile.lastName?.trim() || existingDoc?.lastName || '';
-    const fullName =
-      firstName && lastName
-        ? `${firstName} ${lastName}`
-        : existingDoc?.fullName || loggedInUserRef.current?.fullName || 'Resident';
+      setResidentProfile((prev) => ({
+        ...prev,
+        firstName: updatedDoc.firstName,
+        lastName: updatedDoc.lastName,
+        fullName: updatedDoc.fullName,
+        contact: updatedDoc.contact,
+        email: updatedDoc.email,
+        purok: updatedDoc.purok,
+        address: updatedDoc.address,
+        birthdate: updatedDoc.birthdate,
+        age: updatedDoc.age,
+        gender: updatedDoc.gender,
+        civilStatus: updatedDoc.civilStatus,
+        emergencyContactPerson: updatedDoc.emergencyContactPerson,
+        emergencyContactNo: updatedDoc.emergencyContactNo,
+        rawDoc: { ...updatedDoc, _rev: result.rev },
+      }));
 
-    const updatedDoc = existingDoc
-      ? {
-          ...existingDoc,
-          firstName,
-          lastName,
-          fullName,
-          contact: editableProfile.contact.trim(),
-          phone: editableProfile.contact.trim(),
-          email: editableProfile.email.trim(),
-          purok: editableProfile.purok || existingDoc.purok,
-          zone: editableProfile.purok || existingDoc.zone,
-          address: editableProfile.address.trim(),
-          birthdate: editableProfile.birthdate || existingDoc.birthdate || existingDoc.dateOfBirth || '',
-          dateOfBirth: editableProfile.birthdate || existingDoc.birthdate || existingDoc.dateOfBirth || '',
-          age: calculateAge(editableProfile.birthdate || existingDoc.birthdate || existingDoc.dateOfBirth) || existingDoc.age || 0,
-          gender: editableProfile.gender || existingDoc.gender || '',
-          civilStatus: editableProfile.civilStatus || existingDoc.civilStatus || existingDoc.civil_status || '',
-          emergencyContactPerson: editableProfile.emergencyContactName.trim(),
-          emergencyContactNo: editableProfile.emergencyContactNumber.trim(),
-          updatedAt: new Date().toISOString(),
-        }
-      : {
-          _id: targetDocId || `RES-${Date.now()}`,
-          docType: 'resident',
-          type: 'resident',
-          residentId: loggedInUserRef.current?.residentId || 'RES-0002',
-          firstName,
-          lastName,
-          fullName,
-          contact: editableProfile.contact.trim(),
-          email: editableProfile.email.trim(),
-          purok: editableProfile.purok || 'Purok 1',
-          address: editableProfile.address.trim(),
-          birthdate: editableProfile.birthdate || '',
-          dateOfBirth: editableProfile.birthdate || '',
-          age: calculateAge(editableProfile.birthdate) || 0,
-          gender: editableProfile.gender || '',
-          civilStatus: editableProfile.civilStatus || '',
-          emergencyContactPerson: editableProfile.emergencyContactName.trim(),
-          emergencyContactNo: editableProfile.emergencyContactNumber.trim(),
-          createdAt: new Date().toISOString(),
-          updatedAt: new Date().toISOString(),
-        };
+      const prevUser = loggedInUserRef.current || loggedInUser || {};
+      const mergedUser = {
+        ...prevUser,
+        firstName: updatedDoc.firstName,
+        lastName: updatedDoc.lastName,
+        fullName: updatedDoc.fullName,
+        contact: updatedDoc.contact,
+        email: updatedDoc.email,
+        purok: updatedDoc.purok,
+        address: updatedDoc.address,
+        birthdate: updatedDoc.birthdate,
+        age: updatedDoc.age,
+        gender: updatedDoc.gender,
+        civilStatus: updatedDoc.civilStatus,
+        emergencyContactName: updatedDoc.emergencyContactPerson || prevUser?.emergencyContactName || '',
+        emergencyContactNumber: updatedDoc.emergencyContactNo || prevUser?.emergencyContactNumber || '',
+      };
 
-    const result = await db.put(updatedDoc);
+      const updatedUser = updateStoredUser(mergedUser);
+      setLoggedInUser(updatedUser);
+      alert('Your information has been successfully updated!');
+    },
+    [db, residentProfile, loggedInUser]
+  );
 
-    try {
-      const auditPayload = buildAuditLogPayload({
-        action: 'UPDATE_PROFILE',
-        module: 'RESIDENTS',
-        recordId: updatedDoc._id || updatedDoc.residentId || 'RES-PROFILE',
-        actor: {
-          username: loggedInUserRef.current?.username || loggedInUserRef.current?.residentId || 'resident',
-          role: 'resident',
-          fullName: updatedDoc.fullName || 'Resident',
-        },
-        details: `Updated profile for ${updatedDoc.fullName} (Contact: ${editableProfile.contact.trim()}, Birthdate: ${updatedDoc.birthdate || 'N/A'})`,
-      });
-      await createAuditLog(auditPayload);
-    } catch (auditErr) {
-      console.warn('Audit log entry failed for profile edit:', auditErr);
-    }
-
-    setResidentProfile((prev) => ({
-      ...prev,
-      firstName: updatedDoc.firstName,
-      lastName: updatedDoc.lastName,
-      fullName: updatedDoc.fullName,
-      contact: updatedDoc.contact,
-      email: updatedDoc.email,
-      purok: updatedDoc.purok,
-      address: updatedDoc.address,
-      birthdate: updatedDoc.birthdate,
-      age: updatedDoc.age,
-      gender: updatedDoc.gender,
-      civilStatus: updatedDoc.civilStatus,
-      emergencyContactPerson: updatedDoc.emergencyContactPerson,
-      emergencyContactNo: updatedDoc.emergencyContactNo,
-      rawDoc: { ...updatedDoc, _rev: result.rev },
-    }));
-
-    const prevUser = loggedInUserRef.current || loggedInUser || {};
-    const mergedUser = {
-      ...prevUser,
-      firstName: updatedDoc.firstName,
-      lastName: updatedDoc.lastName,
-      fullName: updatedDoc.fullName,
-      contact: updatedDoc.contact,
-      email: updatedDoc.email,
-      purok: updatedDoc.purok,
-      address: updatedDoc.address,
-      birthdate: updatedDoc.birthdate,
-      age: updatedDoc.age,
-      gender: updatedDoc.gender,
-      civilStatus: updatedDoc.civilStatus,
-      emergencyContactName: updatedDoc.emergencyContactPerson || prevUser?.emergencyContactName || '',
-      emergencyContactNumber: updatedDoc.emergencyContactNo || prevUser?.emergencyContactNumber || '',
-    };
-
-    const updatedUser = updateStoredUser(mergedUser);
-
-    setLoggedInUser(updatedUser);
-
-    alert('Your information has been successfully updated!');
-  },
-  [db, residentProfile, loggedInUser]
-);
-
-
-  /* ── Derived ── */
+  /* ═══════════════════════════════════════════════════════════
+     SECTION 6: DERIVED VALUES (useMemo — after callbacks OK)
+     ═══════════════════════════════════════════════════════════ */
   const pendingRequestCount = useMemo(() => {
     return myRequests.filter((r) => {
       const status = r.status || 'Pending';
@@ -792,7 +721,80 @@ useEffect(() => {
     }).length;
   }, [myRequests]);
 
-  /* ── Nav Items ── */
+  /* ═══════════════════════════════════════════════════════════
+     SECTION 7: useEffect NA TUMATAWAG SA CALLBACKS
+     ═══════════════════════════════════════════════════════════ */
+
+  // 7a. Load data kapag ready na ang user
+  useEffect(() => {
+    if (loggedInUserRef.current?.fullName) {
+      loadData();
+    }
+  }, [loadData]);
+
+  // 7b. Tab routing mula sa navigate state
+  useEffect(() => {
+    if (location.state?.activeTab) {
+      const tabMap = {
+        announcements: 's-announcements',
+        tracking: 's-certificates',
+        feedback: 's-feedback',
+        hotlines: 's-home',
+      };
+      const matched = tabMap[location.state.activeTab];
+      if (matched) setActiveScreen(matched);
+      window.history.replaceState({}, document.title);
+    }
+  }, [location.state]);
+
+  // 7c. SSE Notification listener
+  useEffect(() => {
+  const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  
+  if (import.meta.env.DEV) {
+    console.log(`🔌 Attempting SSE connection to: ${backendUrl}/api/notifications`);
+  }
+
+  const eventSource = new EventSource(`${backendUrl}/api/notifications`);
+  
+  eventSource.onopen = () => {
+    if (import.meta.env.DEV) console.log('✅ SSE Connection Active');
+  };
+  
+  eventSource.onmessage = (event) => {
+    try {
+      const data = JSON.parse(event.data);
+      if (import.meta.env.DEV) console.log('📩 Received SSE Message:', data);
+      
+      if (data.type === 'BLOTTER_UPDATE') {
+        // Mas maganda ang toast kaysa alert dito
+        showToast(`🔔 Bagong Update: ${data.message}`, "info");
+        if (typeof loadData === 'function') loadData();
+      }
+    } catch (err) {
+      if (import.meta.env.DEV) console.error('Error parsing SSE data:', err);
+    }
+  };
+  
+  eventSource.onerror = (err) => {
+    if (import.meta.env.DEV) console.warn('⚠️ SSE Connection lost. Reconnecting...', err);
+  };
+  
+  return () => {
+    if (import.meta.env.DEV) console.log('🔌 Closing SSE connection (component unmounted)');
+    eventSource.close();
+  };
+}, [loadData]);
+
+  /* ═══════════════════════════════════════════════════════════
+     SECTION 8: Regular functions (hindi hooks) at constants
+     ═══════════════════════════════════════════════════════════ */
+  const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
+
+  const updateCertField = (field) => (e) => {
+    setCertForm((prev) => ({ ...prev, [field]: e.target.value }));
+  };
+
   const navItems = [
     { id: 's-home', label: 'Home', icon: <FaHome /> },
     { id: 's-certificates', label: 'Certificates', icon: <FaFileAlt /> },
@@ -802,7 +804,25 @@ useEffect(() => {
     { id: 's-assistance', label: 'Aid', icon: <FaHandHoldingHeart /> },
     { id: 's-profile', label: 'Profile', icon: <FaUser /> },
   ];
- 
+
+  const safePut = async (doc) => {
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        return await db.put(doc);
+      } catch (e) {
+        if (e.status === 409) {
+          attempts++;
+          console.warn(`Conflict detected on ${doc._id}. Retrying with latest _rev... (Attempt ${attempts})`);
+          const latest = await db.get(doc._id);
+          doc = { ...doc, _rev: latest._rev };
+        } else {
+          throw e;
+        }
+      }
+    }
+    throw new Error('Max retries reached: Document conflict unresolved');
+  };
   /* ── Render ── */
   return (
     <div className="resident-root-container">
@@ -856,6 +876,30 @@ useEffect(() => {
 
         {/* Content Area */}
         <div className="content">
+          {sseNotification && (
+            <div style={{
+              position: 'sticky', top: 0, zIndex: 50,
+              background: 'var(--primary, #3b82f6)', color: 'white',
+              padding: '12px 16px', borderRadius: '10px', marginBottom: '16px',
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
+              animation: 'resident-fadeUp 0.3s ease-out',
+              border: '1px solid rgba(255,255,255,0.2)'
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                <span style={{ fontSize: '20px' }}>🔔</span>
+                <span style={{ fontSize: '13px', fontWeight: 600, lineHeight: 1.4 }}>{sseNotification}</span>
+              </div>
+              <button 
+                onClick={() => setSseNotification(null)}
+                style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer', padding: '0 4px' }}
+                aria-label="Close notification"
+              >
+                ✕
+              </button>
+            </div>
+          )}
+
           {isLoading && (
             <div style={{
               display: 'flex', justifyContent: 'center', alignItems: 'center',
