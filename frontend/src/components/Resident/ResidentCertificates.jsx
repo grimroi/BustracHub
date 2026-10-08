@@ -89,6 +89,22 @@ const handleCertTypeChange = (e) => {
       setShowCertForm(false);
     }
   };
+  
+    const handleRefreshRequests = async () => {
+    try {
+      const result = await db.allDocs({ include_docs: true });
+      const userDocs = result.rows
+        .map(r => r.doc)
+        .filter(doc => doc.type === 'certificate_request' && (doc.residentId === loggedInUser?.residentId || doc.username === loggedInUser?.username))
+        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+      
+      setMyRequests(userDocs);
+      if (typeof showToast === 'function') showToast("Requests refreshed!", "success");
+    } catch (err) {
+      console.error("Refresh failed", err);
+     showToast('error', 'Failed to refresh. Please check your connection.');
+    }
+  };
 
   return (
     <div
@@ -101,19 +117,30 @@ const handleCertTypeChange = (e) => {
         <div className="page-sub">Request and track your barangay certificates</div>
       </div>
 
-      {/* Request Button */}
+            {/* Request & Refresh Buttons */}
       {!showCertForm && (
-        <button
-          className="btn btn-primary btn-full"
-          style={{ marginBottom: 18, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
-          onClick={() => setShowCertForm(true)}
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-          <span>Request a Certificate</span>
-        </button>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+          <button
+            className="btn btn-primary"
+            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            onClick={() => setShowCertForm(true)}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+            <span>Request a Certificate</span>
+          </button>
+
+          <button 
+            className="btn btn-g btn-sm" 
+            onClick={handleRefreshRequests}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <span>🔄</span>
+            <span>Refresh Status</span>
+          </button>
+        </div>
       )}
 
       {/* Certificate Form */}
@@ -212,6 +239,28 @@ const handleCertTypeChange = (e) => {
             <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface2)', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: 16 }}>
               Requests are routed directly to the Barangay Captain's desk for validation.
             </div>
+            
+            <div style={{ 
+              fontSize: 12, 
+              color: 'var(--amber)', 
+              background: 'rgba(245, 158, 11, 0.1)', 
+              padding: '10px 12px', 
+              borderRadius: 'var(--radius-sm)', 
+              border: '1px solid var(--amber)', 
+              marginBottom: 16,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8
+            }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <circle cx="12" cy="12" r="10" />
+                <line x1="12" y1="8" x2="12" y2="12" />
+                <line x1="12" y1="16" x2="12.01" y2="16" />
+              </svg>
+              <span>
+                <strong>Payment Notice:</strong> Ang processing fee (e.g., ₱50.00) ay **babayaran sa Barangay Hall** lamang kapag na-approve na ang iyong request. Huwag magpadala ng pera online.
+              </span>
+            </div>
 
             <div style={{ display: 'flex', gap: 8 }}>
               <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>Submit Request</button>
@@ -282,6 +331,24 @@ const handleCertTypeChange = (e) => {
 
           return (
             <div className="card" key={request._id} style={{ padding: 18, marginBottom: 14, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)' }}>
+               {request.status === 'Needs Revision' && request.revisionReason && (
+                <div style={{ background: 'rgba(245, 158, 11, 0.1)', border: '1px solid var(--amber)', borderRadius: '8px', padding: '12px', marginBottom: '16px', display: 'flex', gap: '10px', alignItems: 'flex-start' }}>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2" style={{ flexShrink: 0, marginTop: '2px' }}>
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                  <div>
+                    <strong style={{ fontSize: '13px', color: '#b45309', display: 'block', marginBottom: '4px' }}> Returned for Correction </strong>
+                    <p style={{ fontSize: '12px', color: '#78350f', margin: 0, lineHeight: '1.4' }}> 
+                      <strong>Reason from Admin:</strong> {request.revisionReason} 
+                    </p>
+                    <p style={{ fontSize: '11px', color: '#92400e', marginTop: '6px', fontStyle: 'italic' }}> 
+                      Please edit your request or submit a new one with the correct details. 
+                    </p>
+                  </div>
+                </div>
+              )}
               {/* Card Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
@@ -324,41 +391,146 @@ const handleCertTypeChange = (e) => {
                 </div>
               </div>
 
-              {/* Progress Steps */}
-              <div className="steps" style={{ marginBottom: 6 }}>
-                {certSteps.map((label, idx) => {
-                  const value = idx + 1;
-                  const done = isIssued ? true : stepCount > value;
-                  const active = !isIssued && stepCount === value;
+              <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px dashed var(--border)' }}>
+              <div
+                style={{
+                  fontSize: '11px',
+                  fontWeight: 700,
+                  color: 'var(--muted)',
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.5px',
+                  marginBottom: '12px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
+                Request Tracking Status
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+                {[
+                  { step: 1, label: 'Request Submitted', desc: 'Your request has been received by the system.' },
+                  { step: 2, label: 'Under Review', desc: 'Barangay Secretary is verifying your details and blotter status.' },
+                  { step: 3, label: 'Approved', desc: 'Request approved. Preparing document for printing.' },
+                  { step: 4, label: 'Ready for Pickup / Issued', desc: 'Document is ready. Please claim at the Barangay Hall with valid ID.' }
+                ].map((item, idx) => {
+                  const isDone = stepCount > item.step || (isIssued && item.step <= 4);
+                  const isActive = stepCount === item.step && !isIssued;
 
                   return (
-                    <div key={label} className={`step${done ? ' done' : active ? ' active' : ' pending'}`}>
-                      <div className="step-circle">
-                        {done ? (
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                    <div
+                      key={item.step}
+                      style={{
+                        display: 'flex',
+                        gap: '12px',
+                        position: 'relative'
+                      }}
+                    >
+                      {idx < 3 && (
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: '11px',
+                            top: '24px',
+                            bottom: '-16px',
+                            width: '2px',
+                            background: isDone
+                              ? 'var(--green, #10b981)'
+                              : 'var(--border, #e2e8f0)',
+                            transition: 'background 0.3s ease'
+                          }}
+                        />
+                      )}
+
+                                            <div
+                        style={{
+                          width: '24px',
+                          height: '24px',
+                          borderRadius: '50%',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          flexShrink: 0,
+                          background: isDone
+                            ? 'var(--green, #10b981)'
+                            : isActive
+                            ? 'var(--primary, #3b82f6)'
+                            : 'var(--surface2, #f1f5f9)',
+                          color: isDone || isActive
+                            ? '#ffffff'
+                            : 'var(--muted, #94a3b8)',
+                          border: isActive ? '2px solid #fff' : 'none',
+                          boxShadow: isActive
+                            ? '0 0 0 4px rgba(59, 130, 246, 0.2), 0 0 10px rgba(59, 130, 246, 0.4)'
+                            : 'none',
+                          zIndex: 1,
+                          transition: 'all 0.3s ease'
+                        }}
+                      >
+                        {isDone ? (
+                          <svg
+                            width="14"
+                            height="14"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="3"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          >
                             <polyline points="20 6 9 17 4 12" />
                           </svg>
                         ) : (
-                          value
+                          <span style={{ fontSize: '12px', fontWeight: '700' }}>
+                            {item.step}
+                          </span>
                         )}
                       </div>
-                      <div className="step-label">{label}</div>
-                      {idx < certSteps.length - 1 && <div className="step-line" />}
+
+                      <div style={{ flex: 1, paddingBottom: '16px' }}>
+                        <div
+                          style={{
+                            fontSize: '13px',
+                            fontWeight: 700,
+                            color: isDone || isActive
+                              ? 'var(--text)'
+                              : 'var(--muted)',
+                            marginBottom: '2px',
+                            transition: 'color 0.3s ease'
+                          }}
+                        >
+                          {item.label}
+                        </div>
+
+                        <div
+                          style={{
+                            fontSize: '11px',
+                            color: 'var(--muted)',
+                            lineHeight: '1.4'
+                          }}
+                        >
+                          {item.desc}
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
               </div>
-
-              {/* Status Log */}
-              <div style={{ fontSize: 11, color: 'var(--muted)', borderTop: '1px solid var(--border)', paddingTop: 10, marginTop: 12, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <span style={{ width: 6, height: 6, borderRadius: '50%', background: isIssued ? 'var(--green)' : isReady ? 'var(--blue)' : 'var(--amber)' }} />
-                  Status Log
-                </span>
-                <span style={{ fontWeight: 600, color: isIssued ? 'var(--green)' : isReady ? 'var(--primary)' : 'var(--muted)' }}>
-                  {getStatusLogText()}
-                </span>
-              </div>
+            </div>
             </div>
           );
         })

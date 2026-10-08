@@ -131,24 +131,24 @@ export default function ResidentCombobox({
       />
 
       {open && query.trim().length >= 2 && (
-        <div className="res-combo-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: '#1e293b', border: '1px solid #334155', borderRadius: '6px', zIndex: 1000, maxHeight: '220px', overflowY: 'auto', boxShadow: '0 8px 16px rgba(0,0,0,0.4)', marginTop: '4px' }}>
+        <div className="res-combo-panel" style={{ position: 'absolute', top: '100%', left: 0, right: 0, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '6px', zIndex: 1000, maxHeight: '220px', overflowY: 'auto', boxShadow: '0 8px 16px rgba(0,0,0,0.4)', marginTop: '4px' }}>
           {loading ? (
-            <div style={{ padding: '10px', fontSize: '12px', color: '#94a3b8' }}>🔍 Searching residents database...</div>
+            <div style={{ padding: '10px', fontSize: '12px', color: 'var(--muted)' }}>🔍 Searching residents database...</div>
           ) : options.length > 0 ? (
             options.map((res) => (
               <div
                 key={res._id || res.id}
-                style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid #334155', fontSize: '13px' }}
+                style={{ padding: '8px 12px', cursor: 'pointer', borderBottom: '1px solid var(--border)', fontSize: '13px' }}
                 onClick={() => handlePick(res)}
               >
-                <div style={{ fontWeight: 'bold', color: '#f8fafc' }}>{res.name || res.full_name}</div>
-                <div style={{ fontSize: '11px', color: '#94a3b8' }}>
+                <div style={{ fontWeight: 'bold', color: 'var(--text)' }}>{res.name || res.full_name}</div>
+                <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
                   ID: {res.id || res._id} | {formatPurok(res.purok)} | Email: {res.email || 'None'}
                 </div>
               </div>
             ))
           ) : (
-            <div style={{ padding: '10px', fontSize: '12px', color: '#94a3b8' }}>No resident found.</div>
+            <div style={{ padding: '10px', fontSize: '12px', color: 'var(--muted)' }}>No resident found.</div>
           )}
         </div>
       )}

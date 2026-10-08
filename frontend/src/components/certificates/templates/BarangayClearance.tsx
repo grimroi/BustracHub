@@ -1,4 +1,5 @@
 import React from 'react';
+import { QRCodeSVG } from 'qrcode.react'; 
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
 
@@ -56,11 +57,15 @@ export interface ClearanceData {
 
 interface ClearanceProps {
   data: ClearanceData;
+  publicDomain?: string;
 }
 
-export const BarangayClearance: React.FC<ClearanceProps> = ({ data }) => {
+export const BarangayClearance: React.FC<ClearanceProps> = ({ data, publicDomain }) => {
   if (!data) return null;
 
+  const verifyUrl = data._id
+    ? `https://${publicDomain || 'localhost:5173'}/verify?id=${encodeURIComponent(data._id)}`
+    : null;
   // ── Helper: safe uppercase ──
   const u = (s?: string) => (s || '').toUpperCase();
 
@@ -120,6 +125,7 @@ export const BarangayClearance: React.FC<ClearanceProps> = ({ data }) => {
         padding: '24px 28px',
         background: '#fff',
         minHeight: '270mm',
+        position: 'relative', 
         display: 'flex',
         flexDirection: 'column',
         boxSizing: 'border-box',
@@ -254,7 +260,6 @@ export const BarangayClearance: React.FC<ClearanceProps> = ({ data }) => {
               {orNo}2022
             </div>
             <div>[BARCODE PLACEHOLDER]</div>
-            <div style={{ marginTop: '3px' }}>[QR CODE PLACEHOLDER]</div>
           </div>
         </div>
 
@@ -406,7 +411,14 @@ export const BarangayClearance: React.FC<ClearanceProps> = ({ data }) => {
       >
         This file is a transcription/template based on the supplied image and is not an official government document.
       </div>
+  {verifyUrl && (
+  <div style={{ position: 'absolute', bottom: '56px', right: '40px', textAlign: 'center' }}>
+    <QRCodeSVG value={verifyUrl} size={80} level="H" bgColor="#ffffff" fgColor="#000000" />
+    <div style={{ fontSize: '8px', marginTop: '4px', fontWeight: 'bold' }}>Scan to Verify</div>
+  </div>
+)}
     </div>
+    
   );
 };
 

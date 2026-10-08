@@ -9,14 +9,13 @@ if (typeof localDb.setMaxListeners === 'function') {
   localDb.setMaxListeners(500);
 }
 
-// Kunin ang URL mula sa environment variables
+
 const RAW_COUCH_URL = import.meta.env.VITE_COUCHDB_URL;
 
 if (!RAW_COUCH_URL) {
   console.warn('VITE_COUCHDB_URL is not set. Remote database sync will be disabled.');
 }
 
-// I-initialize ang remoteDb gamit ang env variable, o null kung walang ibinigay
 export const remoteDb = RAW_COUCH_URL
   ? new PouchDB(RAW_COUCH_URL, {
       skip_setup: true,
@@ -134,7 +133,9 @@ export const initDbIndices = async () => {
         localDb.createIndex({ index: { fields: ['type', 'status', 'createdAt'] } }),
         localDb.createIndex({ index: { fields: ['type', 'username'] } }),
         localDb.createIndex({ index: { fields: ['type', 'residentId'] } }),
-        localDb.createIndex({ index: { fields: ['type', 'timestamp'] } })
+        localDb.createIndex({ index: { fields: ['type', 'timestamp'] } }),
+        localDb.createIndex({ index: { fields: ['docType'] } }),
+        localDb.createIndex({ index: { fields: ['type'] } }),
       ]);
       console.log('All database indices verified/created successfully.');
     }

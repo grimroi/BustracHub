@@ -15,6 +15,7 @@ export default function ResidentProfile({
   lastSync,
   handleLogout,
   handleSaveProfileEdit,
+  loadData
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -43,24 +44,27 @@ export default function ResidentProfile({
   setEditableProfile((prev) => ({ ...prev, [field]: value }));
 };
 
-
- 
-
   const handleSave = async () => {
   const { isValid, error } = validateProfileData(editableProfile);
   if (!isValid) {
-    alert(error);
-    return;
+    showToast('error', `Validation Error:\n${error}`);    return;
   }
 
   setIsSaving(true);
   try {
     await handleSaveProfileEdit(editableProfile);
+
     setSaveSuccess(true);
     setIsEditing(false);
+
+    if (typeof loadData === 'function') {
+      await loadData();
+    }
+
     setTimeout(() => setSaveSuccess(false), 3000);
   } catch (err) {
-    alert('Failed to save: ' + (err.message || 'Unknown error'));
+    console.error('Profile save error:', err);
+ showToast('error', `Failed to save: ${err.message || 'Database error'}`);
   } finally {
     setIsSaving(false);
   }
@@ -93,33 +97,37 @@ export default function ResidentProfile({
 
   return (
     <div className="screen active" style={{ padding: '0 16px 24px' }}>
+      {/* Floating Toast Notification (Hindi na nagshi-shift ng UI) */}
+      {saveSuccess && (
+        <div style={{
+          position: 'fixed',
+          top: '24px',
+          right: '24px',
+          zIndex: 99999,
+          padding: '14px 20px',
+          borderRadius: '12px',
+          background: '#10b981',
+          color: '#ffffff',
+          fontSize: '14px',
+          fontWeight: 700,
+          display: 'flex',
+          alignItems: 'center',
+          gap: '10px',
+          boxShadow: '0 10px 25px -5px rgba(16, 185, 129, 0.5)',
+          animation: 'slideInRight 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
+        }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+          Profile updated successfully!
+        </div>
+      )}
+
       {/* Header */}
       <div className="page-hdr" style={{ marginBottom: 20 }}>
         <div className="page-title">My Profile</div>
         <div className="page-sub">Manage your resident information</div>
       </div>
-
-      {/* Success Message */}
-      {saveSuccess && (
-        <div style={{
-          padding: '12px 16px',
-          marginBottom: 16,
-          borderRadius: 10,
-          background: 'rgba(34,197,94,0.1)',
-          border: '1px solid rgba(34,197,94,0.3)',
-          color: '#22c55e',
-          fontSize: 13,
-          fontWeight: 600,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8
-        }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="20 6 9 17 4 12" />
-          </svg>
-          Your information has been successfully updated!
-        </div>
-      )}
 
       {/* Profile Card */}
       <div className="card" style={{ padding: 24, marginBottom: 16, textAlign: 'center', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16 }}>
@@ -499,6 +507,14 @@ export default function ResidentProfile({
       >
         <FaSignOutAlt /> Log Out
       </button>
+
+      {/* Animation Keyframes for Toast */}
+      <style>{`
+        @keyframes slideInRight {
+          from { transform: translateX(100%); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }

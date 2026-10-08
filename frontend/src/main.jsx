@@ -8,6 +8,13 @@ import './index.css';
 
 PouchDB.plugin(PouchDBFind);
 
+const rootEl = document.documentElement;
+const savedTheme = localStorage.getItem('theme');
+const theme = savedTheme || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+rootEl.setAttribute('data-theme', theme);
+rootEl.classList.remove('light', 'dark');
+rootEl.classList.add(theme);
+
 createRoot(document.getElementById('root')).render(
   <StrictMode>
     <App />

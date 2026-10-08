@@ -1,0 +1,1075 @@
+/* ═══════════════════════════════════════════════════════════════
+   📢 ANNOUNCEMENTS — Clean Modern UI
+   Barangay Bustrac Admin Dashboard
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ═══════════════════════════════════════════════════════════════
+   1. TOOLBAR & STAT CHIPS
+   ═══════════════════════════════════════════════════════════════ */
+
+.ann-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+  margin-bottom: 16px;
+}
+
+.ann-toolbar__stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ann-toolbar__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+/* ── Stat Chips ── */
+.ann-stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
+  padding: 0 12px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--text);
+  transition: border-color 0.15s ease, transform 0.15s ease, background 0.15s ease;
+  white-space: nowrap;
+}
+
+.ann-stat-chip:hover {
+  border-color: var(--border2);
+  transform: translateY(-1px);
+}
+
+.ann-stat-chip__value {
+  font-weight: 800;
+  font-size: 14px;
+  color: var(--text);
+  letter-spacing: -0.2px;
+  line-height: 1;
+}
+
+.ann-stat-chip__label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  line-height: 1;
+}
+
+/* Stat chip variants */
+.ann-stat-chip--green {
+  border-color: rgba(52, 211, 153, 0.25);
+  background: rgba(52, 211, 153, 0.04);
+}
+.ann-stat-chip--green .ann-stat-chip__value {
+  color: var(--green);
+}
+
+.ann-stat-chip--amber {
+  border-color: rgba(251, 191, 36, 0.25);
+  background: rgba(251, 191, 36, 0.04);
+}
+.ann-stat-chip--amber .ann-stat-chip__value {
+  color: var(--amber);
+}
+
+.ann-stat-chip--accent {
+  border-color: rgba(79, 142, 247, 0.3);
+  background: var(--accent-bg);
+}
+.ann-stat-chip--accent .ann-stat-chip__value {
+  color: var(--accent);
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   2. FILTER BAR (Search + Dropdowns + Clear)
+   ═══════════════════════════════════════════════════════════════ */
+
+.ann-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 12px 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r, 10px);
+  margin-bottom: 20px;
+}
+
+/* ── Search Input ── */
+.ann-filter-bar__search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  flex: 1 1 260px;
+  min-width: 200px;
+  max-width: 420px;
+}
+
+.ann-filter-bar__search svg {
+  position: absolute;
+  left: 12px;
+  top: 50%;
+  transform: translateY(-50%);
+  color: var(--muted);
+  pointer-events: none;
+  flex-shrink: 0;
+}
+
+.ann-filter-bar__search input {
+  width: 100%;
+  height: 38px;
+  padding: 0 12px 0 34px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+
+.ann-filter-bar__search input:hover {
+  border-color: var(--border2);
+}
+
+.ann-filter-bar__search input:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.ann-filter-bar__search input::placeholder {
+  color: var(--hint);
+  opacity: 1;
+}
+
+/* ── Filter Select Dropdown ── */
+.filter-select {
+  height: 38px;
+  padding: 0 30px 0 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+  font-weight: 500;
+  cursor: pointer;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%237b83a0' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  transition: border-color 0.15s, box-shadow 0.15s, background 0.15s;
+  min-width: 130px;
+}
+
+.filter-select:hover {
+  border-color: var(--border2);
+}
+
+.filter-select:focus {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: 0 0 0 3px var(--accent-bg);
+}
+
+.filter-select option {
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px;
+}
+
+/* ── Clear/Reset Button ── */
+.filter-bar__reset {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 34px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px dashed var(--border2);
+  border-radius: var(--r-sm, 6px);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  white-space: nowrap;
+}
+
+.filter-bar__reset:hover {
+  border-color: var(--red);
+  border-style: solid;
+  color: var(--red);
+  background: var(--red-bg);
+}
+
+.filter-bar__reset svg {
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   3. ANNOUNCEMENT CARDS LIST
+   ═══════════════════════════════════════════════════════════════ */
+
+.ann-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* ── Card Container ── */
+.ann-card {
+  display: flex;
+  align-items: stretch;
+  gap: 16px;
+  padding: 18px 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-left: 3px solid transparent;
+  border-radius: var(--r, 10px);
+  transition: border-color 0.2s, box-shadow 0.2s, transform 0.15s;
+  position: relative;
+}
+
+.ann-card:hover {
+  border-color: var(--border2);
+  box-shadow: 0 6px 20px -8px rgba(0, 0, 0, 0.25);
+}
+
+/* ── Pinned Card (highlighted) ── */
+.ann-card--pinned {
+  border-left-color: var(--accent);
+  background: linear-gradient(90deg,
+    rgba(79, 142, 247, 0.06) 0%,
+    var(--surface) 40%
+  );
+  box-shadow: 0 2px 12px -6px rgba(79, 142, 247, 0.15);
+}
+
+.ann-card--pinned:hover {
+  box-shadow: 0 8px 24px -8px rgba(79, 142, 247, 0.3);
+}
+
+/* ── Card Body (main content) ── */
+.ann-card__body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── Meta Header (pin + category + status) ── */
+.ann-card__meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 2px;
+}
+
+.ann-card__pin {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-radius: 999px;
+  border: 1px solid rgba(79, 142, 247, 0.25);
+  line-height: 1.4;
+}
+
+.ann-card__pin svg {
+  flex-shrink: 0;
+}
+
+.ann-card__category {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+}
+
+/* ── Card Title ── */
+.ann-card__title {
+  margin: 0;
+  font-size: 15.5px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.35;
+  letter-spacing: -0.1px;
+}
+
+/* ── Card Content (truncated preview) ── */
+.ann-card__content {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text);
+  white-space: pre-wrap;
+  display: -webkit-box;
+  -webkit-line-clamp: 4;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  opacity: 0.9;
+  word-break: break-word;
+}
+
+/* ── Card Footer (author line) ── */
+.ann-card__footer {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.ann-card__author {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.ann-card__author svg {
+  color: var(--hint);
+  flex-shrink: 0;
+}
+
+.ann-card__dot {
+  opacity: 0.4;
+  margin: 0 2px;
+}
+
+/* ── Card Actions (right column) ── */
+.ann-card__actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;
+  justify-content: flex-start;
+  padding-top: 2px;
+  min-width: 90px;
+}
+
+.ann-card__actions .btn {
+  min-width: 84px;
+  justify-content: center;
+  font-size: 11.5px;
+  padding: 6px 12px;
+}
+
+.ann-card__actions .btn svg {
+  flex-shrink: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   4. EMPTY STATE
+   ═══════════════════════════════════════════════════════════════ */
+
+.ann-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 64px 20px;
+  text-align: center;
+  background: var(--surface);
+  border: 1px dashed var(--border2);
+  border-radius: var(--r, 10px);
+}
+
+.ann-empty svg {
+  color: var(--hint);
+  opacity: 0.5;
+  margin-bottom: 6px;
+}
+
+.ann-empty__title {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.1px;
+}
+
+.ann-empty__hint {
+  font-size: 12.5px;
+  color: var(--muted);
+  max-width: 340px;
+  line-height: 1.5;
+}
+
+.ann-empty__hint strong {
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   5. BADGE OVERRIDES (inside announcements context)
+   ═══════════════════════════════════════════════════════════════ */
+
+.ann-card .badge {
+  font-size: 10px;
+  padding: 2px 8px;
+  line-height: 1.4;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   6. RESPONSIVE — Tablet
+   ═══════════════════════════════════════════════════════════════ */
+
+@media (max-width: 960px) {
+  .ann-filter-bar__search {
+    max-width: 100%;
+    flex: 1 1 100%;
+    order: -1; /* Search on top */
+  }
+
+  .filter-select {
+    flex: 1 1 calc(50% - 5px);
+    min-width: 0;
+  }
+
+  .ann-toolbar__stats {
+    overflow-x: auto;
+    overflow-y: hidden;
+    flex-wrap: nowrap;
+    padding-bottom: 4px;
+    scrollbar-width: thin;
+    scrollbar-color: var(--border2) transparent;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ann-toolbar__stats::-webkit-scrollbar {
+    height: 3px;
+  }
+
+  .ann-toolbar__stats::-webkit-scrollbar-thumb {
+    background: var(--border2);
+    border-radius: 3px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   7. RESPONSIVE — Mobile
+   ═══════════════════════════════════════════════════════════════ */
+
+@media (max-width: 720px) {
+  /* Toolbar: stacked */
+  .ann-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .ann-toolbar__actions {
+    margin-left: 0;
+    width: 100%;
+  }
+
+  .ann-toolbar__actions .btn {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* Filter bar: stacked */
+  .ann-filter-bar {
+    padding: 12px;
+    gap: 8px;
+  }
+
+  .filter-select {
+    flex: 1 1 100%;
+    min-width: 0;
+  }
+
+  .filter-bar__reset {
+    flex: 1 1 100%;
+    justify-content: center;
+  }
+
+  /* Cards: vertical layout */
+  .ann-card {
+    flex-direction: column;
+    gap: 12px;
+    padding: 16px;
+  }
+
+  .ann-card__actions {
+    flex-direction: row;
+    flex-wrap: wrap;
+    padding-top: 10px;
+    min-width: 0;
+    border-top: 1px solid var(--border);
+    margin-top: 4px;
+  }
+
+  .ann-card__actions .btn {
+    flex: 1 1 calc(33.333% - 4px);
+    min-width: 0;
+    justify-content: center;
+    font-size: 11px;
+    padding: 7px 8px;
+  }
+
+  .ann-card__actions .btn svg {
+    width: 11px;
+    height: 11px;
+  }
+
+  /* Empty state: smaller padding */
+  .ann-empty {
+    padding: 48px 16px;
+  }
+
+  .ann-empty svg {
+    width: 44px;
+    height: 44px;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   8. RESPONSIVE — Small Phones
+   ═══════════════════════════════════════════════════════════════ */
+
+@media (max-width: 420px) {
+  .ann-stat-chip {
+    height: 30px;
+    padding: 0 10px;
+  }
+
+  .ann-stat-chip__value {
+    font-size: 13px;
+  }
+
+  .ann-stat-chip__label {
+    font-size: 10px;
+    letter-spacing: 0.2px;
+  }
+
+  .ann-card__actions .btn {
+    flex: 1 1 100%;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   9. LIGHT MODE OVERRIDES
+   ═══════════════════════════════════════════════════════════════ */
+
+html[data-theme="light"] .ann-stat-chip,
+html.light .ann-stat-chip {
+  background: #ffffff;
+  border-color: #e4e7ec;
+}
+
+html[data-theme="light"] .ann-stat-chip:hover,
+html.light .ann-stat-chip:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.04);
+}
+
+html[data-theme="light"] .ann-stat-chip--green,
+html.light .ann-stat-chip--green {
+  border-color: rgba(5, 150, 105, 0.25);
+  background: rgba(5, 150, 105, 0.05);
+}
+
+html[data-theme="light"] .ann-stat-chip--amber,
+html.light .ann-stat-chip--amber {
+  border-color: rgba(180, 83, 9, 0.25);
+  background: rgba(180, 83, 9, 0.05);
+}
+
+html[data-theme="light"] .ann-stat-chip--accent,
+html.light .ann-stat-chip--accent {
+  border-color: rgba(59, 111, 217, 0.3);
+  background: rgba(59, 111, 217, 0.08);
+}
+
+html[data-theme="light"] .ann-filter-bar,
+html.light .ann-filter-bar {
+  background: #ffffff;
+  border-color: #e4e7ec;
+}
+
+html[data-theme="light"] .ann-filter-bar__search input,
+html.light .ann-filter-bar__search input {
+  background: #f7f8fa;
+  border-color: #e4e7ec;
+}
+
+html[data-theme="light"] .ann-filter-bar__search input:focus,
+html.light .ann-filter-bar__search input:focus {
+  background: #ffffff;
+}
+
+html[data-theme="light"] .filter-select,
+html.light .filter-select {
+  background-color: #f7f8fa;
+  border-color: #e4e7ec;
+}
+
+html[data-theme="light"] .filter-select:focus,
+html.light .filter-select:focus {
+  background: #ffffff;
+}
+
+html[data-theme="light"] .filter-select option,
+html.light .filter-select option {
+  background: #ffffff;
+  color: #1f2937;
+}
+
+html[data-theme="light"] .ann-card,
+html.light .ann-card {
+  background: #ffffff;
+  border-color: #e4e7ec;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+html[data-theme="light"] .ann-card:hover,
+html.light .ann-card:hover {
+  border-color: #d1d5db;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.06);
+}
+
+html[data-theme="light"] .ann-card--pinned,
+html.light .ann-card--pinned {
+  background: linear-gradient(90deg,
+    rgba(59, 111, 217, 0.05) 0%,
+    #ffffff 40%
+  );
+  box-shadow: 0 2px 12px -6px rgba(59, 111, 217, 0.15);
+}
+
+html[data-theme="light"] .ann-empty,
+html.light .ann-empty {
+  background: #ffffff;
+  border-color: #d1d5db;
+}
+
+html[data-theme="light"] .ann-card__footer,
+html.light .ann-card__footer {
+  border-top-color: #e4e7ec;
+}
+
+html[data-theme="light"] .ann-card__actions,
+html.light .ann-card__actions {
+  border-top-color: #e4e7ec;
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   10. ANIMATIONS
+   ═══════════════════════════════════════════════════════════════ */
+
+@keyframes ann-card-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.ann-card {
+  animation: ann-card-enter 0.25s ease-out;
+}
+
+/* Respect users who prefer no motion */
+@media (prefers-reduced-motion: reduce) {
+  .ann-card,
+  .ann-stat-chip,
+  .filter-bar__reset,
+  .filter-select,
+  .ann-filter-bar__search input {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   11. ANNOUNCEMENT FORM (Create/Edit)
+   ═══════════════════════════════════════════════════════════════ */
+
+.ann-form-wrap {
+  max-width: 780px;
+  margin: 0 auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r, 10px);
+  overflow: hidden;
+  animation: ann-card-enter 0.25s ease-out;
+}
+
+/* ── Form Header ── */
+.ann-form-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 24px;
+  background: linear-gradient(135deg, var(--surface2) 0%, var(--surface) 100%);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.ann-form-header__left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.ann-form-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--accent-bg);
+  color: var(--accent);
+  border: 1px solid rgba(79, 142, 247, 0.25);
+  flex-shrink: 0;
+}
+
+.ann-form-titles {
+  min-width: 0;
+}
+
+.ann-form-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: -0.2px;
+  line-height: 1.3;
+}
+
+.ann-form-subtitle {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+/* ── Form Body ── */
+.ann-form {
+  padding: 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+/* ── Section ── */
+.ann-form-section {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.ann-form-section__label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 10.5px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  margin-bottom: -4px;
+}
+
+.ann-form-section__label svg {
+  color: var(--accent);
+  opacity: 0.8;
+}
+
+/* ── Field ── */
+.ann-form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.ann-form-field__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.ann-form-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.2px;
+}
+
+.ann-form-req {
+  color: var(--red);
+  font-weight: 800;
+  margin-left: 2px;
+}
+
+.ann-form-counter {
+  font-size: 10.5px;
+  font-weight: 600;
+  color: var(--hint);
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mono, ui-monospace, monospace);
+}
+
+/* ── Textarea ── */
+.ann-form-textarea {
+  min-height: 180px;
+  line-height: 1.65;
+  resize: vertical;
+  font-size: 13.5px !important;
+}
+
+/* ── Grid (2-col) ── */
+.ann-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  align-items: start;
+}
+
+/* ── Divider ── */
+.ann-form-divider {
+  height: 1px;
+  margin: 20px 0;
+  background: linear-gradient(90deg,
+    transparent,
+    var(--border-strong, var(--border2)) 20%,
+    var(--border-strong, var(--border2)) 80%,
+    transparent
+  );
+}
+
+/* ── Pin Toggle (custom styled) ── */
+.ann-pin-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm, 6px);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  min-height: 62px;
+}
+
+.ann-pin-toggle:hover {
+  border-color: var(--border2);
+}
+
+.ann-pin-toggle.is-active {
+  background: var(--accent-bg);
+  border-color: rgba(79, 142, 247, 0.4);
+}
+
+.ann-pin-toggle input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.ann-pin-toggle__box {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+  background: var(--surface);
+  border: 1.5px solid var(--border2);
+  color: transparent;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  margin-top: 1px;
+}
+
+.ann-pin-toggle.is-active .ann-pin-toggle__box {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+.ann-pin-toggle__content {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+
+.ann-pin-toggle__title {
+  font-size: 12.5px;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1.3;
+}
+
+.ann-pin-toggle__hint {
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.3;
+}
+
+/* ── Action Bar ── */
+.ann-form-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 20px;
+  margin-top: 4px;
+  border-top: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.ann-form-actions__left {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.ann-form-actions__hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.ann-form-actions__hint svg {
+  color: var(--hint);
+}
+
+.ann-form-actions__right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Responsive ── */
+@media (max-width: 720px) {
+  .ann-form-header {
+    padding: 16px;
+  }
+
+  .ann-form {
+    padding: 16px;
+  }
+
+  .ann-form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ann-form-header__left {
+    gap: 10px;
+  }
+
+  .ann-form-icon {
+    width: 36px;
+    height: 36px;
+  }
+
+  .ann-form-title {
+    font-size: 15px;
+  }
+
+  .ann-form-subtitle {
+    font-size: 11.5px;
+  }
+
+  .ann-form-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .ann-form-actions__right {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+
+  .ann-form-actions__right .btn-p {
+    grid-column: 1 / -1;
+  }
+}
+
+@media (max-width: 420px) {
+  .ann-form-actions__right {
+    grid-template-columns: 1fr;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   12. LIGHT MODE — Form
+   ═══════════════════════════════════════════════════════════════ */
+
+html[data-theme="light"] .ann-form-wrap,
+html.light .ann-form-wrap {
+  background: #ffffff;
+  border-color: #e4e7ec;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+}
+
+html[data-theme="light"] .ann-form-header,
+html.light .ann-form-header {
+  background: linear-gradient(135deg, #f8fafc 0%, #ffffff 100%);
+  border-bottom-color: #e4e7ec;
+}
+
+html[data-theme="light"] .ann-pin-toggle,
+html.light .ann-pin-toggle {
+  background: #f7f8fa;
+  border-color: #e4e7ec;
+}
+
+html[data-theme="light"] .ann-pin-toggle.is-active,
+html.light .ann-pin-toggle.is-active {
+  background: rgba(59, 111, 217, 0.06);
+  border-color: rgba(59, 111, 217, 0.3);
+}

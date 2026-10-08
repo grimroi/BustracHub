@@ -73,7 +73,7 @@ export default function BlotterCertificatePrintModal({ isOpen, onClose, blotterD
       }).catch(err => console.warn('Audit log failed:', err));
     } catch (error) {
       console.error("Print error:", error);
-      alert('Failed to print certificate. Please try again.');
+     showToast('error', 'Failed to print certificate. Please try again.');
     } finally {
       setIsPrinting(false);
     }
@@ -96,26 +96,33 @@ export default function BlotterCertificatePrintModal({ isOpen, onClose, blotterD
   }, [isOpen]);
 
   useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.key === 'Escape' && isOpen) {
-        onClose();
-      }
-      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p' && isOpen) {
-        e.preventDefault();
-        handlePrint();
-      }
-    };
-
-    if (isOpen) {
-      document.body.style.overflow = 'hidden';
-      window.addEventListener('keydown', handleKeyDown);
+  const handleKeyDown = (e) => {
+    if (e.key === 'Escape' && isOpen) {
+      e.preventDefault();
+      onClose();
     }
 
-    return () => {
-      document.body.style.overflow = 'unset';
-      window.removeEventListener('keydown', handleKeyDown);
-    };
-  }, [isOpen, onClose, handlePrint]);
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'p') {
+      e.preventDefault();
+
+      if (typeof handlePrint === 'function') {
+        handlePrint();
+      } else {
+        window.print();
+      }
+    }
+  };
+
+  if (isOpen) {
+    document.body.style.overflow = 'hidden';
+    window.addEventListener('keydown', handleKeyDown);
+  }
+
+  return () => {
+    document.body.style.overflow = 'unset';
+    window.removeEventListener('keydown', handleKeyDown);
+  };
+}, [isOpen, onClose, handlePrint]);
 
   if (!isOpen || !blotterData) {
     return null;

@@ -1,12 +1,12 @@
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import PouchDB from 'pouchdb-browser';
+import { useNavigate } from 'react-router-dom';
+import Swal from 'sweetalert2';
 import CertificatePrintWrapper from '../components/certificates/CertificatePrintWrapper';
-import { logActivity } from '../utils/auditLog';
+import { createAuditLog } from '../utils/auditLog';
 import '../styles/Certificates.css';
-
-const db = new PouchDB('bustrachub_db');
-const REMOTE_URL = import.meta.env.VITE_COUCHDB_URL || 'http://admin:admin@127.0.0.1:5984/bustrachub_db';
+import { localDb as db } from '../services/db';
+import { getApplicantName, normalizeCertType } from '../utils/certHelpers';
 
 const INITIAL_FORM = {
   applicantType: 'Resident',
@@ -19,78 +19,62 @@ const INITIAL_FORM = {
   residentId: '',
   rbiId: '',
   purok: '',
-  ctc: { name: '', number: '', amountPaid: '', dateIssued: '', placeIssued: '' }
+  ctc: { name: '', number: '', amountPaid: '', dateIssued: '', placeIssued: '' },
 };
 
-const formatStamp = () => new Date().toISOString();
-
-// ── Date Formatter Helper ──
-const formatDateTime = (dateString) => {
-  if (!dateString) return '—';
-  try {
-    const date = new Date(dateString);
-    return date.toLocaleString('en-PH', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit'
-    });
-  } catch (err) {
-    return '—';
-  }
+const STEP_LABELS = {
+  1: 'Submitted',
+  2: 'Under Review',
+  3: 'Awaiting Approval',
+  4: 'Approved',
+  5: 'Issued',
+  6: 'Released',
 };
 
-const formatDateOnly = (iso) => {
-  if (!iso) return '';
-  const d = new Date(iso);
-  return isNaN(d) ? '' : d.toISOString().split('T')[0];
+const STEP_COLORS = {
+  1: '#6b7280',
+  2: '#3b82f6',
+  3: '#f59e0b',
+  4: '#10b981',
+  5: '#8b5cf6',
+  6: '#64748b',
 };
 
-const exportReportCSV = (rows, filename) => {
-  const escapeCSV = (value) => `"${String(value ?? '').replace(/"/g, '""')}"`;
-  const headers = ['ID', 'Name', 'Type', 'Purpose', 'Status', 'Date'];
-  const csv = [
-    headers.map(escapeCSV).join(','),
-    ...rows.map((r) =>
-      [
-        r._id,
-        `${r.firstName || ''} ${r.lastName || ''}`.trim(),
-        r.certificateType,
-        r.purpose,
-        r.status,
-        formatDateTime(r.updatedAt || r.createdAt)
-      ]
-        .map(escapeCSV)
-        .join(',')
-    )
-  ].join('\n');
-
-  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+const StepBadge = ({ step }) => {
+  const key = Number(step);
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        padding: '3px 10px',
+        borderRadius: '999px',
+        fontSize: '12px',
+        fontWeight: 700,
+        color: '#fff',
+        background: STEP_COLORS[key] || '#6b7280',
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {STEP_LABELS[key] || `Step ${key}`}
+    </span>
+  );
 };
 
-const normalizeCertType = (typeString) => {
-  if (!typeString) return 'indigency';
-  const lower = typeString.toLowerCase();
-  if (lower.includes('indigency')) return 'indigency';
-  if (lower.includes('business')) return 'business';
-  if (lower.includes('residency')) return 'residency';
-  return 'clearance';
+const showToast = (type, message) => {
+  Swal.fire({
+    icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
+    toast: true,
+    position: 'top-end',
+    timer: 2500,
+    showConfirmButton: false,
+    title: message,
+  });
 };
 
-export default function CertificateLifecycle() {
+export default function CertificateLifecycle({ onOpenDispatcher, onOpenIssuance }) {
   const [allRequests, setAllRequests] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [requestForm, setRequestForm] = useState(INITIAL_FORM);
-  const [remarksById, setRemarksById] = useState({});
   const [certificateSearch, setCertificateSearch] = useState('');
   const [printData, setPrintData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -99,21 +83,22 @@ export default function CertificateLifecycle() {
   const [residentSearchText, setResidentSearchText] = useState('');
   const [reportStart, setReportStart] = useState('');
   const [reportEnd, setReportEnd] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const normalizedCertificateSearch = certificateSearch.toLowerCase().trim();
+  const searchQuery = certificateSearch;
 
-  const incomingRequests = allRequests.filter((req) => req.step === 1 || req.step === 2);
-
-  const pendingApprovalRequests = allRequests.filter((req) => req.step === 3);
+  const incomingRequests = allRequests.filter((req) => Number(req.step) === 1);
+  const pendingApprovalRequests = allRequests.filter((req) =>
+    [2, 3, 4].includes(Number(req.step))
+  );
 
   const loadResidents = useCallback(async () => {
     try {
       const result = await db.allDocs({ include_docs: true, attachments: false });
       const list = result.rows
         .map((r) => r.doc)
-        .filter(
-          (d) => d && (d.type === 'resident' || d.type === 'profile' || d.collection === 'residents')
-        );
+        .filter((d) => d && (d.type === 'resident' || d.type === 'profile' || d.collection === 'residents'));
       setResidents(list);
     } catch (e) {
       console.error('Failed to load residents', e);
@@ -126,7 +111,11 @@ export default function CertificateLifecycle() {
       const requests = result.rows
         .map((row) => row.doc)
         .filter((doc) => doc && doc.type === 'certificate_request')
-        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt || b.requestedAt || 0) -
+            new Date(a.createdAt || a.requestedAt || 0)
+        );
       setAllRequests(requests);
     } catch (error) {
       console.error('Unable to load certificate requests', error);
@@ -136,26 +125,23 @@ export default function CertificateLifecycle() {
   }, []);
 
   useEffect(() => {
-    const changes = db.changes({ live: true, include_docs: true });
-    const sync = db.sync(REMOTE_URL, { live: true, retry: true });
-
+    loadRequests();
+    const changes = db.changes({ live: true, include_docs: true, since: 'now' });
     changes.on('change', (change) => {
       if (!change.doc || change.doc.type !== 'certificate_request') return;
       setAllRequests((prev) => {
-        const next = prev.filter((item) => item._id !== change.id);
-        const exists = prev.some((item) => item._id === change.id);
-        if (!exists) return [change.doc, ...next];
-        return prev.map((item) => (item._id === change.id ? change.doc : item));
+        const next = prev.filter((item) => item._id !== change.doc._id);
+        const merged = change.deleted ? next : [change.doc, ...next];
+        return merged.sort(
+          (a, b) =>
+            new Date(b.createdAt || b.requestedAt || 0) -
+            new Date(a.createdAt || a.requestedAt || 0)
+        );
       });
     });
-
     changes.on('error', (error) => console.error('Certificate changes feed error', error));
-    sync.on('error', (error) => console.error('Certificate sync error', error));
-
-    loadRequests();
     return () => {
-      changes.cancel();
-      sync.cancel();
+      if (changes && typeof changes.cancel === 'function') changes.cancel();
     };
   }, [loadRequests]);
 
@@ -169,6 +155,7 @@ export default function CertificateLifecycle() {
     try {
       const now = new Date().toISOString();
       const updatedRequest = { ...request, step: nextStep, updatedAt: now };
+      if (nextStep === 1) updatedRequest.status = 'Submitted';
       if (nextStep === 2) {
         updatedRequest.status = 'Under Review';
         updatedRequest.reviewedAt = now;
@@ -187,80 +174,21 @@ export default function CertificateLifecycle() {
         updatedRequest.releasedAt = now;
       }
       await db.put(updatedRequest);
+      setAllRequests((prev) =>
+        prev.map((r) => (r._id === updatedRequest._id ? updatedRequest : r))
+      );
     } catch (error) {
       console.error('Unable to update certificate request', error);
     }
   }, []);
 
-  const handleRemarksSubmit = useCallback(
-    async (request) => {
-      const remarks = remarksById[request._id] ?? request.remarks ?? '';
-      try {
-        await db.put({ ...request, remarks, step: 3, updatedAt: formatStamp() });
-      } catch (error) {
-        console.error('Unable to send request for approval', error);
-      }
-    },
-    [remarksById]
-  );
-
-  const handlePrintCertificate = useCallback((cert) => {
-    setPrintData(cert);
-    logActivity({
-      action: 'PRINT_CERTIFICATE',
-      module: 'Certificate Lifecycle',
-      details: `Printed ${cert.certificateType || 'Certificate'} for ${cert.firstName || ''} ${cert.lastName || cert.fullName || 'Resident'} (Ref: ${cert.trackingCode || cert._id})`,
-      performedBy: 'Barangay Official'
-    });
-  }, []);
-
-  const handleIssueCertificate = async (cert) => {
-    try {
-      const updatedCert = {
-        ...cert,
-        step: 5,
-        status: 'Issued',
-        issuedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      if (typeof updateCertificateDoc === 'function') {
-        await updateCertificateDoc(updatedCert);
-      }
-      logActivity({
-        action: 'ISSUE_CERTIFICATE',
-        module: 'Certificate Lifecycle',
-        details: `Issued ${cert.certificateType || 'Certificate'} for ${cert.firstName || ''} ${cert.lastName || cert.fullName || 'Resident'} (Ref: ${cert.trackingCode || cert._id})`,
-        performedBy: 'Barangay Official'
-      });
-      alert(`Certificate ${cert.trackingCode || cert._id} has been successfully ISSUED!`);
-    } catch (error) {
-      console.error('Error issuing certificate:', error);
-      alert('Failed to issue certificate. Please try again.');
+  const handleOpenIssuance = (cert) => {
+    if (cert && typeof onOpenIssuance === 'function') {
+      onOpenIssuance(cert);
+      return;
     }
-  };
-
-  const handleReleaseDocument = async (cert) => {
-    try {
-      const updatedCert = {
-        ...cert,
-        step: 6,
-        status: 'Released',
-        releasedAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-      };
-      if (typeof updateCertificateDoc === 'function') {
-        await updateCertificateDoc(updatedCert);
-      }
-      logActivity({
-        action: 'RELEASE_CERTIFICATE',
-        module: 'Certificate Lifecycle',
-        details: `Released ${cert.certificateType || 'Certificate'} to ${cert.firstName || ''} ${cert.lastName || cert.fullName || 'Resident'} (Ref: ${cert.trackingCode || cert._id})`,
-        performedBy: 'Barangay Official'
-      });
-      alert(`Certificate ${cert.trackingCode || cert._id} has been successfully RELEASED!`);
-    } catch (error) {
-      console.error('Error releasing certificate:', error);
-      alert('Failed to release certificate. Please try again.');
+    if (cert) {
+      console.warn('onOpenIssuance prop is missing; cannot open issuance workspace.');
     }
   };
 
@@ -273,7 +201,7 @@ export default function CertificateLifecycle() {
       lastName: resident.lastName || resident.lname || '',
       residentId: resident._id || resident.residentId || '',
       rbiId: resident.rbiId || resident.rbi || '',
-      purok: resident.purok || resident.address?.purok || 'Purok 1'
+      purok: resident.purok || resident.address?.purok || 'Purok 1',
     }));
     setShowResidentPicker(false);
     setResidentSearchText('');
@@ -281,253 +209,272 @@ export default function CertificateLifecycle() {
 
   const validateCertificateForm = () => {
     const applicantType = requestForm.applicantType || 'Resident';
+
     if (!requestForm.certificateType) {
-      alert('Please select a Certificate Type.');
+      Swal.fire({ icon: 'warning', title: 'Missing Information', text: 'Please select a Certificate Type.' });
       return false;
     }
     if (!requestForm.purpose?.trim()) {
-      alert('Please state the purpose of this certificate.');
+      Swal.fire({ icon: 'warning', title: 'Missing Information', text: 'Please state the purpose of this certificate.' });
       return false;
     }
     if (applicantType === 'Resident' || applicantType === 'Non-Resident') {
       if (!requestForm.firstName?.trim() || !requestForm.lastName?.trim()) {
-        alert('Please enter the First Name and Last Name.');
+        Swal.fire({ icon: 'warning', title: 'Invalid Name', text: 'Please enter the First Name and Last Name.' });
         return false;
       }
     }
     if (applicantType === 'Business') {
       if (!requestForm.businessName?.trim() || !requestForm.ownerName?.trim()) {
-        alert('Please enter the Business Name and Owner Name.');
+        Swal.fire({ icon: 'warning', title: 'Missing Business Info', text: 'Please enter the Business Name and Owner Name.' });
         return false;
       }
       if (!['Business Clearance', 'Business Permit', 'Barangay Clearance'].includes(requestForm.certificateType)) {
-        alert('Please select a valid business document.');
+        Swal.fire({ icon: 'warning', title: 'Invalid Document', text: 'Please select a valid business document.' });
         return false;
       }
     }
     return true;
   };
-  
-  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const handleCreateRequest = async (event) => {
-  event.preventDefault();
+    event.preventDefault();
 
-  // LAYER 1: Anti-Double Click Protection
-  if (isSubmitting) {
-    console.warn('Submission already in progress, ignoring duplicate click');
-    return;
-  }
+    if (isSubmitting) {
+      console.warn('Submission already in progress, ignoring duplicate click');
+      return;
+    }
 
-  if (!validateCertificateForm()) return;
+    if (!validateCertificateForm()) return;
 
-  setIsSubmitting(true); // Lock the button
+    setIsSubmitting(true);
 
-  try {
-    // Kuhanin ang kasalukuyang logged-in user mula sa localStorage o default sa Admin
-    const storedUser = JSON.parse(localStorage.getItem('currentUser') || '{}');
-    const currentUser = storedUser.username ? storedUser : { username: 'Admin Staff', role: 'admin' };
+    try {
+      const storedUser = JSON.parse(localStorage.getItem('bustrac_user') || '{}');
+      const currentUser = storedUser.username
+        ? storedUser
+        : { username: 'Admin Staff', role: 'admin', fullName: 'Admin Staff' };
+      const isAdminUser = currentUser?.role === 'admin' || currentUser?.role === 'staff';
 
-    // OPTIMIZED: Fetch all certificate requests ONCE
-    const allRequests = await db.allDocs({
-      include_docs: true,
-      startkey: 'CERT-',
-      endkey: 'CERT-\ufff0'
-    });
-    const allDocs = allRequests.rows.map(row => row.doc);
-
-    // CHECK IF USER IS ADMIN / STAFF
-    const isAdminUser = currentUser?.role === 'admin' || currentUser?.role === 'staff' || true;
-
-    // LAYER 2: Duplicate Request Check (Resident)
-    if (requestForm.applicantType === 'Resident' && requestForm.residentId) {
-      const existingRequests = allDocs.filter(doc =>
-        doc.residentId === requestForm.residentId &&
-        doc.certificateType === requestForm.certificateType
-      );
-
-      // Check 24-hour cooldown (SKIP IF ADMIN or CONFIRMED)
-      const now = new Date();
-      const recentRequest = existingRequests.find(doc => {
-        const requestDate = new Date(doc.createdAt || doc.requestedAt);
-        const hoursSince = (now - requestDate) / (1000 * 60 * 60);
-        return hoursSince < 24;
+      const certResult = await db.allDocs({
+        include_docs: true,
+        startkey: 'CERT-',
+        endkey: 'CERT-\ufff0',
       });
+      const allDocs = certResult.rows.map((row) => row.doc);
 
-      if (recentRequest && !isAdminUser) {
-        alert(`Cooldown Active: You already requested a ${requestForm.certificateType} recently. Please wait 24 hours before requesting the same certificate type again.`);
-        setIsSubmitting(false);
-        return;
-      }
+      // BLOTTER CHECK INTERLOCK
+      if (
+        requestForm.applicantType === 'Resident' &&
+        requestForm.residentId &&
+        requestForm.certificateType === 'Barangay Clearance'
+      ) {
+        const allDocsResult = await db.allDocs({ include_docs: true });
+        const residentName = `${requestForm.firstName} ${requestForm.lastName}`.trim().toLowerCase();
 
-      // If Admin, ask for confirmation instead of blocking completely
-      if (recentRequest && isAdminUser) {
-        const confirmBypass = window.confirm(
-          `Cooldown Warning: A ${requestForm.certificateType} was requested for this resident within the last 24 hours.\n\nDo you want to proceed and override as Admin?`
-        );
-        if (!confirmBypass) {
+        const pendingBlotters = allDocsResult.rows
+          .map((row) => row.doc)
+          .filter((doc) => {
+            const isBlotter = doc.type === 'blotter_record' || doc.docType === 'blotter' || (doc._id && doc._id.toUpperCase().startsWith('BLT-'));
+            const isActiveCase = ['Open', 'Under Mediation', 'Pending', 'Scheduled', 'Active'].includes(doc.status);
+            const isResidentMatch =
+              doc.residentId === requestForm.residentId ||
+              (doc.complainant && doc.complainant.toLowerCase().includes(residentName)) ||
+              (doc.respondent && doc.respondent.toLowerCase().includes(residentName));
+            return isBlotter && isActiveCase && isResidentMatch;
+          });
+
+        if (pendingBlotters.length > 0) {
+          Swal.fire({
+            icon: 'error',
+            title: 'Request Blocked',
+            html: `This resident has <strong>${pendingBlotters.length} pending blotter case(s)</strong>.<br/><br/>A Barangay Clearance cannot be processed until all cases are settled or resolved.`,
+            confirmButtonColor: '#ef4444',
+          });
           setIsSubmitting(false);
           return;
         }
       }
 
-      // Check pending request quota (max 3)
-      const pendingRequests = existingRequests.filter(doc =>
-        doc.status === 'Submitted' ||
-        doc.status === 'Under Review' ||
-        doc.status === 'Pending' ||
-        doc.step === 1 ||
-        doc.step === 2
-      );
+      // Resident Cooldown & Limit
+      if (requestForm.applicantType === 'Resident' && requestForm.residentId) {
+        const existingRequests = allDocs.filter(
+          (doc) =>
+            doc.residentId === requestForm.residentId &&
+            doc.certificateType === requestForm.certificateType
+        );
 
-      if (pendingRequests.length >= 3 && !isAdminUser) {
-        alert(`Request Limit Reached: You already have ${pendingRequests.length} pending certificate requests. Please wait for them to be processed before submitting new requests.`);
-        setIsSubmitting(false);
-        return;
+        const now = new Date();
+        const recentRequest = existingRequests.find((doc) => {
+          const requestDate = new Date(doc.createdAt || doc.requestedAt);
+          return (now - requestDate) / (1000 * 60 * 60) < 24;
+        });
+
+        if (recentRequest && !isAdminUser) {
+          showToast('error', `Cooldown: You already requested a ${requestForm.certificateType} recently.`);
+          setIsSubmitting(false);
+          return;
+        }
+
+        if (recentRequest && isAdminUser) {
+          const confirmBypass = window.confirm(
+            `Cooldown Warning: A ${requestForm.certificateType} was requested within the last 24 hours.\n\nOverride as Admin?`
+          );
+          if (!confirmBypass) {
+            setIsSubmitting(false);
+            return;
+          }
+        }
+
+        const pendingRequests = existingRequests.filter(
+          (doc) =>
+            ['Submitted', 'Under Review', 'Pending'].includes(doc.status) || [1, 2].includes(doc.step)
+        );
+
+        if (pendingRequests.length >= 3 && !isAdminUser) {
+          showToast('error', 'Request Limit Reached: Max 3 pending requests allowed.');
+          setIsSubmitting(false);
+          return;
+        }
       }
+
+      // Business Cooldown
+      if (requestForm.applicantType === 'Business' && requestForm.businessName) {
+        const businessRequests = allDocs.filter(
+          (doc) =>
+            doc.businessName === requestForm.businessName &&
+            doc.certificateType === requestForm.certificateType
+        );
+
+        const now = new Date();
+        const recentRequest = businessRequests.find((doc) => {
+          const requestDate = new Date(doc.createdAt || doc.requestedAt);
+          return (now - requestDate) / (1000 * 60 * 60) < 48;
+        });
+
+        if (recentRequest && !isAdminUser) {
+          showToast('error', `Business Cooldown: ${requestForm.businessName} already requested this recently.`);
+          setIsSubmitting(false);
+          return;
+        }
+      }
+
+      // Payload
+      const year = new Date().getFullYear();
+      const uniqueSuffix = Date.now().toString().slice(-6) + Math.floor(10 + Math.random() * 90);
+      const generatedId = `CERT-${year}-${uniqueSuffix}`;
+      const nowIso = new Date().toISOString();
+
+      const newRequestPayload = {
+        _id: generatedId,
+        type: 'certificate_request',
+        applicantType: requestForm.applicantType || 'Resident',
+        firstName: requestForm.firstName?.trim() || '',
+        lastName: requestForm.lastName?.trim() || '',
+        businessName: requestForm.businessName?.trim() || '',
+        ownerName: requestForm.ownerName?.trim() || '',
+        certificateType: requestForm.certificateType,
+        purpose: requestForm.purpose.trim(),
+        status: 'Submitted',
+        step: 1,
+        requestedAt: nowIso,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+        ctc: {
+          name: requestForm.ctc?.name?.trim() || '',
+          number: requestForm.ctc?.number?.trim() || '',
+          amountPaid: parseFloat(requestForm.ctc?.amountPaid) || 0,
+          dateIssued: requestForm.ctc?.dateIssued || '',
+          placeIssued: requestForm.ctc?.placeIssued?.trim() || '',
+        },
+      };
+
+      if (requestForm.applicantType === 'Resident') {
+        newRequestPayload.residentId = requestForm.residentId?.trim() || '';
+        newRequestPayload.rbiId = requestForm.rbiId?.trim().toUpperCase() || '';
+        newRequestPayload.purok = requestForm.purok || 'Purok 1';
+      }
+
+      await db.put(newRequestPayload);
+
+      if (typeof createAuditLog === 'function') {
+        try {
+          await createAuditLog({
+            action: 'CREATE_CERTIFICATE_REQUEST',
+            module: 'CERTIFICATES',
+            recordId: generatedId,
+            actor: {
+              username: currentUser.username || 'Admin Staff',
+              role: currentUser.role || 'admin',
+              fullName: currentUser.fullName || 'Admin Staff',
+            },
+            details: `New certificate request: ${requestForm.certificateType} for ${
+              requestForm.applicantType === 'Business'
+                ? requestForm.businessName
+                : `${requestForm.firstName || ''} ${requestForm.lastName || ''}`.trim()
+            }`,
+          });
+        } catch (auditError) {
+          console.error('Audit log failed (non-blocking):', auditError);
+        }
+      }
+
+      showToast('success', 'Certificate request submitted successfully!');
+      setRequestForm(INITIAL_FORM);
+      setShowModal(false);
+      setShowResidentPicker(false);
+      setResidentSearchText('');
+    } catch (error) {
+      console.error('Unable to save certificate request', error);
+      showToast('error', 'Failed to save certificate request. Please try again.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const reportRequests = allRequests.filter((req) => {
+     const q = searchQuery.trim().toLowerCase();
+  const applicantName = getApplicantName(req).toLowerCase();
+    if (![4, 5, 6].includes(Number(req.step))) return false;
+
+    if (reportStart || reportEnd) {
+      const date = new Date(req.updatedAt || req.createdAt || 0);
+      const start = reportStart ? new Date(reportStart) : null;
+      const end = reportEnd ? new Date(reportEnd) : null;
+      if (end) end.setHours(23, 59, 59, 999);
+      const inRange = (!start || date >= start) && (!end || date <= end);
+      if (!inRange) return false;
     }
 
-    // LAYER 3: Business Duplicate Check
-    if (requestForm.applicantType === 'Business' && requestForm.businessName) {
-      const businessRequests = allDocs.filter(doc =>
-        doc.businessName === requestForm.businessName &&
-        doc.certificateType === requestForm.certificateType
-      );
+    if (normalizedCertificateSearch) {
+      const applicantName = getApplicantName(req).toLowerCase();
+      const certificateType = String(req.certificateType || req.certType || '').toLowerCase();
+      const purpose = String(req.purpose || req.certPurpose || '').toLowerCase();
+      const requestId = String(req._id || '').toLowerCase();
 
-      const now = new Date();
-      const recentRequest = businessRequests.find(doc => {
-        const requestDate = new Date(doc.createdAt || doc.requestedAt);
-        const hoursSince = (now - requestDate) / (1000 * 60 * 60);
-        return hoursSince < 48; // 48 hours for business permits
-      });
+      const matches =
+        applicantName.includes(normalizedCertificateSearch) ||
+        certificateType.includes(normalizedCertificateSearch) ||
+        purpose.includes(normalizedCertificateSearch) ||
+        requestId.includes(normalizedCertificateSearch);
 
-      if (recentRequest && !isAdminUser) {
-        alert(`Business Cooldown: ${requestForm.businessName} already requested a ${requestForm.certificateType} recently. Please wait 48 hours.`);
-        setIsSubmitting(false);
-        return;
-      }
+      if (!matches) return false;
     }
 
-    // All checks passed - proceed with creation
-    const generatedId = `CERT-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-    const now = new Date().toISOString();
-
-    const newRequestPayload = {
-      _id: generatedId,
-      type: 'certificate_request',
-      applicantType: requestForm.applicantType || 'Resident',
-      firstName: requestForm.firstName?.trim() || '',
-      lastName: requestForm.lastName?.trim() || '',
-      businessName: requestForm.businessName?.trim() || '',
-      ownerName: requestForm.ownerName?.trim() || '',
-      certificateType: requestForm.certificateType,
-      purpose: requestForm.purpose.trim(),
-      status: 'Submitted',
-      step: 1,
-      requestedAt: now,
-      reviewedAt: null,
-      approvedAt: null,
-      issuedAt: null,
-      releasedAt: null,
-      createdAt: now,
-      updatedAt: now,
-      ctc: {
-        name: requestForm.ctc?.name?.trim() || '',
-        number: requestForm.ctc?.number?.trim() || '',
-        amountPaid: parseFloat(requestForm.ctc?.amountPaid) || 0,
-        dateIssued: requestForm.ctc?.dateIssued || '',
-        placeIssued: requestForm.ctc?.placeIssued?.trim() || ''
-      }
-    };
-
-    if (requestForm.applicantType === 'Resident') {
-      newRequestPayload.residentId = requestForm.residentId?.trim() || '';
-      newRequestPayload.rbiId = requestForm.rbiId?.trim().toUpperCase() || '';
-      newRequestPayload.purok = requestForm.purok || 'Purok 1';
-    }
-
-    await db.put(newRequestPayload);
-
-    // Audit Log - Gumamit ng logActivity sa halip na createAuditLog
-    await logActivity({
-      action: 'CREATE_CERTIFICATE_REQUEST',
-      module: 'CERTIFICATES',
-      recordId: generatedId,
-      details: `New certificate request: ${requestForm.certificateType} for ${
-        requestForm.applicantType === 'Business'
-          ? requestForm.businessName
-          : `${requestForm.firstName || ''} ${requestForm.lastName || ''}`.trim()
-      }`,
-      performedBy: currentUser?.username || 'Barangay Official'
-    });
-
-    alert('Certificate request submitted successfully and queued for review!');
-
-    setRequestForm(INITIAL_FORM);
-    setShowModal(false);
-    setShowResidentPicker(false);
-    setResidentSearchText('');
-
-    // Unlock button after cooldown (2 seconds)
-    setTimeout(() => setIsSubmitting(false), 2000);
-
-  } catch (error) {
-    console.error('Unable to save certificate request', error);
-    alert('Failed to save certificate request. Please try again.');
-    setIsSubmitting(false); // Unlock on error immediately
-  }
-};
-  
-  const getApplicantName = (req) => {
-  if (!req) return 'Unnamed Applicant';
-  if (req.businessName) {
-    return `${req.businessName}${req.ownerName ? ` (${req.ownerName})` : ''}`;
-  }
-  const fullName = `${req.firstName || ''} ${req.lastName || ''}`.trim();
-  return fullName || 'Unnamed Applicant';
-};
-
- const reportRequests = allRequests.filter((req) => {
-  if (![4, 5, 6].includes(Number(req.step))) return false;
-  
-  // Date range filter
-  if (reportStart || reportEnd) {
-    const date = new Date(req.updatedAt || req.createdAt || 0);
-    const start = reportStart ? new Date(reportStart) : null;
-    const end = reportEnd ? new Date(reportEnd) : null;
-    if (end) end.setHours(23, 59, 59, 999);
-    const inRange = (!start || date >= start) && (!end || date <= end);
-    if (!inRange) return false;
-  }
-
-  if (normalizedCertificateSearch) {
-    const applicantName = getApplicantName(req).toLowerCase();
-    const certificateType = String(req.certificateType || req.certType || '').toLowerCase();
-    const purpose = String(req.purpose || req.certPurpose || '').toLowerCase();
-    const requestId = String(req._id || '').toLowerCase();
-
-    const matches = applicantName.includes(normalizedCertificateSearch) ||
-      certificateType.includes(normalizedCertificateSearch) ||
-      purpose.includes(normalizedCertificateSearch) ||
-      requestId.includes(normalizedCertificateSearch);
-    
-    if (!matches) return false;
-  }
-  
-  return true;
-});
+    return true;
+  });
 
   const reportCounts = {
-  approved: reportRequests.filter((r) => Number(r.step) === 4).length,
-  issued: reportRequests.filter((r) => Number(r.step) === 5).length,
-  released: reportRequests.filter((r) => Number(r.step) === 6).length,
-  total: reportRequests.length,
-};
+    approved: reportRequests.filter((r) => Number(r.step) === 4).length,
+    issued: reportRequests.filter((r) => Number(r.step) === 5).length,
+    released: reportRequests.filter((r) => Number(r.step) === 6).length,
+    total: reportRequests.length,
+  };
 
   const handleResetFilters = () => {
     setReportStart('');
     setReportEnd('');
-     setCertificateSearch('');
+    setCertificateSearch('');
   };
 
   useEffect(() => {
@@ -555,515 +502,646 @@ export default function CertificateLifecycle() {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [showResidentPicker]);
 
-   return (
-  <div className="screen active certificate-lifecycle-screen">
+  // ═══════════════════════════════════════════════════════════════
+  // RENDER
+  // ═══════════════════════════════════════════════════════════════
 
-    {/* ── Two Column Cards: Incoming & Pending (Version A) ── */}
-    <div className="cert-columns">
-      {/* Incoming Requests */}
-      <div className="cert-section-card">
-        <div className="cert-section-header">
-          <div className="cert-section-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-              <polyline points="14 2 14 8 20 8" />
-            </svg>
-            Incoming Requests
-          </div>
-
-          <button
-            type="button"
-            className="btn btn-primary btn-sm"
-            onClick={() => setShowModal(true)}
-          >
-            + Add Request
-          </button>
-        </div>
-        <div className="cert-table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Applicant Name</th>
-                <th>Details</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan="3">
-                    <div className="loading-cell">
-                      <span className="spinner" />
-                      <span>Loading certificate requests…</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : incomingRequests.length === 0 ? (
-                <tr>
-                  <td colSpan="3">
-                    <div className="empty-state">
-                      <span>No incoming requests.</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                incomingRequests.map((req) => {
-                  const applicantName = getApplicantName(req);
-                  const certificateType = req.certificateType || req.certType || '—';
-                  const purpose = req.purpose || req.certPurpose || '—';
-                  const remarksValue = remarksById[req._id] ?? req.remarks ?? '';
-
-                  return (
-                    <tr key={req._id}>
-                      <td><strong>{applicantName}</strong></td>
-                      <td>
-                        <div className="cert-detail-stack">
-                          <span>{certificateType}</span>
-                          <span className="muted">{purpose}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <div className="cert-actions">
-                          {req.step === 1 && (
-                            <button type="button" className="btn btn-primary btn-sm" onClick={() => updateRequest(req, 2)}>
-                              Mark Under Review
-                            </button>
-                          )}
-                          {req.step === 2 && (
-                            <div className="cert-remarks-box">
-                              <textarea
-                                className="fc"
-                                value={remarksValue}
-                                placeholder="Add review remarks..."
-                                rows={2}
-                                onChange={(e) => setRemarksById((prev) => ({ ...prev, [req._id]: e.target.value }))}
-                              />
-                              <button type="button" className="btn btn-primary btn-sm" onClick={() => handleRemarksSubmit(req)}>
-                                Send for Approval
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* Pending Approvals */}
-      <div className="cert-section-card">
-        <div className="cert-section-header">
-          <div className="cert-section-title">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-              <polyline points="22 4 12 14.01 9 11.01" />
-            </svg>
-            Pending Approvals
-          </div>
-          {pendingApprovalRequests.length > 0 && (
-            <span className="badge a">{pendingApprovalRequests.length} Waiting</span>
-          )}
-        </div>
-        <div className="cert-table-wrapper">
-          <table>
-            <thead>
-              <tr>
-                <th>Applicant Name</th>
-                <th>Details</th>
-                <th>Action</th>
-              </tr>
-            </thead>
-            <tbody>
-              {loading ? (
-                <tr>
-                  <td colSpan="3">
-                    <div className="loading-cell">
-                      <span className="spinner" />
-                      <span>Loading certificate requests…</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : pendingApprovalRequests.length === 0 ? (
-                <tr>
-                  <td colSpan="3">
-                    <div className="empty-state">
-                      <span>No pending approvals.</span>
-                    </div>
-                  </td>
-                </tr>
-              ) : (
-                pendingApprovalRequests.map((req) => {
-                  const applicantName = getApplicantName(req);
-                  const certificateType = req.certificateType || req.certType || '—';
-                  const purpose = req.purpose || req.certPurpose || '—';
-                  const remarksValue = req.remarks || '—';
-
-                  return (
-                    <tr key={req._id}>
-                      <td><strong>{applicantName}</strong></td>
-                      <td>
-                        <div className="cert-detail-stack">
-                          <span>{certificateType}</span>
-                          <span className="muted">{purpose}</span>
-                          <span className="muted">Remarks: {remarksValue}</span>
-                        </div>
-                      </td>
-                      <td>
-                        <button type="button" className="btn btn-p btn-sm" onClick={() => updateRequest(req, 4)}>
-                          Approve Certificate
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+  return (
+    <div className="screen active certificate-lifecycle-screen">
+       <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '16px' }}>
+      <button 
+        className="btn btn-p" 
+        onClick={onOpenDispatcher} // ✅ Gamitin ang prop dito
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M12 5v14M5 12h14" />
+        </svg>
+        New Request
+      </button>
     </div>
 
-    {showModal && createPortal(
-  <div className="cert-modal-overlay">
-    <div className="cert-modal">
-      {/* Modal Header */}
-      <div className="cert-modal-header">
-        <h3>New Certificate Request</h3>
-        <button
-          type="button"
-          className="cert-modal-close"
-          aria-label="Close modal"
-          onClick={() => {
-            setShowModal(false);
-            setRequestForm(INITIAL_FORM);
-            setShowResidentPicker(false);
-            setResidentSearchText('');
-          }}
-        >
-          ✕
-        </button>
+      {/* ── Stats Cards ── */}
+      <div className="cert-lifecycle-stats">
+        <div className="cert-stat-card cert-stat-card--incoming">
+          <div className="cert-stat-label">Incoming</div>
+          <div className="cert-stat-value">{incomingRequests.length}</div>
+          <div className="cert-stat-hint">Step 1 · New submissions</div>
+        </div>
+        <div className="cert-stat-card cert-stat-card--pending">
+          <div className="cert-stat-label">Pending Approval</div>
+          <div className="cert-stat-value">{pendingApprovalRequests.length}</div>
+          <div className="cert-stat-hint">Steps 2–4 · Review to approval</div>
+        </div>
+        <div className="cert-stat-card cert-stat-card--total">
+          <div className="cert-stat-label">Total Requests</div>
+          <div className="cert-stat-value">{allRequests.length}</div>
+          <div className="cert-stat-hint">All time</div>
+        </div>
       </div>
 
-      {/* Form Body */}
-      <form onSubmit={handleCreateRequest} className="cert-modal-form">
-        <div className="cert-modal-body">
-          {/* Applicant Type Selection */}
-          <div className="fg">
-            <label className="fl">
-              Applicant Classification <span style={{ color: 'var(--red)' }}>*</span>
-            </label>
-            <select
-              className="fc"
-              value={requestForm.applicantType}
-              onChange={(event) => setRequestForm((prev) => ({
-                ...prev,
-                applicantType: event.target.value,
-                certificateType: '',
-                purpose: '',
-                residentId: '',
-                rbiId: '',
-                purok: '',
-                businessName: '',
-                ownerName: '',
-                firstName: '',
-                lastName: ''
-              }))}
-            >
-              <option value="Resident">Resident (Local Citizen)</option>
-              <option value="Non-Resident">Non-Resident / Walk-in Applicant</option>
-              <option value="Business">Commercial / Business Entity</option>
-            </select>
+      {/* ── Two Column Cards ── */}
+      <div className="cert-columns">
+        {/* Incoming Requests */}
+        <div className="cert-section-card cert-column-card">
+          <div className="cert-section-header">
+            <div className="cert-section-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M22 12h-6l-2 3h-4l-2-3H2" />
+                <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+              </svg>
+              Incoming Requests
+            </div>
+            <span className="badge badge--count">{incomingRequests.length}</span>
           </div>
 
-          <div className="section-divider" />
-
-          {/* RESIDENT APPLICANT FLOW */}
-          {requestForm.applicantType === 'Resident' && (
-            <>
-              <div className="fg" style={{ position: 'relative' }}>
-                <label className="fl" style={{ justifyContent: 'space-between' }}>
-                  <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                    Search & Link Resident Profile <span style={{ color: 'var(--red)' }}>*</span>
-                  </span>
-                  {requestForm.residentId && (
-                    <span style={{ color: 'var(--green)', fontSize: '11px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-                        <polyline points="20 6 9 17 4 12" />
-                      </svg>
-                      Resident Linked
-                    </span>
-                  )}
-                </label>
-
-                <button
-                  type="button"
-                  className="btn btn-g btn-sm"
-                  onClick={() => setShowResidentPicker((prev) => !prev)}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <circle cx="11" cy="11" r="8" />
-                    <path d="m21 21-4.3-4.3" />
-                  </svg>
-                  {showResidentPicker ? 'Close Resident Registry' : 'Select from Resident Registry'}
-                </button>
-
-                {/* Dynamic Overlay Resident Picker */}
-                {showResidentPicker && (
-                  <div className="resident-picker" ref={residentPickerRef}>
-                    <div className="search-wrapper">
-                      <input
-                        type="text"
-                        className="fc"
-                        placeholder="Type name to search resident..."
-                        value={residentSearchText}
-                        onChange={(e) => setResidentSearchText(e.target.value)}
-                        autoFocus
-                      />
-                      {residentSearchText && (
-                        <button
-                          type="button"
-                          className="search-clear"
-                          onClick={() => setResidentSearchText('')}
-                          aria-label="Clear search"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <line x1="18" y1="6" x2="6" y2="18" />
-                            <line x1="6" y1="6" x2="18" y2="18" />
-                          </svg>
-                        </button>
-                      )}
-                    </div>
-                    <div>
-                      {residents
-                        .filter((r) => {
-                          const fullName = `${r.firstName || r.fname || ''} ${r.lastName || r.lname || ''}`.toLowerCase();
-                          return fullName.includes(residentSearchText.toLowerCase());
-                        })
-                        .slice(0, 20)
-                        .map((resident) => (
-                          <div
-                            key={resident._id || resident.id}
-                            className="resident-option"
-                            onClick={() => {
-                              handleSelectResident(resident);
-                              setShowResidentPicker(false);
+          <div className="cert-table-wrapper cert-table-wrapper--compact">
+            <table>
+              <thead>
+                <tr>
+                  <th>Applicant</th>
+                  <th>Certificate & Purpose</th>
+                  <th className="th-action">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan="3">
+                      <div className="loading-cell">
+                        <span className="spinner" />
+                        Loading requests…
+                      </div>
+                    </td>
+                  </tr>
+                ) : incomingRequests.length === 0 ? (
+                  <tr>
+                    <td colSpan="3">
+                      <div className="empty-state">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <path d="M22 12h-6l-2 3h-4l-2-3H2" />
+                          <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z" />
+                        </svg>
+                        <span>No incoming requests yet.</span>
+                        <span className="empty-state-hint">Click "New Request" to add one.</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  incomingRequests.map((req) => (
+                    <tr key={req._id}>
+                      <td>
+                        <div className="cert-cell-name">{getApplicantName(req)}</div>
+                        <div className="cert-cell-id">{req._id}</div>
+                      </td>
+                      <td>
+                        <div className="cert-cell-type">{req.certificateType || ''}</div>
+                        <div className="cert-cell-purpose">{req.purpose || '—'}</div>
+                        {req.revisionReason && (
+                          <div className="cert-cell-returned">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                              <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                              <line x1="12" y1="9" x2="12" y2="13" />
+                              <line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                            Returned: {req.revisionReason}
+                          </div>
+                        )}
+                      </td>
+                      <td className="td-action">
+                        <div className="cert-row-actions">
+                          <button
+                            type="button"
+                            className="btn btn-p btn-sm"
+                            onClick={() => updateRequest(req, 2)}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="11" cy="11" r="8" />
+                              <path d="m21 21-4.3-4.3" />
+                            </svg>
+                            Start Review
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-g btn-sm"
+                            onClick={async () => {
+                              const reason = window.prompt('Reason for return (e.g., Missing requirements):');
+                              if (!reason?.trim()) return;
+                              try {
+                                const latest = await db.get(req._id);
+                                const returnedDoc = {
+                                  ...latest,
+                                  step: 1,
+                                  status: 'Needs Revision',
+                                  revisionReason: reason.trim(),
+                                  updatedAt: new Date().toISOString(),
+                                };
+                                await db.put(returnedDoc);
+                                setAllRequests((prev) =>
+                                  prev.map((r) => (r._id === req._id ? returnedDoc : r))
+                                );
+                                showToast('success', 'Returned to resident for correction.');
+                              } catch (err) {
+                                showToast('error', 'Error: ' + err.message);
+                              }
                             }}
                           >
-                            <span className="resident-option-name">
-                              {resident.firstName || resident.fname} {resident.lastName || resident.lname}
-                            </span>
-                            <span className="resident-option-purok">
-                              {resident.purok || resident.address?.purok || 'No Purok'}
-                            </span>
-                          </div>
-                        ))}
-                    </div>
-                  </div>
+                            Return
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))
                 )}
-              </div>
-
-              <div className="cert-form-row cols-2">
-                <div className="fg">
-                  <label className="fl muted">Resident System ID</label>
-                  <input className="fc" value={requestForm.residentId || ''} readOnly disabled placeholder="Auto-filled" />
-                </div>
-                <div className="fg">
-                  <label className="fl muted">RBI Record ID</label>
-                  <input className="fc" value={requestForm.rbiId || ''} readOnly disabled placeholder="Auto-filled" />
-                </div>
-              </div>
-
-              <div className="fg">
-                <label className="fl muted">Registered Purok Location</label>
-                <input className="fc" value={requestForm.purok || ''} readOnly disabled placeholder="Auto-filled upon selection" />
-              </div>
-            </>
-          )}
-
-          {/* BUSINESS APPLICANT FLOW */}
-          {requestForm.applicantType === 'Business' && (
-            <>
-              <div className="fg">
-                <label className="fl">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M18 21V11a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v10" />
-                    <path d="M2 21h20" />
-                    <path d="M6 9h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2z" />
-                  </svg>
-                  Registered Business Name <span style={{ color: 'var(--red)' }}>*</span>
-                </label>
-                <input
-                  className="fc"
-                  placeholder="e.g. ABC Store & Trading Services"
-                  required
-                  value={requestForm.businessName}
-                  onChange={(e) => setRequestForm((prev) => ({ ...prev, businessName: e.target.value }))}
-                />
-              </div>
-              <div className="fg">
-                <label className="fl">
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                  </svg>
-                  Owner / Authorized Representative <span style={{ color: 'var(--red)' }}>*</span>
-                </label>
-                <input
-                  className="fc"
-                  placeholder="e.g. Juan Dela Cruz"
-                  required
-                  value={requestForm.ownerName}
-                  onChange={(e) => setRequestForm((prev) => ({ ...prev, ownerName: e.target.value }))}
-                />
-              </div>
-            </>
-          )}
-
-          {/* NON-RESIDENT APPLICANT FLOW */}
-          {requestForm.applicantType === 'Non-Resident' && (
-            <>
-              <div className="cert-form-row cols-2">
-                <div className="fg">
-                  <label className="fl">First Name <span style={{ color: 'var(--red)' }}>*</span></label>
-                  <input
-                    className="fc"
-                    placeholder="e.g. Maria"
-                    required
-                    value={requestForm.firstName}
-                    onChange={(e) => setRequestForm((prev) => ({ ...prev, firstName: e.target.value }))}
-                  />
-                </div>
-                <div className="fg">
-                  <label className="fl">Last Name <span style={{ color: 'var(--red)' }}>*</span></label>
-                  <input
-                    className="fc"
-                    placeholder="e.g. Santos"
-                    required
-                    value={requestForm.lastName}
-                    onChange={(e) => setRequestForm((prev) => ({ ...prev, lastName: e.target.value }))}
-                  />
-                </div>
-              </div>
-              <div className="fg">
-                <label className="fl">
-                  Complete Origin Address <span style={{ color: 'var(--red)' }}>*</span>
-                </label>
-                <input
-                  className="fc"
-                  placeholder="e.g. Brgy. San Nicolas, Baao, Camarines Sur"
-                  required
-                  value={requestForm.purok}
-                  onChange={(e) => setRequestForm((prev) => ({ ...prev, purok: e.target.value }))}
-                />
-              </div>
-            </>
-          )}
-
-          <div className="section-divider" />
-
-          {/* DYNAMIC CERTIFICATE TYPE SELECTION */}
-          <div className="fg">
-            <label className="fl">
-              Certificate Type Request <span style={{ color: 'var(--red)' }}>*</span>
-            </label>
-            <select
-              className="fc"
-              required
-              value={requestForm.certificateType}
-              onChange={(event) => {
-                const selectedType = event.target.value;
-                setRequestForm((prev) => ({
-                  ...prev,
-                  certificateType: selectedType,
-                  purpose: prev.purpose || (selectedType ? `For ${selectedType} requirements` : '')
-                }));
-              }}
-            >
-              <option value="">-- Select Certificate Type --</option>
-              {requestForm.applicantType !== 'Business' && (
-                <>
-                  <option value="Barangay Clearance">Barangay Clearance</option>
-                  <option value="Certificate of Indigency">Certificate of Indigency</option>
-                  <option value="Certificate of Residency">Certificate of Residency</option>
-                  {/* <option value="First Time Job Seeker (RA 11261)">First Time Job Seeker Certificate</option>
-                  <option value="Certificate of Good Moral Character">Certificate of Good Moral Character</option>
-                  <option value="Certificate of Low Income">Certificate of Low Income</option> */}
-                </>
-              )}
-              {requestForm.applicantType === 'Business' && (
-                <>
-                  <option value="Business Clearance">Business Clearance</option>
-                  <option value="Business Permit">Business Permit</option>
-                  <option value="Barangay Building Clearance">Barangay Clearance for Construction/Building</option>
-                </>
-              )}
-            </select>
-          </div>
-
-          {/* Purpose */}
-          <div className="fg">
-            <label className="fl">
-              Stated Purpose <span style={{ color: 'var(--red)' }}>*</span>
-            </label>
-            <textarea
-              className="fc"
-              rows={2}
-              required
-              placeholder="Specify purpose (e.g. Employment application, Scholarship, Postal ID)"
-              value={requestForm.purpose}
-              onChange={(e) => setRequestForm((prev) => ({ ...prev, purpose: e.target.value }))}
-            />
+              </tbody>
+            </table>
           </div>
         </div>
 
-        {/* Modal Footer */}
-        <div className="cert-modal-footer">
-          <button
-            type="button"
-            className="btn btn-g"
-            onClick={() => {
-              setShowModal(false);
-              setRequestForm(INITIAL_FORM);
-              setShowResidentPicker(false);
-              setResidentSearchText('');
-            }}
-          >
-            Cancel
-          </button>
-          <button
-            type="submit"
-            className="btn btn-primary cert-modal-submit"
-            disabled={isSubmitting}
-          >
-            {isSubmitting ? (
-              <>
-                <span className="spinner" />
-                Processing...
-              </>
-            ) : (
-              <>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <line x1="22" y1="2" x2="11" y2="13" />
-                  <polygon points="22 2 15 22 11 13 2 9 22 2" />
+        {/* Request Processing */}
+        <div className="cert-section-card cert-column-card">
+          <div className="cert-section-header">
+            <div className="cert-section-title">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="10" />
+                <polyline points="12 6 12 12 16 14" />
+              </svg>
+              Request Processing
+            </div>
+            <span className="badge badge--count">{pendingApprovalRequests.length}</span>
+          </div>
+
+          <div className="cert-table-wrapper cert-table-wrapper--compact">
+            <table>
+              <thead>
+                <tr>
+                  <th>Applicant</th>
+                  <th>Certificate & Purpose</th>
+                  <th>Status</th>
+                  <th className="th-action">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan="4">
+                      <div className="loading-cell">
+                        <span className="spinner" />
+                        Loading…
+                      </div>
+                    </td>
+                  </tr>
+                ) : pendingApprovalRequests.length === 0 ? (
+                  <tr>
+                    <td colSpan="4">
+                      <div className="empty-state">
+                        <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                          <circle cx="12" cy="12" r="10" />
+                          <polyline points="12 6 12 12 16 14" />
+                        </svg>
+                        <span>No pending approvals.</span>
+                        <span className="empty-state-hint">Start a review from Incoming to move items here.</span>
+                      </div>
+                    </td>
+                  </tr>
+                ) : (
+                  pendingApprovalRequests.map((req) => (
+                    <tr key={req._id}>
+                      <td>
+                        <div className="cert-cell-name">{getApplicantName(req)}</div>
+                        <div className="cert-cell-id">{req._id}</div>
+                      </td>
+                      <td>
+                        <div className="cert-cell-type">{req.certificateType || '—'}</div>
+                        <div className="cert-cell-purpose">{req.purpose || '—'}</div>
+                      </td>
+                      <td>
+                        <StepBadge step={req.step} />
+                      </td>
+                      <td className="td-action">
+                        <div className="cert-row-actions">
+                          {req.step === 2 && (
+                            <button
+                              type="button"
+                              className="btn btn-s btn-sm"
+                              onClick={() => updateRequest(req, 3)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                              Send for Approval
+                            </button>
+                          )}
+                          {req.step === 3 && (
+                            <button
+                              type="button"
+                              className="btn btn-p btn-sm"
+                              onClick={() => updateRequest(req, 4)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                              </svg>
+                              Approve
+                            </button>
+                          )}
+                          {req.step === 4 && (
+                            <button
+                              type="button"
+                              className="btn btn-p btn-sm"
+                              onClick={() => handleOpenIssuance(req)}
+                            >
+                              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                              </svg>
+                              Issue Document
+                            </button>
+                          )}
+                          {req.step <= 3 && (
+                            <button
+                              type="button"
+                              className="btn btn-d btn-sm"
+                              onClick={async () => {
+                                const reason = window.prompt('Reason for return:');
+                                if (!reason?.trim()) return;
+                                try {
+                                  const latest = await db.get(req._id);
+                                  const returnedDoc = {
+                                    ...latest,
+                                    step: 1,
+                                    status: 'Needs Revision',
+                                    revisionReason: reason.trim(),
+                                    updatedAt: new Date().toISOString(),
+                                  };
+                                  await db.put(returnedDoc);
+                                  setAllRequests((prev) =>
+                                    prev.map((r) => (r._id === req._id ? returnedDoc : r))
+                                  );
+                                  showToast('success', 'Returned to resident for correction.');
+                                } catch (err) {
+                                  showToast('error', 'Error: ' + err.message);
+                                }
+                              }}
+                            >
+                              Return
+                            </button>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      {/* ═══════════════════════════════════════════════════════════════
+          MODAL — New Certificate Request
+          ══════════════════════════════════════════════════════════════ */}
+      {showModal && createPortal(
+        <div className="cert-modal-overlay">
+          <div className="cert-modal cert-modal--wide">
+            <div className="cert-modal-header">
+              <div className="cert-modal-header-left">
+                <div className="cert-modal-icon">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <line x1="12" y1="5" x2="12" y2="19" />
+                    <line x1="5" y1="12" x2="19" y2="12" />
+                  </svg>
+                </div>
+                <div className="cert-modal-titles">
+                  <h3>New Certificate Request</h3>
+                  <span className="cert-modal-subtitle">Fill in applicant details below</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="cert-modal-close"
+                aria-label="Close modal"
+                onClick={() => {
+                  setShowModal(false);
+                  setRequestForm(INITIAL_FORM);
+                  setShowResidentPicker(false);
+                  setResidentSearchText('');
+                }}
+              >
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <line x1="18" y1="6" x2="6" y2="18" />
+                  <line x1="6" y1="6" x2="18" y2="18" />
                 </svg>
-                Submit Request
-              </>
-            )}
-          </button>
-        </div>
-      </form>
+              </button>
+            </div>
+
+            <form onSubmit={handleCreateRequest} className="cert-modal-form">
+              <div className="cert-modal-body">
+                {/* Applicant Type */}
+                <div className="fg">
+                  <label className="fl">
+                    Applicant Classification <span className="req">*</span>
+                  </label>
+                  <select
+                    className="fc"
+                    value={requestForm.applicantType}
+                    onChange={(event) =>
+                      setRequestForm((prev) => ({
+                        ...prev,
+                        applicantType: event.target.value,
+                        certificateType: '',
+                        purpose: '',
+                        residentId: '',
+                        rbiId: '',
+                        purok: '',
+                        businessName: '',
+                        ownerName: '',
+                        firstName: '',
+                        lastName: '',
+                      }))
+                    }
+                  >
+                    <option value="Resident">Resident (Local Citizen)</option>
+                    <option value="Non-Resident">Non-Resident / Walk-in Applicant</option>
+                    <option value="Business">Commercial / Business Entity</option>
+                  </select>
+                </div>
+
+                <div className="section-divider" />
+
+                {/* RESIDENT FLOW */}
+                {requestForm.applicantType === 'Resident' && (
+                  <>
+                    <div className="fg" style={{ position: 'relative' }}>
+                      <label className="fl fl--between">
+                        <span>Search & Link Resident Profile <span className="req">*</span></span>
+                        {requestForm.residentId && (
+                          <span className="cert-link-badge">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="20 6 9 17 4 12" />
+                            </svg>
+                            Resident Linked
+                          </span>
+                        )}
+                      </label>
+
+                      <button
+                        type="button"
+                        className="btn btn-g btn-sm"
+                        onClick={() => setShowResidentPicker((prev) => !prev)}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="11" cy="11" r="8" />
+                          <path d="m21 21-4.3-4.3" />
+                        </svg>
+                        {showResidentPicker ? 'Close Resident Registry' : 'Select from Resident Registry'}
+                      </button>
+
+                      {showResidentPicker && (
+                        <div className="resident-picker" ref={residentPickerRef}>
+                          <div className="search-wrapper">
+                            <input
+                              type="text"
+                              className="fc"
+                              placeholder="Type name to search resident…"
+                              value={residentSearchText}
+                              onChange={(e) => setResidentSearchText(e.target.value)}
+                              autoFocus
+                            />
+                            {residentSearchText && (
+                              <button
+                                type="button"
+                                className="search-clear"
+                                onClick={() => setResidentSearchText('')}
+                                aria-label="Clear search"
+                              >
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                  <line x1="18" y1="6" x2="6" y2="18" />
+                                  <line x1="6" y1="6" x2="18" y2="18" />
+                                </svg>
+                              </button>
+                            )}
+                          </div>
+                          <div>
+                            {residents
+                              .filter((r) => {
+                                const fullName = `${r.firstName || r.fname || ''} ${r.lastName || r.lname || ''}`.toLowerCase();
+                                return fullName.includes(residentSearchText.toLowerCase());
+                              })
+                              .slice(0, 20)
+                              .map((resident) => (
+                                <div
+                                  key={resident._id || resident.id}
+                                  className="resident-option"
+                                  onClick={() => {
+                                    handleSelectResident(resident);
+                                    setShowResidentPicker(false);
+                                  }}
+                                >
+                                  <span className="resident-option-name">
+                                    {resident.firstName || resident.fname} {resident.lastName || resident.lname}
+                                  </span>
+                                  <span className="resident-option-purok">
+                                    {resident.purok || resident.address?.purok || 'No Purok'}
+                                  </span>
+                                </div>
+                              ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="cert-form-row cols-2">
+                      <div className="fg">
+                        <label className="fl muted">Resident System ID</label>
+                        <input className="fc" value={requestForm.residentId || ''} readOnly disabled placeholder="Auto-filled" />
+                      </div>
+                      <div className="fg">
+                        <label className="fl muted">RBI Record ID</label>
+                        <input className="fc" value={requestForm.rbiId || ''} readOnly disabled placeholder="Auto-filled" />
+                      </div>
+                    </div>
+
+                    <div className="fg">
+                      <label className="fl muted">Registered Purok Location</label>
+                      <input className="fc" value={requestForm.purok || ''} readOnly disabled placeholder="Auto-filled upon selection" />
+                    </div>
+                  </>
+                )}
+
+                {/* BUSINESS FLOW */}
+                {requestForm.applicantType === 'Business' && (
+                  <>
+                    <div className="fg">
+                      <label className="fl">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M18 21V11a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v10" />
+                          <path d="M2 21h20" />
+                          <path d="M6 9h12a2 2 0 0 0 2-2V5a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v2a2 2 0 0 0 2 2z" />
+                        </svg>
+                        Registered Business Name <span className="req">*</span>
+                      </label>
+                      <input
+                        className="fc"
+                        placeholder="e.g. ABC Store & Trading Services"
+                        required
+                        value={requestForm.businessName}
+                        onChange={(e) => setRequestForm((prev) => ({ ...prev, businessName: e.target.value }))}
+                      />
+                    </div>
+                    <div className="fg">
+                      <label className="fl">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
+                          <circle cx="9" cy="7" r="4" />
+                          <path d="M22 21v-2a4 4 0 0 0-3-3.87" />
+                          <path d="M16 3.13a4 4 0 0 1 0 7.75" />
+                        </svg>
+                        Owner / Authorized Representative <span className="req">*</span>
+                      </label>
+                      <input
+                        className="fc"
+                        placeholder="e.g. Juan Dela Cruz"
+                        required
+                        value={requestForm.ownerName}
+                        onChange={(e) => setRequestForm((prev) => ({ ...prev, ownerName: e.target.value }))}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* NON-RESIDENT APPLICANT FLOW */}
+                {requestForm.applicantType === 'Non-Resident' && (
+                  <>
+                    <div className="cert-form-row cols-2">
+                      <div className="fg">
+                        <label className="fl">First Name <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <input
+                          className="fc"
+                          placeholder="e.g. Maria"
+                          required
+                          value={requestForm.firstName}
+                          onChange={(e) => setRequestForm((prev) => ({ ...prev, firstName: e.target.value }))}
+                        />
+                      </div>
+                      <div className="fg">
+                        <label className="fl">Last Name <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <input
+                          className="fc"
+                          placeholder="e.g. Santos"
+                          required
+                          value={requestForm.lastName}
+                          onChange={(e) => setRequestForm((prev) => ({ ...prev, lastName: e.target.value }))}
+                        />
+                      </div>
+                    </div>
+
+                    <div className="fg">
+                      <label className="fl">External Address (Outside Barangay)</label>
+                      <input
+                        className="fc"
+                        placeholder="e.g. San Miguel, Iriga City"
+                        value={requestForm.addressOutsideBarangay || ''}
+                        onChange={(e) => setRequestForm((prev) => ({ ...prev, addressOutsideBarangay: e.target.value }))}
+                      />
+                    </div>
+                  </>
+                )}
+
+                {/* Certificate Type */}
+                <div className="fg">
+                  <label className="fl">
+                    Certificate Type <span style={{ color: 'var(--red)' }}>*</span>
+                  </label>
+                  <select
+                    className="fc"
+                    required
+                    value={requestForm.certificateType}
+                    onChange={(e) => {
+                      const selectedType = e.target.value;
+                      setRequestForm((prev) => ({
+                        ...prev,
+                        certificateType: selectedType,
+                        purpose: prev.purpose || (selectedType ? `For ${selectedType} requirements` : '')
+                      }));
+                    }}
+                  >
+                    <option value="">-- Select Certificate Type --</option>
+                    {requestForm.applicantType !== 'Business' && (
+                      <>
+                        <option value="Barangay Clearance">Barangay Clearance</option>
+                        <option value="Certificate of Indigency">Certificate of Indigency</option>
+                        <option value="Certificate of Residency">Certificate of Residency</option>
+                      </>
+                    )}
+                    {requestForm.applicantType === 'Business' && (
+                      <>
+                        <option value="Business Clearance">Business Clearance</option>
+                        <option value="Business Permit">Business Permit</option>
+                        <option value="Barangay Building Clearance">Barangay Clearance for Construction/Building</option>
+                      </>
+                    )}
+                  </select>
+                </div>
+
+                {/* Purpose */}
+                <div className="fg">
+                  <label className="fl">
+                    Stated Purpose <span style={{ color: 'var(--red)' }}>*</span>
+                  </label>
+                  <textarea
+                    className="fc"
+                    rows={2}
+                    required
+                    placeholder="Specify purpose (e.g. Employment application, Scholarship, Postal ID)"
+                    value={requestForm.purpose}
+                    onChange={(e) => setRequestForm((prev) => ({ ...prev, purpose: e.target.value }))}
+                  />
+                </div>
+              </div>
+
+              {/* Modal Footer */}
+              <div className="cert-modal-footer">
+                <button
+                  type="button"
+                  className="btn btn-g"
+                  onClick={() => {
+                    setShowModal(false);
+                    setRequestForm(INITIAL_FORM);
+                    setShowResidentPicker(false);
+                    setResidentSearchText('');
+                  }}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="btn btn-primary cert-modal-submit"
+                  disabled={isSubmitting}
+                >
+                  {isSubmitting ? (
+                    <>
+                      <span className="spinner" />
+                      Processing...
+                    </>
+                  ) : (
+                    <>
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="22" y1="2" x2="11" y2="13" />
+                        <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                      </svg>
+                      Submit Request
+                    </>
+                  )}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>,
+        document.body
+      )}
     </div>
-  </div>,
-  document.body
-)}
-  </div>
-);
+  );
 }
 
 export function CertificateIssuancePrint({
@@ -1075,7 +1153,10 @@ export function CertificateIssuancePrint({
   handleIssueCertificate,
   handleReleaseDocument,
   printData,
-  closePrint
+  closePrint,
+  showCreateModal,
+  setShowCreateModal,
+  navigate
 }) {
   return (
     <div className="card">
@@ -1095,36 +1176,22 @@ export function CertificateIssuancePrint({
             <tbody>
               {filteredIssuedCertificates.map((cert) => (
                 <tr key={cert._id}>
-                  <td>
-                    <strong>{cert.firstName} {cert.lastName}</strong>
-                  </td>
+                  <td><strong>{cert.firstName} {cert.lastName}</strong></td>
                   <td>{cert.certificateType}</td>
                   <td className="muted">{cert.purpose}</td>
                   <td>
                     <div className="cert-row-actions">
                       {Number(cert.step) === 4 && (
-                        <button
-                          type="button"
-                          className="btn btn-p btn-sm"
-                          onClick={() => handleIssueCertificate(cert)}
-                        >
+                        <button type="button" className="btn btn-p btn-sm" onClick={() => handleIssueCertificate(cert)}>
                           Issue Document
                         </button>
                       )}
                       {Number(cert.step) === 5 && (
-                        <button
-                          type="button"
-                          className="btn btn-g btn-sm"
-                          onClick={() => handleReleaseDocument(cert)}
-                        >
+                        <button type="button" className="btn btn-g btn-sm" onClick={() => handleReleaseDocument(cert)}>
                           Release Document
                         </button>
                       )}
-                      <button
-                        type="button"
-                        className="btn btn-g btn-sm"
-                        onClick={() => handlePrintCertificate(cert)}
-                      >
+                      <button type="button" className="btn btn-g btn-sm" onClick={() => handlePrintCertificate(cert)}>
                         Print
                       </button>
                     </div>
@@ -1136,37 +1203,91 @@ export function CertificateIssuancePrint({
         </div>
       )}
 
-      {printData &&
-        createPortal(
-          <div className="print-overlay">
-            <CertificatePrintWrapper
-              type={normalizeCertType(printData.type || printData.certificateType)}
-              data={{
-                trackingCode: printData.trackingCode || printData._id || 'CERT-000000',
-                fullName:
-                  printData.residentName ||
-                  (printData.firstName ? `${printData.firstName} ${printData.lastName}` : printData.fullName) ||
-                  'JUAN DELA CRUZ',
-                address: printData.address || 'Barangay Bustrac, Nabua, Camarines Sur',
-                purpose: printData.purpose || 'Local Employment',
-                issueDate:
-                  printData.issueDate ||
-                  new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' }),
-                orNumber: printData.orNumber || 'N/A',
-                amountPaid: printData.amountPaid || 0,
-                ctcNumber: printData.ctcNumber || 'N/A',
-                purok: printData.purok || 'Zone 2',
-                civilStatus: printData.civilStatus || 'Single',
-                age: printData.age || 47,
-                patientName: printData.patientName || 'VINCENT ARROYO OJANO',
-                relationToPatient: printData.relationToPatient || 'mother of patient',
-                punongBarangay: printData.punongBarangay || 'HON. ANNABELLE E. RULL'
-              }}
-              onClose={closePrint}
-            />
-          </div>,
-          document.body
-        )}
+      {printData && createPortal(
+        <div className="print-overlay">
+          <CertificatePrintWrapper
+            type={normalizeCertType(printData.type || printData.certificateType)}
+            data={{
+              trackingCode: printData.trackingCode || printData._id || 'CERT-000000',
+              fullName: printData.residentName || (printData.firstName ? `${printData.firstName} ${printData.lastName}` : printData.fullName) || 'JUAN DELA CRUZ',
+              address: printData.address || printData.purok || 'Barangay Bustrac, Nabua, Camarines Sur',
+              purpose: printData.purpose || 'Local Employment',
+              issueDate: printData.issueDate || new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' }),
+              ctcNumber: printData.ctc?.number || printData.ctcNumber || 'N/A',
+              amountPaid: printData.ctc?.amountPaid || printData.amountPaid || 0,
+              civilStatus: printData.civilStatus || 'Single',
+              age: printData.age || 'N/A',
+              punongBarangay: printData.punongBarangay || 'HON. ANNABELLE E. RULL',
+            }}
+            onClose={closePrint}
+          />
+        </div>,
+        document.body
+      )}
+      {/* ═══ ROUTING MODAL: Choose Clearance Type ═══ */}   
+      {/* ═══ ROUTING MODAL: Choose Clearance Type ═══ */}
+{showCreateModal && createPortal(
+  <div 
+    className="cert-modal-overlay" 
+    onClick={() => setShowCreateModal(false)}
+  >
+    <div 
+      className="cert-modal" 
+      style={{ maxWidth: '500px', textAlign: 'center' }} 
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{ padding: '32px' }}>
+        <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'rgba(59, 130, 246, 0.1)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 16px' }}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <path d="M12 18v-6" />
+            <path d="M9 15h6" />
+          </svg>
+        </div>
+        <h3 style={{ margin: '0 0 8px', fontSize: '20px', fontWeight: '800', color: 'var(--text)' }}>
+          Create New Clearance
+        </h3>
+        <p style={{ margin: '0 0 24px', color: 'var(--muted)', fontSize: '14px', lineHeight: 1.5 }}>
+          Select the type of clearance you want to process. You will be redirected to the dedicated form.
+        </p>
+        
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          <button 
+            className="btn btn-p" 
+            style={{ padding: '16px', fontSize: '15px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }} 
+            onClick={() => {
+              setShowCreateModal(false);
+              navigate('/admin?page=brgy_clearance'); // ✅ Seamless SPA Navigation
+            }}
+          >
+            📄 Barangay Clearance (Individual)
+          </button>
+          
+          <button 
+            className="btn btn-g" 
+            style={{ padding: '16px', fontSize: '15px', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '10px' }} 
+            onClick={() => {
+              setShowCreateModal(false);
+              navigate('/admin?page=business_clearance'); // ✅ Seamless SPA Navigation
+            }}
+          >
+            🏢 Business Clearance
+          </button>
+        </div>
+        
+        <button 
+          className="btn btn-g btn-sm" 
+          style={{ marginTop: '24px' }} 
+          onClick={() => setShowCreateModal(false)}
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  </div>,
+  document.body
+)}
     </div>
   );
 }

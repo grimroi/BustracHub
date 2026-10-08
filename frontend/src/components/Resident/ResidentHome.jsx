@@ -4,14 +4,40 @@ export default function ResidentHome({
   isOffline,
   greetingText,
   loggedInUser,
-  myRequests,
-  pendingRequestCount,
-  announcements,
-  myFeedbacks,
-  myBlotters,
-  myAssistance,
+  myRequests = [],
+  pendingRequestCount = 0,
+  announcements = [],
+  myFeedbacks = [],
+  myBlotters = [],
+  myAssistance = [],
   goToTab,
 }) {
+  // Safe lengths para sa Stats Grid
+  const stats = [
+    { label: 'Certificates', value: myRequests.length, target: 's-certificates' },
+    { label: 'Pending Requests', value: pendingRequestCount, target: 's-certificates' },
+    { label: 'Announcements', value: announcements.length, target: 's-announcements' },
+    { label: 'My Feedback', value: myFeedbacks.length, target: 's-feedback' },
+    { label: 'Blotter Reports', value: myBlotters.length, target: 's-blotter' },
+    { label: 'Assistance', value: myAssistance.length, target: 's-assistance' },
+  ];
+
+  const formatAnnDate = (ann) => {
+    const raw = ann.timestamp || ann.createdAt;
+    if (!raw) return 'recently';
+    const d = new Date(raw);
+    if (isNaN(d)) return 'recently';
+    return d.toLocaleDateString('en-PH', { month: 'short', day: 'numeric' });
+  };
+
+  // Helper: check if announcement is less than 24 hours old
+  const isNewAnnouncement = (ann) => {
+    const raw = ann.timestamp || ann.createdAt;
+    if (!raw) return false;
+    const hoursDiff = (new Date() - new Date(raw)) / (1000 * 60 * 60);
+    return hoursDiff < 24; // True kung less than 24 hours ang age
+  };
+
   return (
     <div
       className="screen active"
@@ -47,17 +73,18 @@ export default function ResidentHome({
 
       {/* Stats Grid */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: 10, marginBottom: 16 }}>
-        {[
-          { label: 'Certificates', value: myRequests.length, target: 's-certificates' },
-          { label: 'Pending Requests', value: pendingRequestCount, target: 's-certificates' },
-          { label: 'Announcements', value: announcements.length, target: 's-announcements' },
-          { label: 'My Feedback', value: myFeedbacks.length, target: 's-feedback' },
-          { label: 'Blotter Reports', value: myBlotters.length, target: 's-blotter' },
-          { label: 'Assistance', value: myAssistance.length, target: 's-assistance' },
-        ].map((stat) => (
+        {stats.map((stat) => (
           <div
             key={stat.label}
-            onClick={() => goToTab(stat.target)}
+            role="button"
+            tabIndex={0}
+            onClick={() => goToTab?.(stat.target)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                goToTab?.(stat.target);
+              }
+            }}
             style={{
               cursor: 'pointer', padding: '14px 16px', borderRadius: 14,
               background: 'var(--surface)', border: '1px solid var(--border)',
@@ -100,15 +127,30 @@ export default function ResidentHome({
               <div className="list-body" style={{ flex: 1, minWidth: 0 }}>
                 <div className="list-title" style={{
                   fontSize: 13, fontWeight: 700, color: 'var(--text)',
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis',
+                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center',
                 }}>
                   {ann.title}
+                  {/* NEW BADGE */}
+                  {isNewAnnouncement(ann) && (
+                    <span style={{ 
+                      fontSize: '9px', 
+                      fontWeight: 800, 
+                      background: '#ef4444', 
+                      color: '#fff', 
+                      padding: '2px 6px', 
+                      borderRadius: '4px', 
+                      marginLeft: '8px',
+                      letterSpacing: '0.5px'
+                    }}>
+                      NEW
+                    </span>
+                  )}
                 </div>
                 <div className="list-sub" style={{ fontSize: 11, color: 'var(--muted)' }}>
-                  {ann.category || 'General'} · Posted {ann.author ? `by ${ann.author}` : 'recently'}
+                  {ann.category || 'General'} · {formatAnnDate(ann)}
                 </div>
               </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => goToTab('s-announcements')} style={{ fontSize: 11 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => goToTab?.('s-announcements')} style={{ fontSize: 11 }}>
                 View →
               </button>
             </div>

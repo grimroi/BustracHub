@@ -1,4 +1,5 @@
 import React from 'react';
+import { QRCodeSVG } from 'qrcode.react'; 
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
 
@@ -57,9 +58,10 @@ export interface IndigencyData {
 
 interface IndigencyProps {
   data: IndigencyData;
+  publicDomain?: string;
 }
 
-export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data }) => {
+export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data, publicDomain }) => {
   if (!data) return null;
 
   // 1. Safe Extraction ng Nested Issuance Metadata
@@ -231,6 +233,22 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data }) => {
             <strong>{amountPaid.startsWith('Php') || amountPaid.startsWith('₱') ? amountPaid : `Php ${amountPaid}`}</strong>
           </div>
         </div>
+           {/* QR Code Verification */}
+   {data._id && (
+     <div style={{ position: 'absolute', bottom: '40px', right: '40px', textAlign: 'center', zIndex: 20 }}>
+       <QRCodeSVG 
+         value={`https://${publicDomain || 'localhost:5173'}/verify?id=${encodeURIComponent(data._id)}`} 
+         size={90} 
+         level="H" 
+         bgColor="#ffffff" 
+         fgColor="#000000" 
+         includeMargin={true}
+       />
+       <div style={{ fontSize: '9px', marginTop: '6px', fontWeight: 'bold', color: '#000' }}>
+         Scan to Verify Authenticity
+       </div>
+     </div>
+   )}
       </div>
     </div>
   );

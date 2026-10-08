@@ -84,21 +84,20 @@ body[data-theme="dark"] {
 /* ==========================================
    LIGHT MODE
    ========================================== */
-html[data-theme="light"],
-body[data-theme="light"] {
-  --bg: #ffffff;
-  --surface: #f8fafc;
-  --surface2: #ffffff;
+html[data-theme="light"], body[data-theme="light"] {
+  --bg: #f1f5f9;          /* Mas malambot na background */
+  --surface: #ffffff;     /* Pure white para sa cards */
+  --surface2: #f8fafc;    /* Light gray para sa inputs/headers */
   --card-bg: #ffffff;
   --input-bg: #ffffff;
   --border: #e2e8f0;
   --border2: #cbd5e1;
-  --text: #0f172a;
+  --text: #0f172a;        /* Dark slate para sa mata na text */
   --muted: #64748b;
   --hint: #94a3b8;
   --primary: #2563eb;
   --primary-dark: #1d4ed8;
-  --primary-light: rgba(37, 99, 235, 0.1);
+  --primary-light: rgba(37, 99, 235, 0.08);
   --green: #059669;
   --green-bg: rgba(5, 150, 105, 0.1);
   --green-border: rgba(5, 150, 105, 0.3);
@@ -108,13 +107,14 @@ body[data-theme="light"] {
   --red: #dc2626;
   --red-bg: rgba(220, 38, 38, 0.1);
   --red-border: rgba(220, 38, 38, 0.3);
-  --purple: #7c3aed;
-  --purple-bg: rgba(124, 58, 237, 0.1);
-  --purple-border: rgba(124, 58, 237, 0.3);
-  --teal: #0f766e;
-  --teal-bg: rgba(13, 148, 136, 0.1);
-  --teal-border: rgba(13, 148, 136, 0.3);
   color-scheme: light;
+}
+
+/* Dagdagan ng subtle shadow ang mga cards sa light mode para may depth */
+html[data-theme="light"] .card,
+html[data-theme="light"] .fp,
+html[data-theme="light"] .tw {
+  box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.05), 0 1px 2px 0 rgba(0, 0, 0, 0.03) !important;
 }
 
 /* ==========================================
@@ -133,7 +133,82 @@ body,
   padding: 0;
   background-color: var(--surface) !important;
   color: var(--text) !important;
-  transition: background-color 0.25s ease, color 0.25s ease;
+}
+
+/* ==========================================
+   THEME COLOR TRANSITIONS
+   Smooth, consistent color interpolation when
+   Dark/Light mode switches. Only theme-color
+   properties transition; no layout properties.
+   ========================================== */
+html,
+body,
+#root,
+#app,
+.content,
+.resident-root-container,
+.phone-frame,
+.mobile-container {
+  transition:
+    background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dashboard-shell-container,
+.app,
+.app-footer,
+.sc,
+.screen,
+.card,
+.fp,
+.tw,
+.note,
+.badge,
+.ann-toolbar,
+.ann-card,
+.panel-pending,
+.alert-amber,
+.card-warning,
+.modal-card,
+.modal-header,
+.modal-body,
+.modal-footer,
+.cert-modal,
+.cert-section-card,
+.cert-section-header,
+.cert-section-title,
+.cert-panel,
+.cert-stat-card,
+.cert-modal-header,
+.cert-modal-body,
+.cert-modal-footer,
+.cert-table-wrapper,
+.resident-picker,
+.fp-t,
+.fl,
+.empty-state,
+input,
+select,
+textarea,
+table,
+th,
+td {
+  transition:
+    background-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 180ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 180ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html,
+  html *,
+  html *::before,
+  html *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ==========================================

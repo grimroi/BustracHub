@@ -1,7 +1,5 @@
 // server/services/emailService.js
 const nodemailer = require('nodemailer');
-
-// 1. Lumikha ng Transporter gamit ang explicit Gmail SMTP settings
 const transporter = nodemailer.createTransport({
   host: 'smtp.gmail.com',
   port: 465,

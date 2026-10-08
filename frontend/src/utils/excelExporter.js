@@ -2,7 +2,7 @@ import * as XLSX from 'xlsx';
 
 export const exportToExcel = (data, fileName = 'Report.xlsx', sheetName = 'ReportData') => {
   if (!data || data.length === 0) {
-    alert('No data available to export for the selected criteria.');
+   showToast('error', 'No data available to export for the selected criteria.');
     return;
   }
 

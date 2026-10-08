@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { localDb as db } from '../services/db';
 import { exportToExcel } from '../utils/excelExporter';
 
-
 const ActionIcon = ({ type }) => {
   const paths = {
     create: <path d="M12 5v14M5 12h14" />,
@@ -31,13 +30,10 @@ export default function AuditLogView() {
   const [auditActionFilter, setAuditActionFilter] = useState('ALL');
   const [isExporting, setIsExporting] = useState(false);
 
-  // 1. CREATE INDEX ON MOUNT (Performance Boost)
   useEffect(() => {
     const setupIndex = async () => {
       try {
-        await db.createIndex({
-          index: { fields: ['type', 'timestamp'] }
-        });
+        await db.createIndex({ index: { fields: ['type', 'timestamp'] } });
       } catch (err) {
         console.warn('Index creation skipped or failed:', err.message);
       }
@@ -45,79 +41,50 @@ export default function AuditLogView() {
     setupIndex();
   }, []);
 
-  // 2. OPTIMIZED FETCH (Limit to latest 100 to prevent memory crash)
   const fetchAuditLogs = async () => {
-  try {
-    // 1. Siguraduhing may index para mabilis ang sorting at querying
-    await db.createIndex({
-      index: { fields: ['type', 'timestamp'] }
-    }).catch(() => {});
-
-    // 2. GAMITIN ANG db.find (Mango Query) 
-    // Ito ang magic: Hihingi lang ng 100 records sa database engine, 
-    // hindi niya dadownloadin ang lahat bago i-slice.
-    const res = await db.find({
-      selector: {
-        type: { $in: ['audit_log'] } // I-adjust kung 'audit_log' o 'audit_trail' ang exact type mo
-      },
-      sort: [{ timestamp: 'desc' }],
-      limit: 100 // ✅ DB-Level Limiting (Hindi na aabot sa 101)
-    });
-
-    setAuditLogs(res.docs || []);
-  } catch (err) {
-    console.warn('db.find failed, falling back to allDocs + slice:', err);
-    
-    // 3. Safe Fallback kung sakaling hindi active ang pouchdb-find plugin
-    const fallbackRes = await db.allDocs({ include_docs: true });
-    const logs = fallbackRes.rows
-      .map((row) => row.doc)
-      .filter((doc) => doc && (doc.type === 'audit_log' || doc.docType === 'audit_log'))
-      .sort((a, b) => new Date(b.timestamp || b.createdAt) - new Date(a.timestamp || a.createdAt))
-      .slice(0, 100);
-    setAuditLogs(logs);
-  } finally {
-    setLoading(false);
-  }
-};
+    try {
+      const res = await db.allDocs({ include_docs: true });
+      const logs = res.rows
+        .map((row) => row.doc)
+        .filter((doc) => doc && (doc.type === 'audit_log' || doc.docType === 'audit_log'))
+        .sort((a, b) => {
+          const dateA = new Date(a.timestamp || a.createdAt || 0).getTime();
+          const dateB = new Date(b.timestamp || b.createdAt || 0).getTime();
+          return dateB - dateA;
+        });
+      setAuditLogs(logs);
+    } catch (err) {
+      console.error('Error fetching audit logs:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
     fetchAuditLogs();
-    
-    // 3. SMART LISTENER: Prepend new logs instead of re-fetching everything
+
     const changes = db.changes({ live: true, since: 'now', include_docs: true });
     changes.on('change', (changeInfo) => {
       if (changeInfo.doc && (changeInfo.doc.type === 'audit_log' || changeInfo.doc.docType === 'audit_log')) {
         setAuditLogs((prev) => {
-          // Prevent duplicates
           if (prev.some(log => log._id === changeInfo.doc._id)) return prev;
-          // Prepend new log and keep max 100 in memory
-          return [changeInfo.doc, ...prev].slice(0, 100);
+          return [changeInfo.doc, ...prev];
         });
       }
     });
-    
     return () => changes.cancel();
   }, []);
-  const now = new Date();
+
   const filteredAuditLogs = auditLogs.filter((log) => {
     const actionMatch = auditActionFilter === 'ALL' || (log.action && log.action.includes(auditActionFilter));
     const moduleMatch = auditModuleFilter === 'ALL' || (log.module && log.module.toLowerCase() === auditModuleFilter.toLowerCase());
     const searchText = auditSearch.toLowerCase();
-    
     const userString = (log.user || log.actor?.username || '').toLowerCase();
     const detailsString = (log.details || '').toLowerCase();
     const recordIdString = (log.recordId || '').toLowerCase();
     const actionString = (log.action || '').toLowerCase();
     const moduleString = (log.module || '').toLowerCase();
-
-    const searchMatch = !auditSearch || 
-      userString.includes(searchText) || 
-      detailsString.includes(searchText) || 
-      recordIdString.includes(searchText) || 
-      actionString.includes(searchText) || 
-      moduleString.includes(searchText);
-
+    const searchMatch = !auditSearch || userString.includes(searchText) || detailsString.includes(searchText) || recordIdString.includes(searchText) || actionString.includes(searchText) || moduleString.includes(searchText);
     return actionMatch && moduleMatch && searchMatch;
   });
 
@@ -162,52 +129,49 @@ export default function AuditLogView() {
       </div>
 
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: '0 4px' }}>
-      <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
-        Showing <strong>{filteredAuditLogs.length}</strong> of <strong>{auditLogs.length}</strong> recent activity trails {filteredAuditLogs.length !== auditLogs.length && ' (filtered)'}
-      </span>
-      
-      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-        {(auditSearch || auditModuleFilter !== 'ALL' || auditActionFilter !== 'ALL') && (
-          <button className="btn btn-sm btn-g" onClick={() => { setAuditSearch(''); setAuditModuleFilter('ALL'); setAuditActionFilter('ALL'); }}>
-            Reset
-          </button>
-        )}
-        
-        <button 
-          className="btn btn-sm btn-p" 
-          disabled={isExporting}
-          onClick={async () => {
-            setIsExporting(true);
-            try {
-              const res = await db.allDocs({ include_docs: true });
-              const allLogs = res.rows
-                .map((row) => row.doc)
-                .filter((doc) => doc && (doc.type === 'audit_log' || doc.docType === 'audit_log'))
-                .sort((a, b) => new Date(b.timestamp || b.createdAt) - new Date(a.timestamp || a.createdAt));
-              
-              const exportData = allLogs.map(log => ({
-                'Timestamp': log.timestamp ? new Date(log.timestamp).toLocaleString('en-PH') : 'N/A',
-                'Action': log.action || 'N/A',
-                'Module': log.module || 'N/A',
-                'Record ID': log.recordId || 'N/A',
-                'User': log.user || (log.actor ? log.actor.username : 'System'),
-                'Details': log.details || 'N/A'
-              }));
+        <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+          Showing <strong>{filteredAuditLogs.length}</strong> of <strong>{auditLogs.length}</strong> recent activity trails {filteredAuditLogs.length !== auditLogs.length && ' (filtered)'}
+        </span>
+        <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+          {(auditSearch || auditModuleFilter !== 'ALL' || auditActionFilter !== 'ALL') && (
+            <button className="btn btn-sm btn-g" onClick={() => { setAuditSearch(''); setAuditModuleFilter('ALL'); setAuditActionFilter('ALL'); }}>
+              Reset
+            </button>
+          )}
+          <button
+            className="btn btn-sm btn-p"
+            disabled={isExporting}
+            onClick={async () => {
+              setIsExporting(true);
+              try {
+                const res = await db.allDocs({ include_docs: true });
+                const allLogs = res.rows
+                  .map((row) => row.doc)
+                  .filter((doc) => doc && (doc.type === 'audit_log' || doc.docType === 'audit_log'))
+                  .sort((a, b) => new Date(b.timestamp || b.createdAt || 0).getTime() - new Date(a.timestamp || a.createdAt || 0).getTime());
 
-              exportToExcel(exportData, `BustracHub_AuditLog_${new Date().toISOString().split('T')[0]}.xlsx`, 'AuditLog');
-            } catch (err) {
-              console.error('Export failed:', err);
-              alert('Failed to export audit logs.');
-            } finally {
-              setIsExporting(false); 
-            }
-          }} 
-          style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: isExporting ? 0.7 : 1 }}
-        > 
-          {isExporting ? '⏳ Preparing Excel...' : '📊 Export All Logs'} 
-        </button>
+                const exportData = allLogs.map(log => ({
+                  'Timestamp': log.timestamp ? new Date(log.timestamp).toLocaleString('en-PH') : 'N/A',
+                  'Action': log.action || 'N/A',
+                  'Module': log.module || 'N/A',
+                  'Record ID': log.recordId || 'N/A',
+                  'User': log.user || (log.actor ? log.actor.username : 'System'),
+                  'Details': log.details || 'N/A'
+                }));
+                exportToExcel(exportData, `BustracHub_AuditLog_${new Date().toISOString().split('T')[0]}.xlsx`, 'AuditLog');
+              } catch (err) {
+                console.error('Export failed:', err);
+              showToast('error', 'Failed to export audit logs.');
+              } finally {
+                setIsExporting(false);
+              }
+            }}
+            style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: isExporting ? 0.7 : 1 }}
+          >
+            {isExporting ? '⏳ Preparing Excel...' : '📊 Export All Logs'}
+          </button>
+        </div>
       </div>
-    </div>
 
       <div className="tw" style={{ maxHeight: '60vh' }}>
         {loading ? (
@@ -225,20 +189,12 @@ export default function AuditLogView() {
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div className="al-a">
-                    {log.action}
-                    {log.module ? ` — ${log.module}` : ''}
+                    {log.action} {log.module ? ` — ${log.module}` : ''}
                     {log.recordId && (
                       <> {' · '} <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', opacity: 0.9 }}>{log.recordId}</span> </>
                     )}
                   </div>
-                  <div className="al-d" style={{ 
-                    wordBreak: 'break-word', 
-                    whiteSpace: 'normal', 
-                    lineHeight: '1.4', 
-                    marginTop: '4px',
-                    fontSize: '12px',
-                    color: 'var(--muted)'
-                  }}>
+                  <div className="al-d" style={{ wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: '1.4', marginTop: '4px', fontSize: '12px', color: 'var(--muted)' }}>
                     User: {userDisplay} {log.details ? ` · ${log.details}` : ''}
                   </div>
                 </div>

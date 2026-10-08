@@ -26,6 +26,15 @@ import { createAuditLog } from '../utils/auditLog';
 import { exportToExcel } from '../utils/excelExporter';
 import "../styles/lightmode-fix.css";
 import { setupPouchDBSync, onSyncStatusChange } from '../services/db';
+import '../styles/Announcements.css';
+import '../styles/ConflictManagement.css';
+import  ResidentForm from '../components/Resident/ResidentForm';
+import Swal from 'sweetalert2';
+import EditUserModal, { hashPassword } from '../components/EditUserModal';
+import AddUserModal from '../components/AddUserModal';
+import LinkResidentModal from '../components/LinkResidentModal';
+import { generateRbiId } from '../utils/generateRbiId';
+import CertificatePrintWrapper from "../components/certificates/CertificatePrintWrapper";
 import {
   generateUUID,
   addDays,
@@ -34,6 +43,7 @@ import {
   toPHDateTimeLocal,
 } from '../utils/helpers';
 import "../styles/Certificates.css";
+import { getApplicantName, normalizeCertType } from '../utils/certHelpers';
 
 const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL;
 
@@ -44,39 +54,41 @@ const SESSION_TIMEOUT_MIN = Number(import.meta.env.VITE_SESSION_TIMEOUT_MIN) || 
 // ─────────────────────────────────────────────
 
 const SCREEN_META = {
-  dashboard:        ['Dashboard',                  ''],            // subtitle rendered per role in JSX
-  residents:        ['Manage Residents',           'Resident Registry Module'],
-  'add-resident':   ['Add New Resident',          'Resident Registry'],
-  households:       ['Manage Households',          'Resident Registry'],
-  'cert-req':       ['Request & Approval',         'Certificate Issuance Module'],
-  'cert-approve':   ['Certificate Approval',       'Certificate Issuance Module'],
-  'cert-print':     ['Issuance & Print',           'Certificate Issuance Module'],
-  business_clearance: ['Business Clearance',       'Certificate Issuance Module'],
-  brgy_clearance:   ['Barangay Clearance (Individual)', 'Certificate Issuance Module'],
-  programs:         ['Distribution Programs',      'Aid Distribution Module'],
-  'aid-encode':     ['Encode Distribution',        'Aid Distribution Module'],
-  'aid-logs':       ['Distribution Logs',          'Aid Distribution Module'],
-  'add-beneficiary':['Add Beneficiaries',          'Aid Distribution Module'],
-  'blotter-new':    ['File Blotter Entry',         'Blotter Module'],
-  'blotter-manage': ['Manage Blotter Records',     'Blotter Module'],
-  'blotter-detail': ['Complaint Details',          'Blotter Module — Case Management'],
-  announcements:    ['Announcements',              'Community Module'],
-  feedback:         ['Feedback & Complaints',      'Community Module'],
-  conflicts:        ['Conflict Resolution',        'Admin Only — CouchDB Sync Conflicts'],
-  audit:            ['Audit Log',                  'Admin Only — Immutable Transaction History'],
-  users:            ['Manage Users',               'Admin Only — User Accounts & Roles'],
-  reports:          ['Generate Reports',           'Administration'],
-  'add-household':   ['Register Household',   'Resident Registry'],
-  'edit-household':  ['Edit Household',       'Resident Registry'],
-  'view-household':  ['Household Profile',    'Resident Registry'],
-  'view-resident':   ['Resident Profile',     'Resident Registry'],
-  'edit-resident':   ['Edit Resident',        'Resident Registry'],
-  'aid-advisories': ['Relief & Aid Advisories', 'Community Module'],
-    'activities-manage': ['Manage Activities', 'Community Module'],
+  dashboard:            ['Dashboard',                  ''], 
+  residents:            ['Manage Residents',           'Resident Registry Module'],
+  'add-resident':       ['Add New Resident',          'Resident Registry'],
+  households:           ['Manage Households',          'Resident Registry'],
+  'cert-req':           ['Request & Approval',         'Certificate Issuance Module'],
+   'cert-new':   ['New Standard Certificate', 'Certificate Issuance Module'],
+  'cert-approve':       ['Certificate Approval',       'Certificate Issuance Module'],
+  'cert-print':         ['Issuance & Print',           'Certificate Issuance Module'],
+  business_clearance:   ['Business Clearance',       'Certificate Issuance Module'],
+  brgy_clearance:       ['Barangay Clearance (Individual)', 'Certificate Issuance Module'],
+  programs:             ['Distribution Programs',      'Aid Distribution Module'],
+  'aid-encode':         ['Encode Distribution',        'Aid Distribution Module'],
+  'aid-logs':           ['Distribution Logs',          'Aid Distribution Module'],
+  'add-beneficiary':    ['Add Beneficiaries',          'Aid Distribution Module'],
+  'blotter-new':        ['File Blotter Entry',         'Blotter Module'],
+  'blotter-manage':     ['Manage Blotter Records',     'Blotter Module'],
+  'blotter-detail':     ['Summons & Hearings',          'Blotter Module — Case Management'],
+  announcements:        ['Announcements',              'Community Module'],
+  feedback:             ['Feedback & Complaints',      'Community Module'],
+  conflicts:            ['Conflict Resolution',        'Admin Only — CouchDB Sync Conflicts'],
+  audit:                ['Audit Log',                  'Admin Only — Immutable Transaction History'],
+  users:                ['Manage Users',               'Admin Only — User Accounts & Roles'],
+  reports:              ['Generate Reports',           'Administration'],
+  'add-household':      ['Register Household',   'Resident Registry'],
+  'edit-household':     ['Edit Household',       'Resident Registry'],
+  'view-household':     ['Household Profile',    'Resident Registry'],
+  'view-resident':      ['Resident Profile',     'Resident Registry'],
+  'edit-resident':      ['Edit Resident',        'Resident Registry'],
+  'activities-manage':  ['Manage Activities', 'Community Module'],
 };
 
 export const EMPTY_RESIDENT = {
   rbiNo: '',
+  philSysNo: '', 
+  status: 'Active', 
   householdNo: '',
   fileDateUpdated: new Date().toISOString().split('T')[0],
 
@@ -150,6 +162,46 @@ const INITIAL_COMPLAINT = {
   sendEmail: true,
 };
 
+const INITIAL_BUSINESS_STATE = {
+  bcIdNo: '',
+  lastName: '',
+  firstName: '',
+  middleName: '',
+  contactNo: '',
+  email: '',
+  applicantAddress: '',
+  applicantBgyCityProv: 'Bustrac, Nabua, Camarines Sur',
+  civilStatus: '',
+  occupation: '',
+  nationality: 'Filipino',
+  isFemale: false,
+  remarks: '',
+  photoUrl: null,
+  regDate: new Date().toISOString().split('T')[0],
+  businessName: '',
+  natureOfBusiness: '',
+  businessCategory: '',
+  typeOfBusiness: '',
+  storeAreaSqm: '',
+  businessAddress: '',
+  businessBgyCityProv: 'BUSTRAC, NABUA, CAMARINES SUR',
+  businessContactNo: '',
+  businessEmail: '',
+  cctvEnabled: false,
+  sanitaryWasteDisposal: false,
+  hasFireExtinguisher: false,
+  hasFireExit: false,
+  sanitaryCompliant: false,
+  employeeCount: 0,
+  employeeMasterlistName: '',
+  orNo: '',
+  orDateIssued: new Date().toISOString().split('T')[0],
+  clearanceFee: '',
+  garbageFee: '',
+  _id: null,
+  _rev: null
+};
+
 // ─────────────────────────────────────────────
 // INLINE STYLE CONSTANTS
 // ─────────────────────────────────────────────
@@ -162,6 +214,169 @@ const mono10    = { fontFamily: 'var(--mono)', fontSize: '10px' };
 const formCardStyle  = { backgroundColor: 'var(--surface)',  color: 'var(--text)', border: '1px solid var(--border)' };
 const formFieldStyle = { backgroundColor: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)' };
 const formLabelStyle = { color: 'var(--text)' };
+
+const getAge = (bdate) => {
+  if (!bdate) return '—';
+  const diff = Date.now() - new Date(bdate).getTime();
+  return Math.floor(diff / (1000 * 60 * 60 * 24 * 365.25));
+};
+
+const formatCertType = (type) => {
+  const map = {
+    'barangay_clearance': 'Barangay Clearance',
+    'business_clearance': 'Business Clearance',
+    'indigency': 'Certificate of Indigency',
+    'residency': 'Certificate of Residency'
+  };
+  return map[type] || 'Certificate';
+};
+
+// ─────────────────────────────────────────────
+// CONFLICT MANAGEMENT HELPERS
+// ─────────────────────────────────────────────
+// Fields that never make sense to show as "changed" in a conflict diff.
+const CONFLICT_IGNORED_FIELDS = new Set([
+  '_id', '_rev', '_conflicts', '_revisions', '_attachments', '_deleted',
+  '_conflictResolved', '_local_seq', 'history', 'synced', 'isSynced',
+  'updatedAt', 'createdAt', 'passwordHash', 'password', 'userPassword', 'tempPassword',
+]);
+
+const CONFLICT_FIELD_LABELS = {
+  firstName: 'First Name',
+  lastName: 'Last Name',
+  middleName: 'Middle Name',
+  name: 'Name',
+  fullName: 'Full Name',
+  purok: 'Purok',
+  purokZoneAddress: 'Purok',
+  addressZoneAddress: 'Address',
+  address: 'Address',
+  contact: 'Contact Number',
+  contactNumber: 'Contact Number',
+  contactNumber2: 'Alternate Contact',
+  status: 'Status',
+  civilStatus: 'Civil Status',
+  civilStatusOther: 'Civil Status (Other)',
+  sex: 'Sex',
+  gender: 'Gender',
+  birthdate: 'Birth Date',
+  birthDate: 'Birth Date',
+  age: 'Age',
+  citizenship: 'Citizenship',
+  religion: 'Religion',
+  occupation: 'Occupation',
+  residentType: 'Resident Type',
+  isArchived: 'Archived',
+  hasAccount: 'Has Account',
+  email: 'Email',
+  certType: 'Certificate Type',
+  certPurpose: 'Purpose',
+  residentName: 'Resident Name',
+};
+
+// Record type → human module label (used for the summary chip and filter).
+const CONFLICT_MODULE_LABELS = {
+  resident: 'Residents',
+  profile: 'Residents',
+  household: 'Households',
+  household_request: 'Households',
+  certificate_request: 'Certificates',
+  certificate: 'Certificates',
+  blotter: 'Blotter',
+  blotter_record: 'Blotter',
+  announcement: 'Announcements',
+  program: 'Programs',
+  equipment: 'Equipment',
+  medicine: 'Medicine',
+  inventory: 'Inventory',
+  user: 'Users',
+  account_request: 'Account Requests',
+  resident_account_request: 'Account Requests',
+  feedback: 'Feedback',
+  document: 'Documents',
+  document_request: 'Documents',
+};
+
+const prettifyConflictField = (field) => {
+  const key = String(field || '');
+  if (!key) return 'Field';
+  return key
+    .replace(/^_/, '')
+    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+};
+
+const conflictModuleLabel = (type) => {
+  const key = String(type || '').toLowerCase();
+  if (CONFLICT_MODULE_LABELS[key]) return CONFLICT_MODULE_LABELS[key];
+  if (!key) return 'Records';
+  return `${prettifyConflictField(key)}s`;
+};
+
+const conflictFieldLabel = (field) => {
+  const key = String(field || '');
+  if (!key || CONFLICT_IGNORED_FIELDS.has(key)) return null;
+  return CONFLICT_FIELD_LABELS[key] || prettifyConflictField(key);
+};
+
+const formatConflictValue = (value) => {
+  if (value === undefined || value === null) return '—';
+  if (value === '') return '(empty)';
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (Array.isArray(value)) {
+    return value.length === 0 ? '(none)' : value.map((v) => formatConflictValue(v)).join(', ');
+  }
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value); } catch { return '[object]'; }
+  }
+  return String(value);
+};
+
+const normalizeConflictValue = (value) => {
+  if (value === undefined || value === null) return '';
+  if (typeof value === 'object') {
+    try { return JSON.stringify(value); } catch { return String(value); }
+  }
+  return String(value);
+};
+
+// Compare two revisions and return only the fields that actually differ.
+const computeConflictDiff = (docA, docB) => {
+  const a = docA || {};
+  const b = docB || {};
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
+  const diffs = [];
+  for (const key of keys) {
+    const label = conflictFieldLabel(key);
+    if (!label) continue;
+    if (normalizeConflictValue(a[key]) === normalizeConflictValue(b[key])) continue;
+    diffs.push({
+      field: key,
+      label,
+      valueA: formatConflictValue(a[key]),
+      valueB: formatConflictValue(b[key]),
+    });
+  }
+  return diffs;
+};
+
+const conflictDocTime = (doc) => {
+  const raw = doc && (doc.updatedAt || doc.createdAt);
+  if (!raw) return 0;
+  const t = new Date(raw).getTime();
+  return Number.isNaN(t) ? 0 : t;
+};
+
+const formatConflictTime = (value) => {
+  if (!value) return 'Unknown';
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toLocaleString();
+};
+
 // ─────────────────────────────────────────────
 // DYNAMIC NAME DICTIONARY
 // ─────────────────────────────────────────────
@@ -346,9 +561,11 @@ export const mapDocToBlotter = (doc) => {
     details: doc.details || doc.narrative || doc.description || '',
     isVawc: Boolean(doc.isVawc || doc.type === 'VAWC' || caseType.includes('VAWC')),
      sla: doc.sla || null,
+     attachments: doc.attachments || [], 
     rawDoc: doc
   };
 };
+
 // ── Helper: Kunin ang next Business ID at i-increment ang sequence (TOTOONG SAVE) ──
 const getNextBusinessSequence = async () => {
   try {
@@ -373,16 +590,53 @@ const getNextBusinessSequence = async () => {
   }
 };
 
+// ── HELPER: Convert Base64 Data URL to Blob for PouchDB Native Attachments ──
+const dataURLtoBlob = (dataURL) => {
+  try {
+    const byteString = atob(dataURL.split(',')[1]);
+    const mimeString = dataURL.split(',')[0].split(':')[1].split(';')[0];
+    const ab = new ArrayBuffer(byteString.length);
+    const ia = new Uint8Array(ab);
+    for (let i = 0; i < byteString.length; i++) {
+      ia[i] = byteString.charCodeAt(i);
+    }
+    return new Blob([ab], { type: mimeString });
+  } catch (err) {
+    console.error('Failed to convert data URL to Blob:', err);
+    return null;
+  }
+};
+
+const Toast = Swal.mixin({
+  toast: true,
+  position: 'top-end',
+  showConfirmButton: false,
+  timer: 3000,
+  timerProgressBar: true,
+  didOpen: (toast) => {
+    toast.onmouseenter = Swal.stopTimer;
+    toast.onmouseleave = Swal.resumeTimer;
+  }
+});
 
 // ─────────────────────────────────────────────
 // COMPONENT
 // ─────────────────────────────────────────────
 export default function DashboardPortal({ role = 'staff' }) {
+  
+  const [viewMode, setViewMode] = useState('active'); 
+const [isBusinessModalOpen, setIsBusinessModalOpen] = useState(false);
+const [businessModalMode, setBusinessModalMode] = useState('edit');
+const [showBlotterModal, setShowBlotterModal] = useState(false);
+const [credentialsModal, setCredentialsModal] = useState(null);
+const [showAddResidentModal, setShowAddResidentModal] = useState(false);
 const businessFormRef = useRef(null);
 const [isSavingClearance, setIsSavingClearance] = useState(false);
 const [isSavingBusiness, setIsSavingBusiness] = useState(false);
 const [showBusinessPrintModal, setShowBusinessPrintModal] = useState(false);
 const [selectedBusinessCert, setSelectedBusinessCert] = useState(null);
+ const [showCertDispatcher, setShowCertDispatcher] = useState(false);
+ const [pendingStandardCert, setPendingStandardCert] = useState(false);
 const handlePrintBusinessClearance = (record) => {
   if (!record) {
     console.error('No record provided for printing');
@@ -492,14 +746,7 @@ const handlePrintBusinessDocument = async () => {
     }, 300);
   }
 };
-  const [blotterList, setBlotterList] = useState(() => {
-  try {
-    const saved = localStorage.getItem('bustrac_blotter');
-    return saved ? JSON.parse(saved) : [];
-  } catch (e) {
-    return [];
-  }
-});
+  const [blotterList, setBlotterList] = useState([]);
 
 const getStatusBadge = (status) => {
   switch (status) {
@@ -585,7 +832,7 @@ const handleOpenPrint = (blotterItem) => {
   // ── INDIGENCY PRINT MODAL STATES ──
   const [showPrintModal, setShowPrintModal] = useState(false);
   const [selectedPrintCert, setSelectedPrintCert] = useState(null);
-  
+  const [printData, setPrintData] = useState(null);
   const [printMode, setPrintMode] = useState('original');
   const handleOpenPrintModal = useCallback((certData) => {
   setSelectedPrintCert(certData);
@@ -630,7 +877,7 @@ const initials = displayName
   const [selectedCertificate, setSelectedCertificate] = useState(null);
 
   const [syncState, setSyncState] = useState(navigator.onLine ? 'synced' : 'offline');
-  
+  const [isDbProcessing, setIsDbProcessing] = useState(false);
     const [toasts, setToasts] = useState([]);
 
   const showToast = (message, type = 'success') => {
@@ -642,6 +889,19 @@ const initials = displayName
       setToasts((prev) => prev.filter((t) => t.id !== id));
     }, 4000);
   };
+
+  // ── DESKTOP NOTIFICATION PERMISSION HANDLER ──
+const requestNotificationPermission = useCallback(() => {
+  if ("Notification" in window && Notification.permission === "default") {
+    Notification.requestPermission().then((permission) => {
+      if (permission === "granted") {
+        if (typeof showToast === 'function') {
+          showToast("✅ Desktop notifications enabled! You will now receive real-time alerts.", "success");
+        }
+      }
+    });
+  }
+}, []);
 
   useEffect(() => {
   const handleOnline = () => {
@@ -712,12 +972,13 @@ useEffect(() => {
   const [residentForm, setResidentForm] = useState(EMPTY_RESIDENT);
  const [residentPhotoFile, setResidentPhotoFile] = useState(null);
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState('');
-  
+  const [isSavingResident, setIsSavingResident] = useState(false);
   const [showBulkDropdown, setShowBulkDropdown] = useState(false);
 
   // Multi-select States for the Residents
   const [selectedResidents, setSelectedResidents] = useState([]);
-
+  
+  const [archivedResidents, setArchivedResidents] = useState([]);
   // State for search input text
   const [searchTerm, setSearchTerm] = useState('');
   const [genderFilter, setGenderFilter] = useState('All Gender');
@@ -728,20 +989,20 @@ useEffect(() => {
   });
 
    // ============ PH HOLIDAY + WEEKEND GUARD ============
-const PH_FIXED_HOLIDAYS = [
-  { md: '01-01', name: "New Year's Day" },
-  { md: '04-09', name: 'Araw ng Kagitingan' },
-  { md: '05-01', name: 'Labor Day' },
-  { md: '06-12', name: 'Independence Day' },
-  { md: '08-21', name: 'Ninoy Aquino Day' },
-  { md: '11-01', name: "All Saints' Day" },
-  { md: '11-02', name: "All Souls' Day" },
-  { md: '11-30', name: 'Bonifacio Day' },
-  { md: '12-08', name: 'Immaculate Conception' },
-  { md: '12-25', name: 'Christmas Day' },
-  { md: '12-30', name: 'Rizal Day' },
-  { md: '12-31', name: "Last Day of the Year" },
-];
+  const PH_FIXED_HOLIDAYS = [
+    { md: '01-01', name: "New Year's Day" },
+    { md: '04-09', name: 'Araw ng Kagitingan' },
+    { md: '05-01', name: 'Labor Day' },
+    { md: '06-12', name: 'Independence Day' },
+    { md: '08-21', name: 'Ninoy Aquino Day' },
+    { md: '11-01', name: "All Saints' Day" },
+    { md: '11-02', name: "All Souls' Day" },
+    { md: '11-30', name: 'Bonifacio Day' },
+    { md: '12-08', name: 'Immaculate Conception' },
+    { md: '12-25', name: 'Christmas Day' },
+    { md: '12-30', name: 'Rizal Day' },
+    { md: '12-31', name: "Last Day of the Year" },
+  ];
 
 // Movable holidays — i-update kada taon (Holy Week, Eid'l Fitr/Adha, National Heroes Day)
 const PH_MOVABLE_HOLIDAYS = {
@@ -780,8 +1041,7 @@ const handleScheduleDateChange = (e) => {
 
   // 1) Weekend check
   if (dayOfWeek === 0 || dayOfWeek === 6) {
-    alert("⚠️ Ang Barangay Hall ay sarado tuwing Sabado at Linggo.\n\nMangyaring pumili ng Lunes hanggang Biyernes.");
-    // ✅ Force reset DOM pabalik sa dating value
+   showToast('error', 'Ang Barangay Hall ay sarado tuwing Sabado at Linggo.\n\nMangyaring pumili ng Lunes hanggang Biyernes.');
     e.target.value = scheduleDate || "";
     return;
   }
@@ -789,7 +1049,7 @@ const handleScheduleDateChange = (e) => {
   // 2) Philippine holiday check
   const holidayName = getHolidayName(datePart);
   if (holidayName) {
-    alert(`⚠️ Ang napiling petsa ay isang Philippine Holiday:\n\n🎌 ${holidayName}\n\nMangyaring pumili ng ibang araw.`);
+   showToast('error', `Ang napiling petsa ay isang Philippine Holiday:\n\n${holidayName}\n\nMangyaring pumili ng ibang araw.`);
     e.target.value = scheduleDate || "";
     return;
   }
@@ -798,7 +1058,7 @@ const handleScheduleDateChange = (e) => {
   const timePart = selectedValue.split('T')[1] || "";
   const [hh] = timePart.split(':').map(Number);
   if (!Number.isNaN(hh) && (hh < 8 || hh >= 17)) {
-    alert("⏰ Ang oras ng pagtanggap ay 8:00 AM – 5:00 PM lamang (Lunes–Biyernes).");
+ showToast('error', 'Ang oras ng pagtanggap ay 8:00 AM – 5:00 PM lamang (Lunes–Biyernes).');
     e.target.value = scheduleDate || "";
     return;
   }
@@ -810,66 +1070,66 @@ const now = new Date();
 now.setMinutes(now.getMinutes() - now.getTimezoneOffset());
 const minDateTime = now.toISOString().slice(0, 16);
 
-  // New initialization: It will check if localStorage has content; if not, it will use the default.
-  const [residentsList, setResidentsList] = useState(() => {
-    const savedResidents = localStorage.getItem('bustrac_residents');
-    return savedResidents ? JSON.parse(savedResidents) : [
-      { id: 'RES-0001', rbiId: '05-17-23-005-00000001', firstName: 'Maria', middleName: 'D.', lastName: 'Santos', name: 'Maria D. Santos', birthdate: '1990-03-12', gender: 'Female', civilStatus: 'Married', contact: '0917-123-4567', purok: 'Purok 3', household: 'HH-0012', householdHead: false, voter: true, conflict: false },
-      { id: 'RES-0002', rbiId: '05-17-23-005-00000002', firstName: 'Juan', middleName: 'B.', lastName: 'Reyes', name: 'Juan B. Reyes', birthdate: '1959-05-20', gender: 'Male', civilStatus: 'Widowed', contact: '0917-000-0002', purok: 'Purok 1', household: 'HH-0003', householdHead: true, voter: true, conflict: false },
-      { id: 'RES-0003', rbiId: '05-17-23-005-00000003', name: 'Garcia, Ana L.', firstName: 'Ana', lastName: 'Garcia', purok: 'Purok 2', purokClass: 't', age: 28, civilStatus: 'Single', voter: false, household: 'HH-0007', householdHead: true, conflict: false },
-      { id: 'RES-0412', rbiId: '05-17-23-005-00000412', name: 'Dela Cruz, Maria', firstName: 'Maria', lastName: 'Dela Cruz', purok: 'Purok 1', purokClass: 'p', age: 29, civilStatus: 'Married', voter: true, household: 'HH-0015', householdHead: true, conflict: true },
-    ];
-  });
+  const [residentsList, setResidentsList] = useState([]);  
+  const [isResidentsLoading, setIsResidentsLoading] = useState(true);
+  const [isHouseholdsLoading, setIsHouseholdsLoading] = useState(true);
+   
+    const fetchResidents = useCallback(async () => {
+    if (typeof db === 'undefined') return;
+    setIsResidentsLoading(true); // ✅ Set to true BEFORE fetch
+    try {
+      const result = await db.allDocs({ include_docs: true, conflicts: true });
+      const allDocs = result.rows
+        .filter(row => row.doc && (row.doc.type === 'residents' || row.doc.type === 'resident' || row.doc.type === 'profile' || row.id.startsWith('RES-')))
+        .map(row => row.doc);
+      
+      const filteredDocs = allDocs.filter(doc => {
+        if (viewMode === 'active') return !doc.isArchived;
+        if (viewMode === 'archived') return doc.isArchived === true;
+        return true;
+      });
+
+      const formattedResidents = filteredDocs.map((doc) => {
+        const residentFormFields = Object.fromEntries(
+          Object.keys(EMPTY_RESIDENT).map((field) => [field, doc[field] ?? EMPTY_RESIDENT[field]])
+        );
+        return {
+          ...residentFormFields,
+          id: doc._id || doc.id,
+          rbiId: doc.rbiId || doc.rbiNo || '—',
+          rbiNo: doc.rbiNo || doc.rbiId || '',
+          name: doc.name || `${doc.firstName || ''} ${doc.lastName || ''}`.trim(),
+          purok: doc.purok || doc.purokZoneAddress || 'Unassigned',
+          purokZoneAddress: doc.purokZoneAddress || doc.purok || '',
+          age: doc.age || '—',
+          civilStatus: doc.civilStatus || 'Single',
+          voter: doc.voter !== undefined ? doc.voter : Boolean(doc.isRegisteredVoter),
+          household: doc.household || doc.householdNo || '—',
+          householdNo: doc.householdNo || doc.household || '',
+          isHouseholdHead: doc.isHouseholdHead ?? doc.householdHead ?? false,
+          contactNo: doc.contactNo || doc.contact || '',
+          purokClass: doc.purokClass || 'g',
+          conflict: Boolean(doc._conflicts && doc._conflicts.length > 0),
+          hasAccount: doc.hasAccount || false,
+          isArchived: doc.isArchived || false,
+          createdAt: doc.createdAt || '',
+        };
+      });
+      setResidentsList(formattedResidents);
+    } catch (err) {
+      console.error('Error fetching residents:', err);
+    } finally {
+      setIsResidentsLoading(false); 
+    }
+  }, [viewMode]);
+
+useEffect(() => {
+  fetchResidents();
+}, [fetchResidents]);
 
   // ── DYNAMIC AID PROGRAMS STATE (2026 REALISTIC INITIAL DATA WITH V2 CACHE) ──
-  const [programsList, setProgramsList] = useState(() => {
-    const savedPrograms = localStorage.getItem('bustrac_programs_v2');
-    if (savedPrograms) return JSON.parse(savedPrograms);
-
-    return [
-      {
-        id: 'PROG-2026-001',
-        title: 'Rice Aid & Food Pack Distribution (Neighborhood 1-7)',
-        status: 'Active',
-        dateLabel: 'Aug 2026',
-        current: 425,
-        target: 600,
-        note: 'Ongoing distribution at Barangay Hall',
-      },
-      {
-        id: 'PROG-2026-002',
-        title: 'Educational Assistance for College Students',
-        status: 'Active',
-        dateLabel: 'Sep 2026',
-        current: 120,
-        target: 150,
-        note: 'Verification phase ongoing',
-      },
-      {
-        id: 'PROG-2026-003',
-        title: 'Senior Citizen Social Pension Aid',
-        status: 'Upcoming',
-        dateLabel: 'Oct 2026',
-        current: 0,
-        target: 250,
-        note: 'Scheduled Oct 12',
-      },
-      {
-        id: 'PROG-2026-004',
-        title: 'DSWD Financial Emergency Assistance',
-        status: 'Completed',
-        dateLabel: 'Jul 2026',
-        current: 310,
-        target: 310,
-        note: 'Completed July 28',
-      },
-    ];
-  });
+  const [programsList, setProgramsList] = useState([]);
   
-  // Ensure force save to new key:
-  useEffect(() => {
-    localStorage.setItem('bustrac_programs_v2', JSON.stringify(programsList));
-  }, [programsList]);
 
   useEffect(() => {
   const loadProgramsFromDB = async () => {
@@ -880,7 +1140,6 @@ const minDateTime = now.toISOString().slice(0, 16);
         .filter(doc => doc?.type === 'program');
       
       if (dbPrograms.length > 0) {
-        // Tanggalin ang internal fields at ibalik sa expected shape
         const cleaned = dbPrograms.map(p => ({
           id: p.id,
           title: p.title,
@@ -901,31 +1160,35 @@ const minDateTime = now.toISOString().slice(0, 16);
   loadProgramsFromDB();
 }, []);
 
-useEffect(() => {
-  const loadHouseholdsFromDB = async () => {
-    try {
-      const result = await db.allDocs({ include_docs: true });
-      const dbHouseholds = result.rows
-        .map(r => r.doc)
-        .filter(doc => doc?.type === 'household');
-      
-      if (dbHouseholds.length > 0) {
-        const cleaned = dbHouseholds.map(h => ({
-          id: h.id || h._id,
-          head: h.head,
-          address: h.address,
-          purok: h.purok,
-          purokClass: h.purokClass || 'b',
-          members: h.members || 0,
-        }));
-        setHouseholdsList(cleaned);
+  useEffect(() => {
+    const loadHouseholdsFromDB = async () => {
+      setIsHouseholdsLoading(true); // ✅ Set to true BEFORE fetch
+      try {
+        const result = await db.allDocs({ include_docs: true });
+        const dbHouseholds = result.rows
+          .map(r => r.doc)
+          .filter(doc => doc?.type === 'household');
+        
+        if (dbHouseholds.length > 0) {
+          const cleaned = dbHouseholds.map(h => ({
+            id: h.id || h._id,
+            head: h.head,
+            address: h.address,
+            purok: h.purok,
+            purokClass: h.purokClass || 'b',
+            members: h.members || 0,
+            createdAt: h.createdAt || '',
+          }));
+          setHouseholdsList(cleaned);
+        }
+      } catch (err) {
+        console.warn('Failed to load households from PouchDB:', err);
+      } finally {
+        setIsHouseholdsLoading(false); // ✅ Set to false AFTER fetch
       }
-    } catch (err) {
-      console.warn('Failed to load households from PouchDB:', err);
-    }
-  };
-  loadHouseholdsFromDB();
-}, []);
+    };
+    loadHouseholdsFromDB();
+  }, []);
 
 useEffect(() => {
   const loadAdvisoriesFromDB = async () => {
@@ -979,13 +1242,11 @@ useEffect(() => {
   };
 }, [openActionMenu]);
 
-// Auto-save tracker for the programs
-useEffect(() => {
-  localStorage.setItem('bustrac_programs', JSON.stringify(programsList));
-}, [programsList]);
+
 
 // Control state for the inline input form of the New Program
 const [showNewProgramForm, setShowNewProgramForm] = useState(false);
+const [showAddProgramModal, setShowAddProgramModal] = useState(false);
 const [newProgramTitle, setNewProgramTitle] = useState('');
 const [newProgramTarget, setNewProgramTarget] = useState(100);
 const [newProgramStatus, setNewProgramStatus] = useState('Active');
@@ -994,7 +1255,7 @@ const [newProgramStatus, setNewProgramStatus] = useState('Active');
 const handleCreateProgram = async (e) => {
   e.preventDefault();
   if (!newProgramTitle.trim()) {
-    alert('Please enter the Program name.');
+  showToast('error', 'Please enter the Program name.');
     return;
   }
 
@@ -1027,7 +1288,7 @@ const handleCreateProgram = async (e) => {
   }
 
   setProgramsList([...programsList, newProgram]);
-  alert(`✓ Program ${generatedId} created successfully!`);
+ showToast('success', `Program ${generatedId} created successfully!`);
   
   setNewProgramTitle('');
   setNewProgramTarget(100);
@@ -1035,19 +1296,62 @@ const handleCreateProgram = async (e) => {
   setShowNewProgramForm(false);
 };
 
-//  Automatically saved to localStorage whenever there are changes to our residentsList array
-useEffect(() => {
-  localStorage.setItem('bustrac_residents', JSON.stringify(residentsList));
-}, [residentsList]);
+
 
   // ──  We will use this to remember which Resident ID is currently being updated ──
   const [editingResidentId, setEditingResidentId] = useState(null);
   
   const [issuedCertificates, setIssuedCertificates] = useState([]);
-const [issuedHistorySearch, setIssuedHistorySearch] = useState('');
-const [issuedCertificateSearch, setIssuedCertificateSearch] = useState('');
+  const [issuedHistorySearch, setIssuedHistorySearch] = useState('');
+  const [issuedCertificateSearch, setIssuedCertificateSearch] = useState('');
+  
+  // Certificate / Clearance States
+const [showCertRequestModal, setShowCertRequestModal] = useState(false);
+const [certRequestType, setCertRequestType] = useState('');
+const [certRequestForm, setCertRequestForm] = useState({
+  requesterName: '',
+  requesterId: '',
+  businessName: '',
+  businessAddress: '',
+  businessType: '',
+  purpose: '',
+  orNumber: '',
+  orDate: '',
+  amountPaid: '',
+  remarks: ''
+});
+const [standardCertForm, setStandardCertForm] = useState({
+  residentId: '',
+  certificateType: 'indigency',
+  purpose: '',
+});
 
+const openCertRequestForm = useCallback((type) => {
+  setCertRequestType(type);
+  setCertRequestForm({
+    requesterName: '',
+    requesterId: '',
+    businessName: '',
+    businessAddress: '',
+    businessType: '',
+    purpose: '',
+    orNumber: '',
+    orDate: new Date().toISOString().split('T')[0],
+    amountPaid: '',
+    remarks: ''
+  });
+  setShowCertRequestModal(true);
+}, []);
 
+const closeCertRequestForm = useCallback(() => {
+  setShowCertRequestModal(false);
+  setCertRequestType('');
+  setIsSubmittingCert(false);
+}, []);
+
+const [isSubmittingCert, setIsSubmittingCert] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+const itemsPerPage = 10;
 
 const filteredIssuedCertificates = issuedCertificates.filter((cert) => {
   const query = issuedCertificateSearch.toLowerCase().trim();
@@ -1062,89 +1366,78 @@ const filteredIssuedCertificates = issuedCertificates.filter((cert) => {
   );
 });
 
-const handleIssueCertificate = async (cert) => {
-  try {
-    const now = new Date().toISOString();
+const safeFilteredCerts = filteredIssuedCertificates || [];
+const indexOfLastItem = currentPage * itemsPerPage;
+const indexOfFirstItem = indexOfLastItem - itemsPerPage;
+const currentItems = safeFilteredCerts.slice(indexOfFirstItem, indexOfLastItem);
+const totalPages = Math.ceil(safeFilteredCerts.length / itemsPerPage);
 
-    const updated = {
-      ...cert,
-      step: 5,
-      status: 'Issued',
-      issuedAt: now,
-      updatedAt: now,
-    };
-
-    await db.put(updated);
-
-    // ➔ Add Audit Log Call
-    try {
-      await createAuditLog({
-        action: 'APPROVE_CERTIFICATE',
-        module: 'CERTIFICATES',
-        recordId: updated.refNumber || updated._id,
-        user: `${currentUser?.username || 'admin'} (${role})`,
-        details: `Issued ${updated.certificateType || updated.certType || 'Certificate'} for ${
-          updated.firstName || updated.lastName
-            ? `${updated.firstName || ''} ${updated.lastName || ''}`.trim()
-            : updated.fullName || updated.residentName || 'Resident'
-        }`,
-      });
-    } catch (auditErr) {
-      console.warn('Audit log failed for Certificate:', auditErr);
-    }
-
-    if (typeof forceSyncToRemote === 'function') {
-      await forceSyncToRemote();
-    }
-
-    setIssuedCertificates((prev) =>
-      prev.map((item) => (item._id === cert._id ? updated : item))
-    );
-  } catch (error) {
-    console.error('Unable to issue certificate:', error);
-  }
-};
 
 const handleReleaseDocument = async (cert) => {
   try {
+    const result = await Swal.fire({
+      title: 'Release Certificate?',
+      text: `Mark ${cert.firstName} ${cert.lastName}'s ${cert.certificateType} as officially released?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonColor: '#10b981',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: 'Yes, Release it!',
+      cancelButtonText: 'Cancel',
+      customClass: {
+        popup: 'rounded-xl',
+        confirmButton: 'font-bold px-4 py-2 rounded-lg',
+        cancelButton: 'font-bold px-4 py-2 rounded-lg',
+      },
+    });
+
+    if (!result.isConfirmed) return;
+
+    const latestDoc = await db.get(cert._id);
     const now = new Date().toISOString();
 
-    const updated = {
-      ...cert,
-      step: 6,
+    const updatedCert = {
+      ...latestDoc,
       status: 'Released',
+      step: 6,
       releasedAt: now,
       updatedAt: now,
     };
 
-    await db.put(updated);
+    await db.put(updatedCert);
 
-    // ➔ Add Audit Log Call
-    try {
+    if (typeof createAuditLog === 'function') {
       await createAuditLog({
-        action: 'APPROVE_CERTIFICATE',
+        action: 'RELEASE_CERTIFICATE',
         module: 'CERTIFICATES',
-        recordId: updated.refNumber || updated._id,
-        user: `${currentUser?.username || 'admin'} (${role})`,
-        details: `Released ${updated.certificateType || updated.certType || 'Certificate'} for ${
-          updated.firstName || updated.lastName
-            ? `${updated.firstName || ''} ${updated.lastName || ''}`.trim()
-            : updated.fullName || updated.residentName || 'Resident'
-        }`,
+        recordId: cert._id,
+        details: `Released ${cert.certificateType || 'Certificate'} to ${cert.firstName || ''} ${cert.lastName || ''}`,
       });
-    } catch (auditErr) {
-      console.warn('Audit log failed for Certificate release:', auditErr);
     }
 
-    if (typeof forceSyncToRemote === 'function') {
-      await forceSyncToRemote();
+    if (typeof setIssuedCertificates === 'function') {
+      setIssuedCertificates((prev) =>
+        prev.map((c) => (c._id === cert._id ? updatedCert : c))
+      );
     }
 
-    setIssuedCertificates((prev) =>
-      prev.map((item) => (item._id === cert._id ? updated : item))
-    );
-  } catch (error) {
-    console.error('Unable to release certificate:', error);
+    await Swal.fire({
+      icon: 'success',
+      title: 'Released Successfully!',
+      text: 'The certificate has been marked as released.',
+      timer: 2000,
+      showConfirmButton: false,
+    });
+  } catch (e) {
+    console.error('Failed to release certificate:', e);
+
+    await Swal.fire({
+      icon: 'error',
+      title: 'Failed to Release',
+      text:
+        e.message ||
+        'An error occurred while updating the database. Please try again.',
+    });
   }
 };
 
@@ -1278,7 +1571,7 @@ useEffect(() => {
     details: `Updated resident record: ${updatedName}`,
   });
 
-  alert("Resident record updated successfully!");
+ showToast('success', 'Resident record updated successfully!');
   setEditingResidentId(null);
   setResidentForm(EMPTY_RESIDENT);
   nav('residents');
@@ -1296,7 +1589,7 @@ useEffect(() => {
     qty:     1,
   });
   const [beneficiaryList, setBeneficiaryList] = useState([]);
-
+  const [isSavingBatch, setIsSavingBatch] = useState(false);
   // ── Sort order for address/purok column ──
   const [addressSortOrder, setAddressSortOrder] = useState('none'); // 'none', 'asc', o 'desc'
 
@@ -1309,27 +1602,16 @@ useEffect(() => {
   
   
   // 1. This already includes setHouseholdsList and a localStorage loading pattern
-  const [householdsList, setHouseholdsList] = useState(() => {
-  const savedHouseholds = localStorage.getItem('bustrac_households');
-  if (savedHouseholds) return JSON.parse(savedHouseholds);
-  
-  // Default fallback data
-  return [
-    { id: 'HH-0012', head: 'Santos, Pedro A.', address: 'No. 12, Rizal St.', purok: 'Purok 3', purokClass: 'b', members: 5 },
-    { id: 'HH-0003', head: 'Reyes, Elpidio R.', address: 'No. 3, Mabini Ave.', purok: 'Purok 1', purokClass: 'p', members: 3 },
-    { id: 'HH-0021', head: 'Lopez, Ricardo M.', address: 'No. 21, Bonifacio Rd.', purok: 'Purok 5', purokClass: 'a', members: 7 },
-    { id: 'HH-0004', head: 'Napagal, Jay O.', address: 'No. 7, Zone 1, Nabua', purok: 'Purok 1', purokClass: 'p', members: 0 },
-  ];
-  });
+  const [householdsList, setHouseholdsList] = useState([]);
   const [selectedHouseholdId, setSelectedHouseholdId] = useState(null);
+  const [selectedHousehold, setSelectedHousehold] = useState(null);
   const EMPTY_HOUSEHOLD = { head: '', address: '', purok: '' };
   const [householdForm, setHouseholdForm] = useState(EMPTY_HOUSEHOLD);
+  const [householdAssignmentMode, setHouseholdAssignmentMode] = useState('existing');
   const [saving, setSaving] = useState(false);
-
-// 2. Auto-save watcher for households
-useEffect(() => {
-  localStorage.setItem('bustrac_households', JSON.stringify(householdsList));
-}, [householdsList]);
+  
+  const [showEditHouseholdModal, setShowEditHouseholdModal] = useState(false);
+  const [isBlottersLoading, setIsBlottersLoading] = useState(true);
 
 // 2. Derived array for dynamic sorting based on active sort order state
 const sortedHouseholds = [...householdsList].sort((a, b) => {
@@ -1360,11 +1642,11 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   // Both conditions must pass (TRUE) to remain in the active view list
   return matchesSearch && matchesPurok;
 });
+
   // ─────────────────────────────────────────────
   // HANDLERS — SHARED
   // ─────────────────────────────────────────────
   const nav = (id) => {
-  // 🔒 Guard: harangin ang admin-only screens kung hindi admin
   if (ADMIN_ONLY_SCREENS.includes(id) && role !== 'admin') {
     showToast('Access denied. Admin-only module.', 'error');
     return;
@@ -1391,8 +1673,9 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
       showToast('Please fill in all required fields (names and narrative)');
       return;
     }
-    alert(
-      `✓ Complaint BLT-2024-041 updated successfully!\n\nChanges saved:\n• Complainant: ${compName}\n• Respondent: ${respName}\n• Incident Type: ${incidentType}\n• Status: ${status}\n• Location: ${location}\n\nAll changes recorded in audit log.`
+    showToast(
+      `✓ Complaint BLT-2024-041 updated successfully!\n\nChanges saved:\n• Complainant: ${compName}\n• Respondent: ${respName}\n• Incident Type: ${incidentType}\n• Status: ${status}\n• Location: ${location}\n\nAll changes recorded in audit log.`,
+      'success'
     );
   };
 
@@ -1405,20 +1688,21 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   const staffSendSummons = () => {
     const { summonDate, summonTime, respName, sendSMS, sendEmail } = staffCase;
     if (!summonDate || !summonTime) {
-      alert('Please set date and time for appearance');
+     showToast('error', 'Please set date and time for appearance');
       return;
     }
     const methods = [];
     if (sendSMS)   methods.push('SMS');
     if (sendEmail) methods.push('Email');
     if (methods.length === 0) {
-      alert('Please select at least one notification method');
+     showToast('error', 'Please select at least one notification method');
       return;
     }
     const confirmMsg = `Send summons to ${respName} via ${methods.join(' and ')}?\n\nAppearance: ${summonDate} at ${summonTime}\n\nThis action will be recorded in the audit log.`;
     if (window.confirm(confirmMsg)) {
-      alert(
-        `✓ Summons sent successfully via ${methods.join(' and ')}!\n\nNotification recorded: BLT-2024-041\nRespondent: ${respName}\nScheduled: ${summonDate} ${summonTime}`
+      showToast(
+        `✓ Summons sent successfully via ${methods.join(' and ')}!\n\nNotification recorded: BLT-2024-041\nRespondent: ${respName}\nScheduled: ${summonDate} ${summonTime}`,
+        'success'
       );
     }
   };
@@ -1430,110 +1714,263 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
     setResidentForm((prev) => ({ ...prev, [field]: value }));
   
   const handlePhotoChange = (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    
-    // Strict 500KB Limit para hindi mag-bloat ang PouchDB
-    if (file.size > 500 * 1024) {
-      alert('Masyadong malaki ang larawan. Paki-compress o pumili ng file na mas mababa sa 500KB.');
-      e.target.value = ''; // Reset input
-      return;
-    }
-    
-    // Convert to Base64 para MA-SAVE sa PouchDB/LocalStorage
-    const reader = new FileReader();
-    reader.onloadend = () => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+
+  reader.onload = (event) => {
+    const img = new Image();
+
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      const MAX_SIZE = 250;
+      let width = img.width;
+      let height = img.height;
+
+      if (width > height) {
+        if (width > MAX_SIZE) {
+          height *= MAX_SIZE / width;
+          width = MAX_SIZE;
+        }
+      } else if (height > MAX_SIZE) {
+        width *= MAX_SIZE / height;
+        height = MAX_SIZE;
+      }
+
+      canvas.width = width;
+      canvas.height = height;
+
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, width, height);
+
+      const compressedBase64 = canvas.toDataURL('image/jpeg', 0.7);
+
       setResidentPhotoFile(file);
-      setPhotoPreviewUrl(reader.result);
-      updateResidentField('photoUrl', reader.result); // I-sync sa main form state
+      setPhotoPreviewUrl(compressedBase64);
+      updateResidentField('photoUrl', compressedBase64);
     };
-    reader.readAsDataURL(file);
+
+    img.src = event.target.result;
   };
+
+  reader.readAsDataURL(file);
+};
 
   const handleRemovePhoto = () => {
     setResidentPhotoFile(null);
     setPhotoPreviewUrl('');
-    updateResidentField('photoUrl', ''); // Alisin sa main form state
+    updateResidentField('photoUrl', ''); 
     const fileInput = document.getElementById('resident-photo-upload');
     if (fileInput) fileInput.value = '';
   };
 
   // 1. Function to populate the form when Edit is clicked
-  const handleStartEditResident = (res) => {
-  const nameParts = res.name.split(' ');
-  setResidentForm({
-    firstName: res.firstName || nameParts[0] || '',
-    middleName: res.middleName || '',
-    lastName: res.lastName || nameParts[nameParts.length - 1] || '',
-    birthdate: res.birthdate || '2026-01-01',
-    gender: res.gender || 'Male',
-    civilStatus: res.civilStatus,
-    contact: res.contact || '09123456789',
-    purok: res.purok,
-    household: res.household,
-    rbiId: res.rbiId || '',
-    photoUrl: res.photoUrl || '',
-    email: res.email || '', // 
-  });
+ const handleStartEditResident = async (res) => {
   setEditingResidentId(res.id);
-  nav('add-resident');
+  setSelectedResidentId(res.id);
+  setHouseholdAssignmentMode('existing');
+  setHouseholdForm(EMPTY_HOUSEHOLD);
+  
+  let fName = res.firstName || '';
+  let lName = res.lastName || '';
+  let mName = res.middleName || '';
+  
+  if (!fName && !lName && res.name) {
+    const nameStr = String(res.name).trim();
+    if (nameStr.includes(',')) {
+      const parts = nameStr.split(',');
+      lName = parts[0].trim();
+      const rest = (parts[1] || '').trim().split(' ').filter(Boolean);
+      fName = rest[0] || '';
+      mName = rest.slice(1).join(' ') || '';
+    } else {
+      const parts = nameStr.split(' ').filter(Boolean);
+      fName = parts[0] || '';
+      lName = parts.length > 1 ? parts[parts.length - 1] : '';
+      mName = parts.length > 2 ? parts.slice(1, -1).join(' ') : '';
+    }
+  }
+
+  const existingHouseholdId = (res.household && res.household !== '—' ? res.household : res.householdNo || '').replace(/^—$/, '');
+  
+  setResidentForm({
+    ...EMPTY_RESIDENT,
+    rbiNo: res.rbiId || res.rbiNo || '',
+    householdNo: existingHouseholdId,
+    fileDateUpdated: res.fileDateUpdated || new Date().toISOString().split('T')[0],
+    lastName: lName, firstName: fName, middleName: mName,
+    suffix: res.suffix || '', alias: res.alias || '',
+    birthdate: res.birthdate || '', age: res.age || 0,
+    birthPlace: res.birthPlace || '', sex: res.gender || res.sex || 'Male',
+    isLgbtqia: res.isLgbtqia || false, lgbtqiaSpecification: res.lgbtqiaSpecification || '',
+    civilStatus: res.civilStatus || 'Single', citizenship: res.citizenship || 'Filipino',
+    religion: res.religion || '', indigenousTribe: res.indigenousTribe || '',
+    weightKg: res.weightKg || '', heightCm: res.heightCm || '', bloodType: res.bloodType || '',
+    isHouseholdHead: res.isHouseholdHead || false, isFamilyHead: res.isFamilyHead || false,
+    isSoloParent: res.isSoloParent || false, relationshipToHouseholdHead: res.relationshipToHouseholdHead || '',
+    isBarangayResident: res.isBarangayResident !== undefined ? res.isBarangayResident : true,
+    residentSince: res.residentSince || '', residencyStatus: res.residencyStatus || 'Permanent',
+    isRegisteredVoter: res.voter !== undefined ? res.voter : res.isRegisteredVoter || false,
+    isVotingLocally: res.isVotingLocally || false, precinctNo: res.precinctNo || '',
+    votingOtherPlace: res.votingOtherPlace || '', contactNo: res.contact || res.contactNo || '',
+    email: res.email || '', purokZoneAddress: res.purok || res.purokZoneAddress || '',
+    addressOutsideBarangay: res.addressOutsideBarangay || '', isBarangayOfficial: res.isBarangayOfficial || false,
+    isDeceased: res.isDeceased || false, photoUrl: res.photoUrl || '',
+  });
+
+  // ✅ FIX: Auto-recover missing household from PouchDB
+  if (existingHouseholdId) {
+    let foundHousehold = householdsList.find(h => String(h.id) === String(existingHouseholdId));
+    
+    // Kung wala sa state, baka nasa PouchDB pa (legacy or unsynced data)
+    if (!foundHousehold && typeof db !== 'undefined') {
+      try {
+        const dbResult = await db.allDocs({ include_docs: true });
+        const dbDoc = dbResult.rows.find(r => r.doc && (r.doc.id === existingHouseholdId || r.doc._id === existingHouseholdId));
+        if (dbDoc && dbDoc.doc) {
+          foundHousehold = {
+            id: dbDoc.doc.id || dbDoc.doc._id,
+            head: dbDoc.doc.head || 'Unknown Head',
+            address: dbDoc.doc.address || '',
+            purok: dbDoc.doc.purok || '',
+            purokClass: dbDoc.doc.purokClass || 'b'
+          };
+          // I-add sa state para lumabas sa dropdown at mawala ang warning
+          setHouseholdsList(prev => [...prev, foundHousehold]);
+        }
+      } catch (err) {
+        console.warn("Could not auto-recover household from DB:", err);
+      }
+    }
+    setSelectedHousehold(foundHousehold || null);
+  } else {
+    setSelectedHousehold(null);
+  }
+
+  setPhotoPreviewUrl(res.photoUrl || '');
+  setResidentPhotoFile(null);
+  
+  if (typeof setEditForm === 'function') {
+    setEditForm({
+      firstName: fName, lastName: lName, civilStatus: res.civilStatus || 'Single',
+      purok: res.purok || 'Purok 1', household: existingHouseholdId, rbiId: res.rbiId || ''
+    });
+  }
+  nav('edit-resident');
 };
 
-// 2. Function to delete the resident from the list
-const handleDeleteResident = async (id, name) => {
-  // Better for the presentation if the name is asked when deleting
-  if (window.confirm(`Sigurado ka ba na gusto mong burahin si ${name} (ID: ${id}) sa system roster?`)) {
-    const filteredList = residentsList.filter(res => res.id !== id);
-    
-    setResidentsList(filteredList);
+const handleArchiveResident = async (residentId, residentName) => {
+  const result = await Swal.fire({
+    title: 'Archive Resident?',
+    text: `Si ${residentName} ay itatago sa Active list, ngunit mananatili ang kanyang records para sa auditing.`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#ef4444',
+    cancelButtonColor: '#64748b',
+    confirmButtonText: 'Yes, Archive it!',
+    cancelButtonText: 'Cancel'
+  });
 
-    // Here we will permanently save to the data simulation cache
-    localStorage.setItem('bustrac_residents', JSON.stringify(filteredList));
-    setSelectedResidents(prev => prev.filter(selectedId => selectedId !== id));
-    
-     await createAuditLog({
-      action: 'ARCHIVE',
-      module: 'RESIDENTS',
-      recordId: id,
-      details: `Archived resident record: ${name}`,
+  if (!result.isConfirmed) return;
+
+  try {
+    const existingDoc = await db.get(residentId);
+    const archivedDoc = {
+      ...existingDoc,
+      isArchived: true,
+      archivedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    await db.put(archivedDoc);
+
+    // ✅ OPTIMISTIC UPDATE: Update local state directly
+    setResidentsList((prev) =>
+      prev.map((r) =>
+        (r.id === residentId || r._id === residentId)
+          ? { ...r, isArchived: true, archivedAt: archivedDoc.archivedAt }
+          : r
+      )
+    );
+
+    if (typeof createAuditLog === 'function') {
+      await createAuditLog({
+        action: 'ARCHIVE_RESIDENT',
+        module: 'RESIDENTS',
+        recordId: residentId,
+        details: `Archived resident: ${residentName}`,
+      });
+    }
+
+    Swal.fire({
+      icon: 'success',
+      title: 'Archived Successfully!',
+      text: `${residentName} has been moved to the Archived list.`,
+      timer: 2000,
+      showConfirmButton: false
     });
 
-    alert("✓ Success: Resident record has been completely removed.");
+  } catch (err) {
+    console.error('Failed to archive resident:', err);
+    Swal.fire({
+      icon: 'error',
+      title: 'Failed',
+      text: 'Failed to archive resident. Please try again.'
+    });
   }
 };
-  
+
+const handleCancelResidentForm = () => {
+  setResidentForm(EMPTY_RESIDENT);
+  setEditingResidentId(null);
+  setPhotoPreviewUrl('');
+  setHouseholdAssignmentMode('existing');
+  setHouseholdForm(EMPTY_HOUSEHOLD);
+  nav('residents');
+};
+
+
 const submitAddResident = async (e) => {
   e.preventDefault();
 
-  const {
-    rbiNo,
-    householdNo,
-    lastName,
-    firstName,
-    middleName,
-    birthdate,
-    sex,               // Dating: gender
-    civilStatus,
-    contactNo,         // Dating: contact
-    purokZoneAddress,  // Dating: purok
-    isHouseholdHead,   // Dating: householdHead
-    isRegisteredVoter  // Dating: voter
-  } = residentForm;
+  const { rbiNo, householdNo, lastName, firstName, middleName, birthdate, sex, civilStatus, contactNo, purokZoneAddress, isHouseholdHead, isRegisteredVoter } = residentForm;
 
-  // 2. Required fields validation (gamit ang tamang variable names)
-  if (
-    !firstName?.trim() ||
-    !lastName?.trim() ||
-    !birthdate ||
-    !sex ||
-    !civilStatus ||
-    !contactNo?.trim() ||
-    !purokZoneAddress?.trim() ||
-    !householdNo?.trim() ||
-    !rbiNo?.trim()
-  ) {
-    showToast('Please fill in all required fields, including RBI ID.');
-    return;
+  // 2. SPECIFIC REQUIRED FIELDS VALIDATION (Para eksaktong malaman kung ano ang kulang)
+  if (!firstName?.trim()) { showToast('First Name is required.', 'error'); return false; }
+  if (!lastName?.trim()) { showToast('Last Name is required.', 'error'); return false; }
+  if (!birthdate) { showToast('Birthdate is required.', 'error'); return false; }
+  if (!sex) { showToast('Sex is required.', 'error'); return false; }
+  if (!civilStatus) { showToast('Civil Status is required.', 'error'); return false; }
+  if (!contactNo?.trim()) { showToast('Contact Number is required.', 'error'); return false; }
+  if (!purokZoneAddress?.trim()) { showToast('Purok/Zone Address is required.', 'error'); return false; }
+  if (!rbiNo?.trim()) { showToast('RBI ID No. is required.', 'error'); return false; }
+
+  const isCreatingHousehold = householdAssignmentMode === 'create';
+  
+  if (isCreatingHousehold) {
+    if (role !== 'admin') {
+      showToast('Only an administrator can create a household during resident registration.', 'error');
+      return false;
+    }
+    if (!householdForm.head?.trim() || !householdForm.address?.trim() || !householdForm.purok?.trim()) {
+      showToast('Please complete the new household head, address, and Purok.', 'error');
+      return false;
+    }
+  } else {
+    // ✅ FIX: Added check for '—' to prevent saving unassigned households
+    if (!householdNo?.trim() || householdNo === '—') {
+      showToast('Select an existing household before saving the resident.', 'error');
+      return false;
+    }
+    
+    const selectedHouseholdExists = householdsList.some(
+      (household) => String(household.id).trim() === householdNo.trim()
+    );
+    
+    if (!selectedHouseholdExists) {
+      showToast(`Household ${householdNo} is not in the registry. Please select a valid household.`, 'error');
+      return false;
+    }
   }
 
   const normalizedRbiId = rbiNo.trim().toUpperCase();
@@ -1543,8 +1980,8 @@ const submitAddResident = async (e) => {
     (res) => res.rbiId?.trim().toUpperCase() === normalizedRbiId && res.id !== editingResidentId
   );
   if (duplicateRbiId) {
-    alert(`RBI ID ${normalizedRbiId} is already assigned to another resident.`);
-    return;
+  showToast(`RBI ID ${normalizedRbiId} is already assigned to another resident.`, 'error');
+    return false;
   }
 
   const fullName = `${firstName.trim()} ${middleName.trim()} ${lastName.trim()}`;
@@ -1555,6 +1992,66 @@ const submitAddResident = async (e) => {
   if (purokLower.includes('1')) dynamicPurokClass = 'p';
   else if (purokLower.includes('2')) dynamicPurokClass = 'g';
   else if (purokLower.includes('5')) dynamicPurokClass = 'a';
+
+  let assignedHouseholdId = householdNo.trim();
+  if (isCreatingHousehold) {
+    try {
+      const dbResult = await db.allDocs({ include_docs: true });
+      const existingHouseholdIds = new Set(
+        householdsList.map((household) => String(household.id || '')).filter(Boolean)
+      );
+      dbResult.rows.forEach(({ doc }) => {
+        if (doc?.type === 'household') {
+          existingHouseholdIds.add(String(doc.id || doc._id));
+        }
+      });
+
+      let idTimestamp = Date.now();
+      let newHouseholdId;
+      do {
+        newHouseholdId = `HH-${idTimestamp.toString(36).slice(-4).toUpperCase()}`;
+        idTimestamp += 1;
+      } while (existingHouseholdIds.has(newHouseholdId));
+
+      const createdAt = new Date().toISOString();
+      let householdPurokClass = 'b';
+      if (householdForm.purok.includes('1')) householdPurokClass = 'p';
+      else if (householdForm.purok.includes('2')) householdPurokClass = 'g';
+      else if (householdForm.purok.includes('5')) householdPurokClass = 'a';
+
+      const newHousehold = {
+        _id: generateUUID(),
+        id: newHouseholdId,
+        type: 'household',
+        head: householdForm.head.trim(),
+        address: householdForm.address.trim(),
+        purok: householdForm.purok,
+        purokClass: householdPurokClass,
+        members: 0,
+        createdAt,
+      };
+
+      await db.put(newHousehold);
+      setHouseholdsList((previous) => previous.some((household) => household.id === newHousehold.id)
+        ? previous
+        : [...previous, newHousehold]);
+      try {
+        await createAuditLog({
+          action: 'CREATE',
+          module: 'HOUSEHOLDS',
+          recordId: newHousehold.id,
+          details: `Registered new household during resident registration: ${newHousehold.head}`,
+        });
+      } catch (auditError) {
+        console.error('Failed to audit household creation:', auditError);
+      }
+      assignedHouseholdId = newHousehold.id;
+    } catch (householdError) {
+      console.error('Failed to create household before resident:', householdError);
+      showToast('Could not save the new household. The resident was not saved. Please try again.', 'error');
+      return false;
+    }
+  }
 
   // =========================================================
 // SCENARIO A: UPDATE EXISTING RESIDENT
@@ -1576,7 +2073,8 @@ if (editingResidentId) {
       purok: purokZoneAddress,
       purokClass: dynamicPurokClass,
       age: new Date().getFullYear() - new Date(birthdate).getFullYear(),
-      household: householdNo,
+      household: assignedHouseholdId,
+      householdNo: assignedHouseholdId,
       householdHead: Boolean(isHouseholdHead),
       voter: Boolean(isRegisteredVoter),
       photoUrl: residentForm.photoUrl || res.photoUrl || '',
@@ -1584,7 +2082,6 @@ if (editingResidentId) {
     };
   });
   setResidentsList(updatedList);
-  localStorage.setItem('bustrac_residents', JSON.stringify(updatedList));
   
     try {
     const existingDoc = await db.get(editingResidentId);
@@ -1600,7 +2097,8 @@ if (editingResidentId) {
       civilStatus,
       contact: contactNo.trim(),
       purok: purokZoneAddress,
-      household: householdNo,
+      household: assignedHouseholdId,
+      householdNo: assignedHouseholdId,
       householdHead: Boolean(isHouseholdHead),
       voter: Boolean(isRegisteredVoter),
       photoUrl: residentForm.photoUrl || existingDoc.photoUrl || '',
@@ -1617,11 +2115,13 @@ if (editingResidentId) {
     recordId: editingResidentId,
     details: `Updated resident record: ${fullName}`,
   });
-  alert(`Resident ${editingResidentId} updated successfully!`);
+ showToast('success', `Resident ${editingResidentId} updated successfully!`);
   setEditingResidentId(null);
   setResidentForm(EMPTY_RESIDENT);
+  setHouseholdAssignmentMode('existing');
+  setHouseholdForm(EMPTY_HOUSEHOLD);
   nav('residents');
-  return;
+  return true;
 }
 
   // =========================================================
@@ -1644,17 +2144,17 @@ const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()
     purok: purokZoneAddress,
     purokClass: dynamicPurokClass,
     age: new Date().getFullYear() - new Date(birthdate).getFullYear(),
-    household: householdNo,
+    household: assignedHouseholdId,
     householdHead: Boolean(isHouseholdHead),
     voter: Boolean(isRegisteredVoter),
     conflict: false,
     photoUrl: residentForm.photoUrl || '',
     email: residentForm.email || '', 
+    createdAt: new Date().toISOString(),
   };
 
   const updatedList = [...residentsList, newResident];
-  setResidentsList(updatedList);
-  localStorage.setItem('bustrac_residents', JSON.stringify(updatedList));
+setResidentsList(updatedList);
 
     const residentDoc = {
   _id: newResidentId,
@@ -1665,7 +2165,8 @@ const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()
   name: fullName,
   gender: sex,
   contact: contactNo.trim(),
-  household: householdNo,
+  household: assignedHouseholdId,
+  householdNo: assignedHouseholdId,
   householdHead: Boolean(isHouseholdHead),
   voter: Boolean(isRegisteredVoter),
   conflict: false,
@@ -1688,7 +2189,10 @@ const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()
 
   showToast(`Resident added successfully!\n\nResident ID: ${newResidentId}\nRBI ID: ${normalizedRbiId}\nName: ${fullName}`);
   setResidentForm(EMPTY_RESIDENT);
+  setHouseholdAssignmentMode('existing');
+  setHouseholdForm(EMPTY_HOUSEHOLD);
   nav('residents');
+  return true;
 };
  
  const submitAddHousehold = async (e) => {
@@ -1713,7 +2217,8 @@ const newHousehold = {
     address: address,
     purok: purok,
     purokClass: dynamicPurokClass,
-    members: 0
+    members: 0,
+    createdAt: new Date().toISOString(),
   };
 
   try {
@@ -1736,7 +2241,10 @@ const newHousehold = {
     details: `Registered new household: ${newHousehold.head}`,
   });
 
-  alert(`Household Registered successfully!\n\nID: ${newHousehold.id}\nHead of Family: ${head}`);
+showToast(
+  'success',
+  `Household Registered successfully!\n\nID: ${newHousehold.id}\nHead of Family: ${head}`
+);
   
   setHouseholdForm(EMPTY_HOUSEHOLD);
 };
@@ -1785,123 +2293,17 @@ const submitEditHousehold = async (e) => {
       details: `Updated household record: ${head}`,
     });
 
-    alert(`Household ${selectedHouseholdId} updated successfully!`);
+  showToast('success', `Household ${selectedHouseholdId} updated successfully!`);
     setHouseholdForm(EMPTY_HOUSEHOLD);
     setSelectedHouseholdId(null);
     nav('households');
   } catch (error) {
     console.error('Error saving household:', error);
-    alert('Failed to save household. Please try again.');
+    showToast('Failed to save household. Please try again.', 'error');
   } finally {
     setSaving(false); 
   }
 };
-
-// ─────────────────────────────────────────────
-// HANDLERS — ANNOUNCEMENTS
-// ─────────────────────────────────────────────
-const handleSaveAnnouncement = async (e, status = 'Published') => {
-  e.preventDefault();
-  const { title, category, content, pinned } = announcementForm;
-  if (!title.trim() || !content.trim()) {
-    alert('Title and Content are required.');
-    return;
-  }
-
-  const loggedInUser = JSON.parse(sessionStorage.getItem('bustrac_user') || '{}');
-  const now = new Date().toISOString();
-
-  let newAnnouncement;
-  
-  if (editingAnnId) {
-    // EDIT MODE: Hanapin ang existing para sa _id at _rev
-    const existing = announcementsList.find(a => (a._id || a.id) === editingAnnId);
-    newAnnouncement = {
-      ...existing,
-      _id: existing?._id || `announcement_${Date.now()}`, // fallback lang
-      type: 'announcement',
-      title: title.trim(),
-      category: category || 'General',
-      body: content.trim(),
-      content: content.trim(),
-      pinned: Boolean(pinned),
-      author: loggedInUser?.fullName || loggedInUser?.name || 'Barangay Office',
-      status,
-      updatedAt: now,
-      // Huwag baguhin ang createdAt kung edit
-    };
-  } else {
-    // CREATE MODE
-    newAnnouncement = {
-      _id: `announcement_${Date.now()}`,
-      type: 'announcement',
-      title: title.trim(),
-      category: category || 'General',
-      body: content.trim(),
-      content: content.trim(),
-      pinned: Boolean(pinned),
-      author: loggedInUser?.fullName || loggedInUser?.name || 'Barangay Office',
-      date: now,
-      status,
-      timestamp: now,
-      createdAt: now,
-      updatedAt: now,
-    };
-  }
-
-  try {
-    await db.put(newAnnouncement);
-    // ... sync, audit log, etc
-  } catch (err) {
-    console.error('Failed to save announcement:', err);
-    alert('Error saving announcement.');
-    return;
-  }
-
-  setAnnouncementsList((prev) => {
-    const filtered = prev.filter((a) => (a._id || a.id) !== (editingAnnId || newAnnouncement._id));
-    return [newAnnouncement, ...filtered];
-  });
-
-  // Reset form
-  setAnnouncementForm({ title: '', category: 'General', content: '', pinned: false, status: 'Published' });
-  setEditingAnnId(null);
-  setAnnouncementSubScreen('list');
-};
-
-// Sync announcements with PouchDB
-useEffect(() => {
-  const fetchAnnouncements = async () => {
-    try {
-      const result = await db.allDocs({ include_docs: true });
-      const announcements = result.rows
-        .map(row => row.doc)
-        .filter(doc => doc?.type === 'announcement')
-        .sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      setAnnouncementsList(announcements);
-      localStorage.setItem('bustrac_announcements', JSON.stringify(announcements));
-    } catch (err) {
-      console.error('Error loading announcements:', err);
-    }
-  };
-  fetchAnnouncements();
-
-  const changes = db.changes({
-    since: 'now',
-    live: true,
-    include_docs: true,
-    filter: (doc) => doc.type === 'announcement'
-  }).on('change', (change) => {
-    if (change.doc?.type === 'announcement') {
-      setAnnouncementsList(prev => {
-        const filtered = prev.filter(a => a._id !== change.doc._id);
-        return [change.doc, ...filtered];
-      });
-    }
-  }).on('error', console.error);
-
-  return () => changes.cancel();
-}, []);
 
   // ─────────────────────────────────────────────
 // HANDLERS — DYNAMIC ADMIN COMPLAINT / SUMMONS
@@ -1937,13 +2339,14 @@ const saveComplaintChanges = () => {
   }
 
   // 2. DYNAMIC ALERT: Now matches the actual Case Number you clicked (e.g., BLT-8875)
-  alert(
+  showToast(
     `✓ Complaint ${caseNum} updated successfully!\n\n` +
     `Changes saved:\n` +
     `• Complainant: ${compName}\n` +
     `• Respondent: ${respName}\n` +
     `• Status: ${caseStatus}\n\n` +
-    `All changes recorded in client registry audit log.`
+    `All changes recorded in client registry audit log.`,
+    'success'
   );
   
   nav('blotter-manage'); // Awtomatikong ibalik sa listahan para makita ang pagbabago
@@ -1967,7 +2370,7 @@ const sendSummons = async (caseRecord) => {
   const summonTime = targetCase.timeFiled || '02:00 PM';
 
   if (!caseId) {
-    alert('⚠️ Invalid Case ID. Cannot send summons.');
+   showToast('error', '⚠️ Invalid Case ID. Cannot send summons.');
     return;
   }
 
@@ -1997,16 +2400,17 @@ const sendSummons = async (caseRecord) => {
       // 4. Execute the PouchDB Update and State Refresh
       await handleBlotterAction(caseId, nextActionType);
 
-      alert(
+      showToast(
         `✓ Summons successfully dispatched via SMS & Email engine!\n\n` +
         `Tracking Log: ${caseId}\n` +
         `Recipient Party: ${respondentName}\n` +
         `Updated Status: ${nextStatusLabel}\n` +
-        `Scheduled Date: ${summonDate} [${summonTime}]`
+        `Scheduled Date: ${summonDate} [${summonTime}]`,
+        'success'
       );
     } catch (err) {
       console.error('Failed to dispatch summons:', err);
-      alert(`⚠️ Dispatch failed: ${err.message}`);
+     showToast('error', `Dispatch failed: ${err.message}`);
     }
   }
 };
@@ -2023,11 +2427,11 @@ const handleBlotterAction = (blotterId, actionType) => {
 // 2. Submit Function: This is what saves to PouchDB
 const submitBlotterAction = async () => {
   if (!db) {
-    alert('Database connection is unavailable.');
+showToast('error', 'Database connection is unavailable.');
     return;
   }
   if (!scheduleDate && actionType.includes('summon')) {
-    alert('Please enter a Schedule Date & Time for the summon.');
+  showToast('error', 'Please enter a Schedule Date & Time for the summon.');
     return;
   }
   setActionSaving(true);
@@ -2138,11 +2542,11 @@ if (typeof setSelectedBlotter === 'function') {
 
     setActionModalOpen(false);
     setSelectedBlotterForAction(null);
-    alert(`Status successfully updated to: ${newStatus}`);
+   showToast('success', `Status successfully updated to: ${newStatus}`);
 
   } catch (err) {
     console.error('Failed to update blotter case status:', err);
-    alert(`Unable to update case status: ${err.message}`);
+   showToast('error', `Unable to update case status: ${err.message}`);
   } finally {
     setActionSaving(false);
   }
@@ -2185,17 +2589,32 @@ const handleStatusDropdownChange = async (newStatus) => {
   // HANDLERS — ADMIN BENEFICIARY LIST
   // ─────────────────────────────────────────────
   const addToList = () => {
-  if (!beneficiaryDraft.residentId) {
-    alert('Please select a resident from the list.');
+  if (!beneficiaryDraft.residentId || !beneficiaryDraft.aidType) {
+    showToast('error', 'Please select a resident and specify the aid type.');
     return;
   }
-  if (!beneficiaryDraft.aidType.trim()) {
-    alert('Please enter an aid type.');
-    return;
+
+  const existingIndex = beneficiaryList.findIndex(
+    b => b.residentId === beneficiaryDraft.residentId && b.aidType === beneficiaryDraft.aidType
+  );
+
+  if (existingIndex !== -1) {
+    if (!window.confirm(`Si ${beneficiaryDraft.name} ay nasa listahan na para sa ${beneficiaryDraft.aidType}. Gusto mo bang i-merge at dagdagan ang quantity?`)) {
+      return;
+    }
+    const updatedList = [...beneficiaryList];
+    updatedList[existingIndex].qty += Number(beneficiaryDraft.qty || 1);
+    setBeneficiaryList(updatedList);
+  } else {
+    setBeneficiaryList([...beneficiaryList, { ...beneficiaryDraft, qty: Number(beneficiaryDraft.qty || 1) }]);
   }
-  setBeneficiaryList((prev) => [...prev, beneficiaryDraft]);
-  setBeneficiaryDraft({ name: '', residentId: '', aidType: 'Rice 5kg', qty: 1 });
-  setBeneficiarySearch('');
+
+  setBeneficiaryDraft(prev => ({
+    ...prev,
+    residentId: '',
+    name: '',
+    qty: 1
+  }));
 };
 
   const removeFromList = (index) =>
@@ -2203,20 +2622,41 @@ const handleStatusDropdownChange = async (newStatus) => {
 
   const saveAll = async () => {
   if (beneficiaryList.length === 0) {
-    alert('No beneficiaries to save.');
+    if (typeof showToast === 'function') {
+      showToast('Walang benepisyaryo na naka-queue.', 'warning');
+    } else {
+     showToast('error', 'No beneficiaries to save.');
+    }
     return;
   }
+
+  const totalBeneficiaries = beneficiaryList.length;
+  const totalItems = beneficiaryList.reduce((acc, curr) => acc + Number(curr.qty || 1), 0);
+  const targetProgram = programsList.find(p => p.id === currentProgramId);
+
+  if (targetProgram) {
+    const remainingCapacity = (targetProgram.target || 0) - (targetProgram.current || 0);
+
+    if (totalItems > remainingCapacity) {
+      if (typeof showToast === 'function') {
+        showToast(`⚠️ Kulang sa capacity! Natitira lang ang ${remainingCapacity} items sa programang ito.`, 'error');
+      } else {
+      showToast('error', `Kulang sa capacity! Natitira lang ang ${remainingCapacity} items sa programang ito.`);
+      }
+      return;
+    }
+  }
+
+  setIsSavingBatch(true);
 
   try {
     const now = new Date().toISOString();
     const batchId = `AIDBATCH-${Date.now()}`;
 
-    // Persist each beneficiary as its own doc so it replicates + gets audited
-    for (let i = 0; i < beneficiaryList.length; i++) {
-      const b = beneficiaryList[i];
-      const docId = `${batchId}-${String(i + 1).padStart(3, '0')}`;
+    const docsToSave = beneficiaryList.map((b, index) => {
+      const docId = `${batchId}-${String(index + 1).padStart(3, '0')}`;
 
-      const aidPayload = {
+      return {
         _id: docId,
         type: 'aid_distribution',
         refNumber: docId,
@@ -2224,38 +2664,76 @@ const handleStatusDropdownChange = async (newStatus) => {
         residentId: b.residentId,
         residentName: b.name,
         aid: b.aidType,
-        qty: b.qty,
+        qty: Math.max(1, Number(b.qty || 1)),
         officer: displayName.split(' ')[0],
         status: 'OK',
         createdAt: now,
         updatedAt: now,
       };
+    });
 
-      await db.put(aidPayload);
+    const response = await db.bulkDocs(docsToSave);
+    const errors = response.filter(res => res.error);
 
-      // ➔ Add Audit Log Call per beneficiary
+    if (errors.length > 0) {
+      console.error('Some documents failed to save:', errors);
+      throw new Error('Partial save failure');
+    }
+
+    if (targetProgram) {
+      const updatedPrograms = programsList.map(p =>
+        p.id === currentProgramId
+          ? { ...p, current: (p.current || 0) + totalItems }
+          : p
+      );
+
+      setProgramsList(updatedPrograms);
+
       try {
-        await createAuditLog({
-          action: 'CREATE_AID_DISTRIBUTION',
-          module: 'AID_DISTRIBUTION',
-          recordId: aidPayload.refNumber,
-          user: `${currentUser?.username || 'admin'} (${role})`,
-          details: `Saved aid "${aidPayload.aid}" (x${aidPayload.qty}) for ${aidPayload.residentName}`,
+        const progDoc = await db.get(`program_${currentProgramId}`);
+
+        await db.put({
+          ...progDoc,
+          current: (progDoc.current || 0) + totalItems,
+          updatedAt: now
         });
-      } catch (auditErr) {
-        console.warn('Audit log failed for Aid Distribution:', auditErr);
+      } catch (e) {
+        console.warn('Failed to update program doc in DB (non-critical):', e);
       }
     }
 
-    if (typeof forceSyncToRemote === 'function') {
-      await forceSyncToRemote();
+    if (typeof createAuditLog === 'function') {
+      await createAuditLog({
+        action: 'BULK_ACTION',
+        module: 'AID_DISTRIBUTION',
+        recordId: batchId,
+        details: `Encoded ${totalBeneficiaries} beneficiaries in Batch Mode for Program ${currentProgramId}. Total items: ${totalItems}`,
+      });
     }
 
-    alert(`✓ Saved ${beneficiaryList.length} beneficiary record(s).`);
     setBeneficiaryList([]);
+
+    if (typeof forceSyncToRemote === 'function') {
+      forceSyncToRemote().catch(err => {
+        console.warn('Local save successful. Background sync will handle this later:', err);
+      });
+    }
+
+    if (typeof showToast === 'function') {
+      showToast(`✓ Matagumpay na na-save ang ${totalBeneficiaries} benepisyaryo (${totalItems} items)!`, 'success');
+    } else {
+      showToast(`✓ Matagumpay na na-save ang ${totalBeneficiaries} na benepisyaryo sa queue!`, 'success');
+    }
   } catch (err) {
     console.error('Failed to save beneficiaries:', err);
-    alert('Failed to save beneficiaries. Please try again.');
+
+    if (typeof showToast === 'function') {
+      showToast('⚠️ May error sa pag-save. Paki-check ang database at subukang muli.', 'error');
+    } else {
+     showToast('error', '⚠️ May error sa pag-save. Ang iyong queue ay naka-save pa rin sa screen at hindi mawawala.');
+    }
+  } finally {
+    setIsSavingBatch(false);
   }
 };
 
@@ -2265,14 +2743,14 @@ const handleStatusDropdownChange = async (newStatus) => {
     !String(issuanceMeta.orNumber).trim() ||
     !issuanceMeta.amountPaid
   ) {
-    alert('Please fill in required payment fields (OR No. and Amount Paid).');
+    showToast('Please fill in required payment fields (OR No. and Amount Paid).', 'error');
     return;
   }
 
   try {
     const targetId = req?._id || selectedCertificate?._id;
     if (!targetId) {
-      alert('No certificate selected.');
+      showToast('error', 'No certificate selected.');
       return;
     }
 
@@ -2319,41 +2797,49 @@ const handleStatusDropdownChange = async (newStatus) => {
     );
 
     window.print();
-    alert('Certificate successfully issued and recorded!');
+   showToast('success', 'Certificate successfully issued and recorded!');
   } catch (err) {
     console.error('Print release failed:', err);
-    alert('Failed to process certificate release.');
+   showToast('error', 'Failed to process certificate release.');
   }
 };
   // ─────────────────────────────────────────────
   // TOPBAR TITLE
   // ─────────────────────────────────────────────
-  const [title, subtitle] = (() => {
-    if (screen === 'dashboard') {
-      return [
-        'Dashboard',
-        role === 'admin'
-          ? 'Barangay Bustrac • Full System View'
-          : 'Barangay Bustrac Operations',
-      ];
-    }
-    return SCREEN_META[screen] ?? [screen, ''];
-  })();
+  const [currentTitle, currentSubtitle] = (() => {
+  if (screen === 'dashboard') {
+    return [
+      'Dashboard',
+      role === 'admin' ? 'Barangay Bustrac • Full System View' : 'Barangay Bustrac Operations',
+    ];
+  }
+  return SCREEN_META[screen] ?? [
+    screen.replace('-', ' ').toUpperCase(), 
+    'Barangay System Module'
+  ];
+})();
+
   // Dynamic computing: This looks for a match in the typed input against Name, ID, or Purok
   const filteredResidents = residentsList.filter((res) => {
+  // View mode filter
+  const isArchived = res.isArchived === true;
+  if (viewMode === 'active' && isArchived) return false;
+  if (viewMode === 'archived' && !isArchived) return false;
+  
+  // Search filter
   const query = searchTerm.toLowerCase();
-  
-  // Buuin ang Buong Pangalan mula sa available fields
   const fullName = res.name || `${res.firstName || ''} ${res.middleName || ''} ${res.lastName || ''}`.trim();
-  
-  const matchesSearch = 
-    fullName.toLowerCase().includes(query) || 
-    (res.id && String(res.id).toLowerCase().includes(query)) || 
+  const matchesSearch = fullName.toLowerCase().includes(query) ||
+    (res.id && String(res.id).toLowerCase().includes(query)) ||
     (res._id && String(res._id).toLowerCase().includes(query)) ||
-    (res.rbiId && String(res.rbiId).toLowerCase().includes(query)) || 
+    (res.rbiId && String(res.rbiId).toLowerCase().includes(query)) ||
     (res.purok && String(res.purok).toLowerCase().includes(query));
+  
+  const matchesPurok = purokFilter === 'All Puroks' || res.purok === purokFilter;
+  
+  const matchesGender = genderFilter === 'All Gender' || res.gender === genderFilter;
 
-  return matchesSearch;
+  return matchesSearch && matchesPurok && matchesGender;
 });
 
 // Dynamic Calculations para sa Dashboard Panels
@@ -2384,6 +2870,40 @@ const getPurokPercent = (count) => {
   if (!totalResidents || totalResidents === 0) return '0%';
   return `${Math.round((count / totalResidents) * 100)}%`;
 };
+
+// ── MONTH-OVER-MONTH TREND HELPERS (KPI deltas para sa Dashboard summary) ──
+const getMonthKey = (value) => {
+  if (!value) return '';
+  const raw = String(value);
+  const parsed = new Date(raw.length === 10 ? `${raw}T00:00:00` : raw);
+  if (isNaN(parsed.getTime())) return '';
+  return `${parsed.getFullYear()}-${parsed.getMonth()}`;
+};
+const computeTrend = (list, dateFn) => {
+  const now = new Date();
+  const thisKey = `${now.getFullYear()}-${now.getMonth()}`;
+  const prevDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const prevKey = `${prevDate.getFullYear()}-${prevDate.getMonth()}`;
+  let thisMonth = 0;
+  let lastMonth = 0;
+  (list || []).forEach((item) => {
+    const key = getMonthKey(dateFn(item));
+    if (key === thisKey) thisMonth += 1;
+    else if (key === prevKey) lastMonth += 1;
+  });
+  return { delta: thisMonth - lastMonth, thisMonth, lastMonth };
+};
+
+const residentTrend = computeTrend(residentsList, (r) => r.createdAt);
+const householdTrend = computeTrend(householdsList, (h) => h.createdAt);
+const voterTrend = computeTrend(
+  residentsList.filter((r) => r.voter || r.isVoter === 'Yes' || r.voterStatus === 'Yes'),
+  (r) => r.createdAt
+);
+const certTrend = computeTrend(issuedCertificates, (c) => c.createdAt || c.dateSubmitted || c.date);
+const blotterTrend = computeTrend(blotterList, (b) => b.dateFiled || b.date || b.incidentDate || b.createdAt);
+const feedbackTrend = computeTrend(feedbackList, (f) => f.rawTimestamp || f.timestamp || f.createdAt);
+
 const [currentBeneficiaryId, setCurrentBeneficiaryId] = useState('');
 const [formAttempted, setFormAttempted] = useState(false);
 
@@ -2407,14 +2927,7 @@ const [successMessage, setSuccessMessage] = useState('');
 const [selectedBeneficiaryId, setSelectedBeneficiaryId] = useState('');
 
 
-// Dynamic storage para sa distribution logs (naka-cache sa localStorage)
-const [aidLogs, setAidLogs] = useState(() => {
-  const savedLogs = localStorage.getItem('bustrac_aid_logs');
-  return savedLogs ? JSON.parse(savedLogs) : [
-    { id: 'LOG-001', residentName: 'Cruz, Ramon P.', residentId: 'RES-0005', aid: 'Rice 5kg', officer: displayName, time: '09:02', status: 'OK' },
-    { id: 'LOG-002', residentName: 'Garcia, Ana L.', residentId: 'RES-0003', aid: 'Rice 5kg', officer: 'Napagal', time: '08:55', status: 'Synced' }
-  ];
-});
+const [aidLogs, setAidLogs] = useState([]);
 
 // ── BARANGAY CLEARANCE (INDIVIDUAL) STATE MANAGEMENT ──
 const [clearanceList, setClearanceList] = useState([]);
@@ -2428,28 +2941,26 @@ const [editingClearanceId, setEditingClearanceId] = useState(null);
 const [clearanceForm, setClearanceForm] = useState({
   _id: '',
   clearanceNo: 'BC-2026-0001',
-  fullName: 'PANIZAL, JOAN REBUSQUILLO',
-  purpose: 'Employment Requirement',
-  remarks: 'No Derogatory Record',
+  fullName: '',
+  residentId: '',
+  rbiId: '',
+  purok: '',
+  address: '',
+  purpose: '',
+  remarks: '',
   validity: '(6) Six Months Validity',
-  dateIssued: new Date().toISOString().split('T')[0],
+  dateIssued: toPHDateString(),
   orNo: '',
-  amtPaid: '50.00',
-  // CTC Details
+  amtPaid: '',
   ctcNo: '',
   ctcName: '',
   ctcAmtPaid: '0.00',
-  ctcDateIssued: new Date().toISOString().split('T')[0],
+  ctcDateIssued: toPHDateString(),
   ctcPlaceIssued: 'Nabua, Camarines Sur',
-  // Signatories
-  secretary: 'MRS. MELY M. PRESADO',
-  captain: 'HON. ANNABELLE E. RULL',
-  // Blotter Check Status
   hasBlotterRecord: false,
-  selectedResidentId: '', 
+  selectedResidentId: '',
+  includeCtc: false,
   isIssuedByBarangay: true, 
-  dateIssued: toPHDateString(), 
-   ctcDateIssued: toPHDateString(),
 });
 
 const filteredClearances = clearanceList.filter((rec) => {
@@ -2526,77 +3037,113 @@ const peekNextBusinessSequence = async () => {
 
 // Save or Update Clearance Record
   const handleSaveClearance = async (e) => {
-    e.preventDefault();
-    if (!clearanceForm.fullName.trim() || !clearanceForm.purpose.trim()) {
-      showToast('Please fill in the Resident Full Name and Purpose.', 'error'); // ⬅️ Toast Error
+  e.preventDefault();
+
+  if (!clearanceForm.selectedResidentId) {
+    showToast('Please select a registered resident from the registry.', 'error');
+    return;
+  }
+  if (!clearanceForm.purpose.trim()) {
+    showToast('Please fill in the Purpose of Clearance.', 'error');
+    return;
+  }
+  if (!clearanceForm.orNo.trim()) {
+    showToast('Please enter the Official Receipt (O.R.) Number.', 'error');
+    return;
+  }
+  if (!clearanceForm.amtPaid || isNaN(Number(clearanceForm.amtPaid)) || Number(clearanceForm.amtPaid) < 0) {
+    showToast('Please enter a valid Amount Paid / Clearance Fee.', 'error');
+    return;
+  }
+  if (clearanceForm.includeCtc) {
+    if (!clearanceForm.ctcNo.trim()) {
+      showToast('CTC Number is required when including Community Tax Certificate.', 'error');
       return;
     }
-    setIsSavingClearance(true); 
-    try {
-      const isEditing = Boolean(editingClearanceId);
-      const docId = isEditing ? editingClearanceId : `brgy_clearance_${Date.now()}`;
-      const newClearanceNo = isEditing ? clearanceForm.clearanceNo : await getNextClearanceSequence();
-      
-      const payload = {
-        ...clearanceForm,
-        dateIssued: clearanceForm.dateIssued || toPHDateString(),
-        clearanceNo: newClearanceNo,
-        _id: docId,
-        type: 'barangay_clearance',
-        updatedAt: new Date().toISOString(),
-        createdAt: clearanceForm.createdAt || new Date().toISOString(),
-      };
-      
-      if (!isEditing) delete payload._rev;
-      if (typeof db !== 'undefined' && db.put) {
-        await db.put(payload);
-      }
-
-      if (typeof createAuditLog === 'function') {
-        await createAuditLog({
-          action: isEditing ? 'UPDATE' : 'CREATE',
-          module: 'BARANGAY_CLEARANCE',
-          recordId: newClearanceNo,
-          details: `${isEditing ? 'Updated' : 'Issued'} Barangay Clearance ${newClearanceNo} for ${clearanceForm.fullName}`,
-        });
-      }
-
-      showToast(isEditing ? 'Barangay Clearance updated successfully!' : `Barangay Clearance ${newClearanceNo} issued successfully!`, 'success');
-      
-      await resetClearanceForm();
-      window.scrollTo({ top: 0, behavior: 'smooth' }); 
-    } catch (err) {
-      console.error('Failed to save barangay clearance:', err);
-      showToast(`Error saving record: ${err.message || 'Database error'}`, 'error');
-      } finally {
-       setIsSavingClearance(false);
+    if (!clearanceForm.ctcAmtPaid || isNaN(Number(clearanceForm.ctcAmtPaid))) {
+      showToast('Please enter a valid CTC Amount Paid.', 'error');
+      return;
     }
-  };
+  }
+
+  setIsSavingClearance(true);
+  try {
+    const isEditing = Boolean(editingClearanceId);
+    const docId = isEditing ? editingClearanceId : `brgy_clearance_${Date.now()}`;
+    const newClearanceNo = isEditing ? clearanceForm.clearanceNo : await getNextClearanceSequence();
+
+    const payload = {
+      ...clearanceForm,
+      dateIssued: clearanceForm.dateIssued || toPHDateString(),
+      clearanceNo: newClearanceNo,
+      secretary: settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
+      captain: settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
+      _id: docId,
+      type: 'barangay_clearance',
+      updatedAt: new Date().toISOString(),
+      createdAt: clearanceForm.createdAt || new Date().toISOString(),
+    };
+
+    if (!isEditing) delete payload._rev;
+
+    if (typeof db !== 'undefined' && db.put) {
+      await db.put(payload);
+    }
+
+    if (typeof createAuditLog === 'function') {
+      await createAuditLog({
+        action: isEditing ? 'UPDATE' : 'CREATE',
+        module: 'BARANGAY_CLEARANCE',
+        recordId: newClearanceNo,
+        details: `${isEditing ? 'Updated' : 'Issued'} Barangay Clearance ${newClearanceNo} for ${clearanceForm.fullName}`,
+      });
+    }
+
+    showToast(
+      isEditing
+        ? 'Barangay Clearance updated successfully!'
+        : `Barangay Clearance ${newClearanceNo} issued successfully!`,
+      'success'
+    );
+
+    await resetClearanceForm();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+  } catch (err) {
+    console.error('Failed to save barangay clearance:', err);
+    showToast(`Error saving record: ${err.message || 'Database error'}`, 'error');
+  } finally {
+    setIsSavingClearance(false);
+  }
+};
 
 
 const resetClearanceForm = async () => {
   setEditingClearanceId(null);
   const nextNo = await peekNextClearanceNo();
-
   setClearanceForm({
     _id: '',
     _rev: undefined,
     clearanceNo: nextNo,
     fullName: '',
+    residentId: '',
+    rbiId: '',
+    purok: '',
+    address: '',
     purpose: '',
-    remarks: 'No Derogatory Record',
+    remarks: '',
     validity: '(6) Six Months Validity',
-    dateIssued: new Date().toISOString().split('T')[0],
+    dateIssued: toPHDateString(),
     orNo: '',
-    amtPaid: '50.00',
+    amtPaid: '',
     ctcNo: '',
     ctcName: '',
     ctcAmtPaid: '0.00',
-    ctcDateIssued: new Date().toISOString().split('T')[0],
+    ctcDateIssued: toPHDateString(),
     ctcPlaceIssued: 'Nabua, Camarines Sur',
-    secretary: 'MRS. MELY M. PRESADO',
-    captain: 'HON. ANNABELLE E. RULL',
     hasBlotterRecord: false,
+    selectedResidentId: '',
+    includeCtc: false,
+    isIssuedByBarangay: true,
   });
 };
 
@@ -2604,26 +3151,29 @@ const handleEditClearance = (rec) => {
   setEditingClearanceId(rec._id);
   setClearanceForm({
     _id: rec._id || '',
-    _rev: rec._rev || undefined, // Required for PouchDB updates
+    _rev: rec._rev || undefined,
     clearanceNo: rec.clearanceNo || '',
-    dateIssued: rec.dateIssued || new Date().toISOString().split('T')[0],
+    dateIssued: rec.dateIssued || toPHDateString(),
     fullName: rec.fullName || '',
+    residentId: rec.residentId || '',
+    rbiId: rec.rbiId || '',
+    purok: rec.purok || '',
+    address: rec.address || '',
     purpose: rec.purpose || '',
-    remarks: rec.remarks || 'No Derogatory Record',
+    remarks: rec.remarks || '',
     validity: rec.validity || '(6) Six Months Validity',
     hasBlotterRecord: rec.hasBlotterRecord || false,
+    selectedResidentId: rec.selectedResidentId || '',
+    includeCtc: Boolean( rec.includeCtc || rec.ctcNo || rec.ctcAmtPaid ) || false,
     orNo: rec.orNo || '',
     amtPaid: rec.amtPaid || '',
     ctcNo: rec.ctcNo || '',
-    ctcAmtPaid: rec.ctcAmtPaid || '',
-    ctcDateIssued: rec.ctcDateIssued || '',
-    ctcPlaceIssued: rec.ctcPlaceIssued || '',
-    secretary: rec.secretary || '',
-    captain: rec.captain || '',
-    createdAt: rec.createdAt || new Date().toISOString()
+    ctcAmtPaid: rec.ctcAmtPaid || '0.00',
+    ctcDateIssued: rec.ctcDateIssued || toPHDateString(),
+    ctcPlaceIssued: rec.ctcPlaceIssued || 'Nabua, Camarines Sur',
+    isIssuedByBarangay: rec.isIssuedByBarangay ?? true,
+    createdAt: rec.createdAt || new Date().toISOString(),
   });
-
-  // Smooth scroll to top form section
   window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
@@ -2632,10 +3182,6 @@ const handlePrintClearance = (rec) => {
   setShowClearancePrintModal(true);
 };
 
-// Auto-save tracker para sa logs array
-useEffect(() => {
-  localStorage.setItem('bustrac_aid_logs', JSON.stringify(aidLogs));
-}, [aidLogs]);
 
 // ── AUTOMATIC DUPLICATION CHECKER LAYER ──
 useEffect(() => {
@@ -2659,12 +3205,12 @@ useEffect(() => {
 // ── TRANSACTION SUBMIT LOGIC LAYER ──
 const handleLogAidEntry = async () => {
   if (!currentBeneficiaryId) {
-    alert('Mangyaring pumili muna ng residente (Beneficiary).');
+    showToast('Mangyaring pumili muna ng residente (Beneficiary).', 'error');
     return;
   }
 
   if (duplicateAlert) {
-    alert('Hindi maiproseso: Ang residenteng ito ay nakatanggap na ng ayuda.');
+    showToast('Hindi maiproseso: Ang residenteng ito ay nakatanggap na ng ayuda.', 'error');
     return;
   }
 
@@ -2721,16 +3267,17 @@ const handleLogAidEntry = async () => {
 
     if (selectedResidents.length > 0) {
       setSelectedResidents((prev) => prev.slice(1));
-      alert(
-        `Success: Na-log na ang ayuda para kay ${targetResident.name}. Umuusad na ang Batch Mode Queue!`
+      showToast(
+        `Success: Na-log na ang ayuda para kay ${targetResident.name}. Umuusad na ang Batch Mode Queue!`,
+        'success'
       );
     } else {
       setCurrentBeneficiaryId('');
-      alert(`Success: Aid has been successfully recorded for ${targetResident.name}!`);
+      showToast(`Success: Aid has been successfully recorded for ${targetResident.name}!`, 'success');
     }
   } catch (err) {
     console.error('Failed to save aid log to PouchDB:', err);
-    alert('Hindi na-save ang aid entry sa offline database. Subukan muli.');
+    showToast('Hindi na-save ang aid entry sa offline database. Subukan muli.', 'error');
   }
 };
 
@@ -2739,11 +3286,11 @@ const handleEncodeSubmit = async (e) => {
   if (e) e.preventDefault();
   
   if (!selectedProgramId) {
-    alert('Pumili muna ng Active Relief Program.');
+    showToast('Pumili muna ng Active Relief Program.', 'error');
     return;
   }
   if (!selectedBeneficiaryId) {
-    alert('Pumili muna ng Beneficiary Resident.');
+    showToast('Pumili muna ng Beneficiary Resident.', 'error');
     return;
   }
 
@@ -2760,7 +3307,7 @@ const handleEncodeSubmit = async (e) => {
     if (typeof setDuplicateAlert === 'function') {
       setDuplicateAlert(errorMsg);
     } else {
-      alert(errorMsg);
+      showToast(errorMsg, 'error');
     }
     return;
   }
@@ -2768,7 +3315,7 @@ const handleEncodeSubmit = async (e) => {
 
   // 2. Capacity Limit Check
   if (targetProg && (targetProg.current || 0) >= (targetProg.target || 1)) {
-    alert(`⚠️ Puno na ang capacity ng ${targetProg.title} (${targetProg.current}/${targetProg.target}).`);
+    showToast(`⚠️ Puno na ang capacity ng ${targetProg.title} (${targetProg.current}/${targetProg.target}).`, 'error');
     return;
   }
 
@@ -2897,8 +3444,13 @@ useEffect(() => {
         purok: hh.purok || ''
       });
     }
+  } else {
+    // ✅ BEST PRACTICE: Reset state kapag umalis sa edit screen para walang stale data
+    setHouseholdForm(EMPTY_HOUSEHOLD);
+    setSelectedHouseholdId(null);
   }
 }, [screen, selectedHouseholdId, householdsList]);
+
 
   // ── HOUSEHOLD VIEW DATA RESOLVER (Ilagay dito, bago ang return statement) ──
   const activeHousehold = householdsList.find(h => h.id === selectedHouseholdId);
@@ -2917,68 +3469,95 @@ useEffect(() => {
 
 const handleUpdateResidentChanges = async (e) => {
   e.preventDefault();
-  if (!selectedResidentId) return;
 
-  const fullCombinedName = `${editForm.firstName} ${editForm.lastName}`.trim();
-  const newPurokClass =
-    editForm.purok === 'Purok 1'
-      ? 'p'
-      : editForm.purok === 'Purok 3'
-      ? 'b'
-      : editForm.purok === 'Purok 5'
-      ? 'a'
-      : 'g';
-
-  // 1. Update React state at localStorage
-  setResidentsList((prevList) => {
-    const updatedList = prevList.map((r) => {
-      if (r.id === selectedResidentId) {
-        return {
-          ...r,
-          name: fullCombinedName,
-          firstName: editForm.firstName,
-          lastName: editForm.lastName,
-          civilStatus: editForm.civilStatus,
-          purok: editForm.purok,
-          household: editForm.household,
-          rbiId: editForm.rbiId,
-          purokClass: newPurokClass,
-        };
-      }
-      return r;
-    });
-    localStorage.setItem('bustrac_residents', JSON.stringify(updatedList));
-    return updatedList;
-  });
-
-  // 2. Update PouchDB kung naka-sync (ITO ANG KULANG)
-  try {
-    const existingDoc = await db.get(selectedResidentId);
-    await db.put({
-      ...existingDoc,
-      name: fullCombinedName,
-      firstName: editForm.firstName,
-      lastName: editForm.lastName,
-      civilStatus: editForm.civilStatus,
-      purok: editForm.purok,
-      household: editForm.household,
-      rbiId: editForm.rbiId,
-      purokClass: newPurokClass,
-      updatedAt: new Date().toISOString(),
-    });
-  } catch (err) {
-    // Kapag hindi pa naka-save sa PouchDB (e.g. mock data lang), log lang
-    console.warn('Resident not yet in PouchDB, local update only:', err);
+  if (!editingResidentId) {
+    if (typeof showToast === 'function') showToast('Error: No resident selected.', 'error');
+    return;
   }
 
-  alert(`✓ Success: Record for ${selectedResidentId} has been updated.`);
-  nav('residents');
+  setIsSavingResident(true);
+  try {
+    const fullCombinedName = `${editForm.firstName} ${editForm.lastName}`.trim();
+
+    let newPurokClass = 'g';
+    const purokLower = editForm.purok.toLowerCase();
+    if (purokLower.includes('1')) newPurokClass = 'p';
+    else if (purokLower.includes('2')) newPurokClass = 'g';
+    else if (purokLower.includes('3')) newPurokClass = 'b';
+    else if (purokLower.includes('4') || purokLower.includes('5')) newPurokClass = 'a';
+
+    setResidentsList((prevList) => {
+      const updatedList = prevList.map((r) => {
+        if (r.id === editingResidentId) {
+          return {
+            ...r,
+            name: fullCombinedName,
+            firstName: editForm.firstName,
+            lastName: editForm.lastName,
+            civilStatus: editForm.civilStatus,
+            purok: editForm.purok,
+            household: editForm.household,
+            rbiId: editForm.rbiId,
+            purokClass: newPurokClass,
+          };
+        }
+        return r;
+      });
+      return updatedList;
+    });
+
+    try {
+      const existingDoc = await db.get(editingResidentId);
+      await db.put({
+        ...existingDoc,
+        name: fullCombinedName,
+        firstName: editForm.firstName,
+        lastName: editForm.lastName,
+        civilStatus: editForm.civilStatus,
+        purok: editForm.purok,
+        household: editForm.household,
+        rbiId: editForm.rbiId,
+        purokClass: newPurokClass,
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn('Resident not yet in PouchDB or DB error, local update only:', err);
+    }
+
+    if (typeof createAuditLog === 'function') {
+      await createAuditLog({
+        action: 'UPDATE_RESIDENT',
+        module: 'RESIDENTS',
+        recordId: editingResidentId,
+        details: `Quick updated resident profile: ${fullCombinedName}`,
+      });
+    }
+
+    if (typeof showToast === 'function') {
+      showToast(`✓ Success: Record for ${fullCombinedName} has been updated.`, 'success');
+    } else {
+      showToast(`✓ Success: Record for ${fullCombinedName} has been updated.`, 'success');
+    }
+
+    setEditingResidentId(null);
+    setEditForm({ firstName: '', lastName: '', civilStatus: 'Single', purok: 'Purok 1', household: '', rbiId: '' });
+    nav('residents');
+
+  } catch (error) {
+    console.error('Failed to update resident:', error);
+    if (typeof showToast === 'function') {
+      showToast('Failed to update resident. Please try again.', 'error');
+    } else {
+      showToast('Failed to update resident.', 'error');
+    }
+  } finally {
+    setIsSavingResident(false);
+  }
 };
 
 // ── 2. MAIN CORE BLOTTER FORM OBJECT STATE ──
 const [blotterForm, setBlotterForm] = useState({
-   date: toPHDateString(), 
-  date: new Date().toISOString().split('T')[0],
+  date: toPHDateString(), 
   time: '',
   type: 'Noise Complaint',
   location: '',
@@ -3000,78 +3579,63 @@ const [blotterForm, setBlotterForm] = useState({
 });
 
 // Master Effect para sa Admin Blotter Management sa DashboardPortal.jsx
-useEffect(() => {
-  if (!db) return;
-
-  const fetchBlotters = async () => {
-    try {
-      const res = await db.allDocs({ include_docs: true });
-      const blotterDocs = res.rows
-        .map((row) => row.doc)
-        .filter((doc) => {
-          if (!doc) return false;
-
-          // Exclude Certificate Documents
-          if (doc.docType === 'certificate' || doc.type === 'certificate_request') {
-            return false;
-          }
-
-          // Strict Blotter Document Identification
-          const isExplicitBlotter =
-            doc.docType === 'blotter' ||
-            doc.type === 'blotter' ||
-            doc.type === 'blotter_report';
-
-          const hasBlotterRef = Boolean(
-            doc.trackingNo?.startsWith('BLT') ||
-            doc.caseNo?.startsWith('BLT') ||
-            doc.refNumber?.startsWith('BLT') ||
-            doc.id?.startsWith('BLT')
-          );
-
-          return isExplicitBlotter || hasBlotterRef;
-        })
-        .map(mapDocToBlotter)
-        .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
-
-      setBlotterList(blotterDocs);
-    } catch (err) {
-      console.error(' Error fetching blotter records from PouchDB:', err);
-    }
-  };
-
-  fetchBlotters();
-
-  const changes = db.changes({ live: true, since: 'now', include_docs: true });
-  changes.on('change', (changeInfo) => {
-    const doc = changeInfo.doc;
-    const isBlotter =
-      doc &&
-      (doc.docType === 'blotter' ||
+  useEffect(() => {
+    if (!db) return;
+    const fetchBlotters = async () => {
+      setIsBlottersLoading(true); // ✅ Set to true BEFORE fetch
+      try {
+        const res = await db.allDocs({ include_docs: true });
+        const blotterDocs = res.rows
+          .map((row) => row.doc)
+          .filter((doc) => {
+            if (!doc) return false;
+            if (doc.docType === 'certificate' || doc.type === 'certificate_request') return false;
+            const isExplicitBlotter = doc.docType === 'blotter' || doc.type === 'blotter' || doc.type === 'blotter_report';
+            const hasBlotterRef = Boolean(
+              doc.trackingNo?.startsWith('BLT') ||
+              doc.caseNo?.startsWith('BLT') ||
+              doc.refNumber?.startsWith('BLT') ||
+              doc.id?.startsWith('BLT')
+            );
+            return isExplicitBlotter || hasBlotterRef;
+          })
+          .map(mapDocToBlotter)
+          .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+        setBlotterList(blotterDocs);
+      } catch (err) {
+        console.error('Error fetching blotter records from PouchDB:', err);
+      } finally {
+        setIsBlottersLoading(false); // ✅ Set to false AFTER fetch
+      }
+    };
+    
+    fetchBlotters();
+    
+    const changes = db.changes({ live: true, since: 'now', include_docs: true });
+    changes.on('change', (changeInfo) => {
+      const doc = changeInfo.doc;
+      const isBlotter = doc && (
+        doc.docType === 'blotter' ||
         doc.type === 'blotter' ||
         doc.type === 'blotter_report' ||
         doc.trackingNo?.startsWith('BLT') ||
-        doc.caseNo?.startsWith('BLT'));
+        doc.caseNo?.startsWith('BLT')
+      );
+      if (isBlotter || changeInfo.deleted) {
+        fetchBlotters();
+      }
+    });
+    changes.on('error', (err) => {
+      console.error('❌ Admin blotter changes listener error:', err);
+    });
+    return () => {
+      changes.cancel();
+    };
+  }, [db]);
 
-    if (isBlotter || changeInfo.deleted) {
-      fetchBlotters();
-    }
-  });
-
-  changes.on('error', (err) => {
-    console.error('❌ Admin blotter changes listener error:', err);
-  });
-
-  return () => {
-    changes.cancel();
-  };
-}, [db]);
-
-// ── 3. LOOKUP TEXT INPUT QUERIES (Eksaktong tugma sa variable ng JSX mo!) ──
 const [complainantQuery, setComplainantQuery] = useState('');
 const [respondentQuery, setRespondentQuery] = useState('');
 
-// ── 4. DROPDOWN BOOLED CONTROLS (Eksaktong tugma sa variable ng JSX mo!) ──
 const [showComplainantDropdown, setShowComplainantDropdown] = useState(false);
 const [showRespondentDropdown, setShowRespondentDropdown] = useState(false);
 
@@ -3101,7 +3665,6 @@ const handleSearchResident = (inputQuery) => {
     );
   });
 };
-// ── 5. SUCCESS DIALOG ROUTINE INTERFACES (Eksaktong tugma sa variable ng JSX mo!) ──
 const [showSuccessModal, setShowSuccessModal] = useState(false);
 const [recentlyFiledId, setRecentlyFiledId] = useState('');
 
@@ -3217,7 +3780,7 @@ const handleFileUpload = async (e) => {
         size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
         type: file.type,
         data: base64Data, 
-        previewUrl: file.type.startsWith('image/') ? base64Data : null,
+        file: file, 
       };
     })
   );
@@ -3302,7 +3865,41 @@ const filteredBlotters = sortedBlotters.filter((b) => {
   );
 });
 
- const [isPrintModalOpen, setIsPrintModalOpen] = React.useState(false);
+const handleExportBlotterToExcel = () => {
+  if (filteredBlotters.length === 0) {
+    showToast('Walang data na pwedeng i-export.', 'error');
+    return;
+  }
+  
+  const exportData = filteredBlotters.map(b => ({
+    'Case No': b.id || b.trackingNo || b.refNumber || b._id,
+    'Complainant': b.complainant || b.complainantName || 'N/A',
+    'Respondent': b.respondent || b.respondentName || 'N/A',
+    'Incident Type': b.type || b.incidentType || 'N/A',
+    'Location': b.location || 'N/A',
+    'Date': b.date || b.incidentDate || 'N/A',
+    'Status': b.status || 'Pending',
+    'Summons Issued': b.summonCount || 0,
+    'CFA Issued': b.cfaIssued ? 'Yes' : 'No'
+  }));
+
+  const currentDate = new Date().toISOString().split('T')[0];
+  const fileName = `Barangay_Bustrac_Blotter_Log_${currentDate}.xlsx`;
+
+  // Audit Log for Export
+  if (typeof createAuditLog === 'function') {
+    createAuditLog({
+      action: 'EXPORT_DATA',
+      module: 'BLOTTER',
+      recordId: fileName,
+      details: `Admin exported Blotter Masterlist to Excel (${exportData.length} records).`
+    });
+  }
+
+  exportToExcel(exportData, fileName, 'BlotterLog');
+};
+
+const [isPrintModalOpen, setIsPrintModalOpen] = React.useState(false);
 const [selectedBlotter, setSelectedBlotter] = useState(null);
 const [selectedBlotterId, setSelectedBlotterId] = useState(null);
 const [blotterVerifyQuery, setBlotterVerifyQuery] = useState('');
@@ -3344,12 +3941,10 @@ useEffect(() => {
   if (pageFromUrl) {
     setScreen(pageFromUrl);
 
-    // ✅ FIX: Kapag blotter-detail ang nasa URL, siguraduhing nai-load ang tamang record state!
     if (pageFromUrl === 'blotter-detail') {
       const activeId = idFromUrl || localStorage.getItem('active_blotter_id');
       const cachedData = localStorage.getItem('active_blotter_data');
 
-      // 1. Unang subukang i-load mula sa cached LocalStorage data para mabilis (No flicker)
       if (cachedData) {
         try {
           const parsed = JSON.parse(cachedData);
@@ -3361,7 +3956,6 @@ useEffect(() => {
         }
       }
 
-      // 2. I-verify/Fall back sa blotterList kapag available na ito mula sa PouchDB
       if (activeId && blotterList && blotterList.length > 0) {
         const foundCase = blotterList.find(
           (b) => b._id === activeId || b.id === activeId || b.trackingNo === activeId || b.caseNo === activeId
@@ -3456,6 +4050,24 @@ const handleNewCertificateRequest = async (newRequestData) => {
   }
 };
 
+const openIssuanceWorkspace = (cert) => {
+  if (!cert) return;
+  if (typeof setSelectedCertificate === 'function') {
+    setSelectedCertificate(cert);
+  }
+  if (typeof nav === 'function') {
+    nav('cert-print');
+  }
+};
+
+const uniqueIssuedCertificates = useMemo(() => {
+  const map = new Map();
+  (issuedCertificates || []).forEach((c) => {
+    if (c?._id) map.set(c._id, c);
+  });
+  return Array.from(map.values());
+}, [issuedCertificates]);
+
 const approvedCertificates = useMemo(() => 
   (issuedCertificates || []).filter(cert => 
     (Number(cert.step) === 4 || cert.status === 'Approved' || cert.status?.toLowerCase() === 'approved') && 
@@ -3529,7 +4141,7 @@ const handleApproveCertificate = async (currentRequest) => {
     }
   } catch (err) {
     console.error('Failed to approve certificate:', err);
-    alert('Failed to approve certificate. Please try again.');
+    showToast('Failed to approve certificate. Please try again.', 'error');
   }
 };
 
@@ -3548,6 +4160,7 @@ const fetchIssuedCertificates = useCallback(async () => {
 const [logSearchQuery, setLogSearchQuery] = useState('');
 const [programFilter, setProgramFilter] = useState('All');
 const [statusFilter, setStatusFilter] = useState('All');
+
 const filteredLogs = aidLogs.filter(log => {
   // 1. Filter gamit ang Search Bar (Tugma sa Resident Name o Log ID)
   const matchesSearch = 
@@ -3604,61 +4217,421 @@ const [compSearchQuery, setCompSearchQuery] = useState('');
 const [respSearchQuery, setRespSearchQuery] = useState('');
 
 // ── ANNOUNCEMENTS DATABASE STATE ──
+const INITIAL_ANNOUNCEMENTS = useMemo(() => [
+  { _id: 'announcement_seed_1', type: 'announcement', title: 'Free Medical Mission — Apr 15', category: 'Health', content: 'Free consultation, blood pressure check, medicine dispensing. All residents welcome. Bring valid ID.', body: 'Free consultation, blood pressure check, medicine dispensing. All residents welcome. Bring valid ID.', pinned: true, author: 'Cortero', date: 'Apr 5', status: 'Published', createdAt: new Date(Date.now() - 3 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 3 * 86400000).toISOString() },
+  { _id: 'announcement_seed_2', type: 'announcement', title: 'Barangay Assembly — Apr 20', category: 'Governance', content: 'Quarterly assembly at 8:00 AM, covered court. All residents are encouraged to attend.', body: 'Quarterly assembly at 8:00 AM, covered court. All residents are encouraged to attend.', pinned: false, author: 'Napagal', date: 'Apr 4', status: 'Published', createdAt: new Date(Date.now() - 4 * 86400000).toISOString(), updatedAt: new Date(Date.now() - 4 * 86400000).toISOString() }
+], []);
+
 const [announcementsList, setAnnouncementsList] = useState([
-  { id: 1, title: 'Free Medical Mission — Apr 15', category: 'Health', content: 'Free consultation, blood pressure check, medicine dispensing. All residents welcome. Bring valid ID.', pinned: true, author: 'Cortero', date: 'Apr 5', status: 'Published' },
-  { id: 2, title: 'Barangay Assembly — Apr 20', category: 'Governance', content: 'Quarterly assembly at 8:00 AM, covered court. All residents are encouraged to attend.', pinned: false, author: 'Napagal', date: 'Apr 4', status: 'Published' }
+  { id: 1, _id: 'announcement_seed_1', type: 'announcement', title: 'Free Medical Mission — Apr 15', category: 'Health', content: 'Free consultation, blood pressure check, medicine dispensing. All residents welcome. Bring valid ID.', body: 'Free consultation, blood pressure check, medicine dispensing. All residents welcome. Bring valid ID.', pinned: true, author: 'Cortero', date: 'Apr 5', status: 'Published' },
+  { id: 2, _id: 'announcement_seed_2', type: 'announcement', title: 'Barangay Assembly — Apr 20', category: 'Governance', content: 'Quarterly assembly at 8:00 AM, covered court. All residents are encouraged to attend.', body: 'Quarterly assembly at 8:00 AM, covered court. All residents are encouraged to attend.', pinned: false, author: 'Napagal', date: 'Apr 4', status: 'Published' }
 ]);
 
+const [mapResidents, setMapResidents] = useState([]);
+const [mapBlotters, setMapBlotters] = useState([]);
+const [mapAid, setMapAid] = useState([]);
+const [mapLoading, setMapLoading] = useState(false);
+
 // ── SCREEN ROUTING SUB-STATE ──
-// Pwede itong: 'list' (Main Board), 'new' (Creation Box), o 'edit' (Modification Box)
+// 'list' (Main Board), 'new' (Creation Box), 'edit' (Modification Box)
 const [announcementSubScreen, setAnnouncementSubScreen] = useState('list');
 
-// ── CENTRALIZED FORM OBJECT STATE ──
+// ── CENTRALIZED FORM OBJECT STATE & SNAPSHOT REF ──
 const [announcementForm, setAnnouncementForm] = useState({
-  title: '', category: 'General', content: '', pinned: false, status: 'Published'
+  title: '', category: 'General', content: '', body: '', pinned: false, status: 'Draft'
 });
+const initialAnnouncementFormRef = useRef(null);
 
 // ── STATE IDENTIFIERS FOR ENGINE MANAGEMENT ──
 const [editingAnnId, setEditingAnnId] = useState(null);
 const [searchAnnQuery, setSearchAnnQuery] = useState('');
 const [filterAnnCategory, setFilterAnnCategory] = useState('All');
 const [filterAnnStatus, setFilterAnnStatus] = useState('All');
+const [isSavingAnnouncement, setIsSavingAnnouncement] = useState(false);
+const hasNoAnnouncementsAtAll = !(announcementsList || []).length;
 
-// ── DELETE CONFIRMATION INTERFACE OVERLAYS ──
-const [showAnnDeleteModal, setShowAnnDeleteModal] = useState(false);
-const [annIdToDelete, setAnnIdToDelete] = useState(null);
+const loadAnnouncements = useCallback(async () => {
+  if (!db) return;
+  try {
+    const res = await db.allDocs({ include_docs: true });
+    const docs = res.rows.map((r) => r.doc).filter(Boolean);
+    const annDocs = docs.filter((d) => d.type === 'announcement');
+    if (annDocs.length === 0) {
+      await db.bulkDocs(INITIAL_ANNOUNCEMENTS);
+      setAnnouncementsList(INITIAL_ANNOUNCEMENTS);
+    } else {
+      setAnnouncementsList(annDocs);
+    }
+  } catch (e) {
+    console.error('Failed to load announcements:', e);
+  }
+}, [INITIAL_ANNOUNCEMENTS]);
 
-// Trigger loading layout when editing
-const handleOpenEditAnnouncement = (ann) => {
-  setEditingAnnId(ann.id);
-  setAnnouncementForm({
-    title: ann.title,
-    category: ann.category,
-    content: ann.content,
-    pinned: ann.pinned,
-    status: ann.status
-  });
+// Live synchronization listener for Announcements
+useEffect(() => {
+  loadAnnouncements();
+  if (!db) return;
+  const changes = db.changes({
+    since: 'now',
+    live: true,
+    include_docs: true
+  }).on('change', (change) => {
+    if (change.deleted) {
+      setAnnouncementsList((prev) => prev.filter((a) => (a._id || a.id) !== change.id));
+    } else if (change.doc?.type === 'announcement') {
+      setAnnouncementsList((prev) => {
+        const filtered = prev.filter((a) => (a._id || a.id) !== change.doc._id);
+        return [change.doc, ...filtered];
+      });
+    }
+  }).on('error', (err) => console.error('Announcement db changes error:', err));
+
+  return () => changes.cancel();
+}, [loadAnnouncements]);
+
+const handleZoneClick = useCallback((zoneName) => {
+  console.log('Selected zone:', zoneName);
+}, []);
+
+const handleOpenNewAnnouncement = useCallback(() => {
+  const blankForm = {
+    title: '',
+    category: 'General',
+    content: '',
+    body: '',
+    pinned: false,
+    status: 'Draft'
+  };
+  setEditingAnnId(null);
+  setAnnouncementForm(blankForm);
+  initialAnnouncementFormRef.current = blankForm;
+  setAnnouncementSubScreen('new');
+}, []);
+
+const handleOpenEditAnnouncement = useCallback((ann) => {
+  const targetId = ann._id || ann.id;
+  const editData = {
+    _id: targetId,
+    id: targetId,
+    title: ann.title || '',
+    category: ann.category || 'General',
+    content: ann.content || ann.body || '',
+    body: ann.content || ann.body || '',
+    pinned: Boolean(ann.pinned),
+    status: ann.status || 'Draft'
+  };
+  setEditingAnnId(targetId);
+  setAnnouncementForm(editData);
+  initialAnnouncementFormRef.current = editData;
   setAnnouncementSubScreen('edit');
+}, []);
+
+const checkHasUnsavedChanges = useCallback(() => {
+  const initial = initialAnnouncementFormRef.current;
+  if (!initial) {
+    return Boolean(
+      (announcementForm.title || '').trim() ||
+      (announcementForm.content || announcementForm.body || '').trim()
+    );
+  }
+  const curTitle = (announcementForm.title || '').trim();
+  const initTitle = (initial.title || '').trim();
+  const curContent = (announcementForm.content || announcementForm.body || '').trim();
+  const initContent = (initial.content || initial.body || '').trim();
+  const curCategory = announcementForm.category || 'General';
+  const initCategory = initial.category || 'General';
+  const curPinned = Boolean(announcementForm.pinned);
+  const initPinned = Boolean(initial.pinned);
+
+  return (
+    curTitle !== initTitle ||
+    curContent !== initContent ||
+    curCategory !== initCategory ||
+    curPinned !== initPinned
+  );
+}, [announcementForm]);
+
+const handleCancelOrBackAnnouncement = useCallback(() => {
+  if (checkHasUnsavedChanges()) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Unsaved Changes',
+      text: 'May mga binago ka na hindi pa nasi-save. Sigurado kang nais mong umalis?',
+      showCancelButton: true,
+      confirmButtonText: 'Discard & Leave',
+      cancelButtonText: 'Stay',
+      confirmButtonColor: '#ef4444'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        setAnnouncementSubScreen('list');
+        setEditingAnnId(null);
+        initialAnnouncementFormRef.current = null;
+      }
+    });
+  } else {
+    setAnnouncementSubScreen('list');
+    setEditingAnnId(null);
+    initialAnnouncementFormRef.current = null;
+  }
+}, [checkHasUnsavedChanges]);
+
+const handleSaveAnnouncement = async (e, targetStatus) => {
+  if (e && typeof e.preventDefault === 'function') e.preventDefault();
+
+  const title = (announcementForm.title || '').trim();
+  const content = (announcementForm.content || announcementForm.body || '').trim();
+
+  if (!title || !content) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Required Fields',
+      text: 'Title and content are required.'
+    });
+    return;
+  }
+
+  setIsSavingAnnouncement(true);
+  try {
+    const isEdit = Boolean(editingAnnId || announcementForm._id || announcementForm.id);
+    const targetId = editingAnnId || announcementForm._id || announcementForm.id;
+    const now = new Date().toISOString();
+    const finalStatus = targetStatus || announcementForm.status || 'Draft';
+    let docPayload;
+
+    if (isEdit) {
+      let existing = null;
+      if (db) {
+        try {
+          existing = await db.get(targetId);
+        } catch (getErr) {
+          console.warn('Announcement document not found in PouchDB, saving fresh:', getErr);
+        }
+      }
+
+      docPayload = {
+        ...(existing || {}),
+        _id: targetId,
+        type: 'announcement',
+        title,
+        category: announcementForm.category || 'General',
+        content,
+        body: content,
+        pinned: Boolean(announcementForm.pinned),
+        status: finalStatus,
+        updatedAt: now
+      };
+
+      if (db) {
+        await db.put(docPayload);
+      }
+
+      try {
+        await createAuditLog({
+          action: 'UPDATE',
+          module: 'ANNOUNCEMENTS',
+          recordId: targetId,
+          user: `${currentUser?.username || 'admin'} (${role || 'admin'})`,
+          details: `Updated announcement: "${title}" (${finalStatus})`
+        });
+      } catch (auditErr) {
+        console.warn('Audit log failed for announcement update:', auditErr);
+      }
+
+      setAnnouncementsList((prev) =>
+        prev.map((a) => ((a._id || a.id) === targetId ? docPayload : a))
+      );
+
+      const isPublishedNow = finalStatus === 'Published';
+      const wasDraft = initialAnnouncementFormRef.current?.status === 'Draft';
+      const successMessage = isPublishedNow
+        ? (wasDraft ? 'Announcement published successfully!' : 'Changes saved successfully!')
+        : 'Announcement saved as draft!';
+      showToast(successMessage, 'success');
+    } else {
+      const newId = `announcement_${Date.now()}`;
+      const authorName = currentUser?.fullName || currentUser?.name || currentUser?.username || 'Administrator';
+      const formattedDate = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+
+      docPayload = {
+        _id: newId,
+        type: 'announcement',
+        title,
+        category: announcementForm.category || 'General',
+        content,
+        body: content,
+        pinned: Boolean(announcementForm.pinned),
+        status: finalStatus,
+        author: authorName,
+        date: formattedDate,
+        createdAt: now,
+        updatedAt: now
+      };
+
+      if (db) {
+        await db.put(docPayload);
+      }
+
+      try {
+        await createAuditLog({
+          action: 'CREATE',
+          module: 'ANNOUNCEMENTS',
+          recordId: newId,
+          user: `${currentUser?.username || 'admin'} (${role || 'admin'})`,
+          details: `Created announcement: "${title}" (${finalStatus})`
+        });
+      } catch (auditErr) {
+        console.warn('Audit log failed for announcement create:', auditErr);
+      }
+
+      setAnnouncementsList((prev) => [docPayload, ...prev]);
+
+      const successMessage = finalStatus === 'Published'
+        ? 'Announcement published successfully!'
+        : 'Draft saved successfully!';
+      showToast(successMessage, 'success');
+    }
+
+    initialAnnouncementFormRef.current = null;
+    setEditingAnnId(null);
+    setAnnouncementSubScreen('list');
+  } catch (err) {
+    console.error('Failed to save announcement:', err);
+    Swal.fire({
+      icon: 'error',
+      title: 'Save Failed',
+      text: err.message || 'An error occurred while saving the announcement.'
+    });
+  } finally {
+    setIsSavingAnnouncement(false);
+  }
 };
 
-// Quick structural handler for active pinning feature
-const handleTogglePinAnnouncement = (id) => {
-  setAnnouncementsList(announcementsList.map(ann => 
-    ann.id === id ? { ...ann, pinned: !ann.pinned } : ann
-  ));
+const handleTogglePinAnnouncement = async (id) => {
+  if (!id) return;
+  try {
+    let doc = null;
+    if (db) {
+      try {
+        doc = await db.get(id);
+      } catch {
+        const found = (announcementsList || []).find((a) => (a._id || a.id) === id);
+        if (found) {
+          doc = { ...found, _id: String(id), type: 'announcement' };
+        }
+      }
+    } else {
+      const found = (announcementsList || []).find((a) => (a._id || a.id) === id);
+      if (found) doc = { ...found };
+    }
+
+    if (!doc) return;
+
+    const newPinned = !doc.pinned;
+    const updated = {
+      ...doc,
+      pinned: newPinned,
+      updatedAt: new Date().toISOString()
+    };
+
+    if (db) {
+      await db.put(updated);
+    }
+
+    try {
+      await createAuditLog({
+        action: 'UPDATE',
+        module: 'ANNOUNCEMENTS',
+        recordId: id,
+        user: `${currentUser?.username || 'admin'} (${role || 'admin'})`,
+        details: `${newPinned ? 'Pinned' : 'Unpinned'} announcement: "${doc.title || id}"`
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for toggle pin:', auditErr);
+    }
+
+    setAnnouncementsList((prev) =>
+      prev.map((ann) => {
+        const annId = ann._id || ann.id;
+        return annId === id ? { ...ann, pinned: newPinned } : ann;
+      })
+    );
+
+    showToast(newPinned ? 'Announcement pinned to top' : 'Announcement unpinned', 'success');
+  } catch (err) {
+    console.error('Failed to toggle pin:', err);
+    showToast('Failed to update pin status', 'error');
+  }
 };
 
-// Trigger delete verification state tracker
-const handleTriggerDeleteAnnouncement = (id) => {
-  setAnnIdToDelete(id);
-  setShowAnnDeleteModal(true);
+const handleTriggerDeleteAnnouncement = async (id, title) => {
+  if (!id) return;
+  const result = await Swal.fire({
+    title: 'Delete Announcement?',
+    text: `Are you sure you want to delete "${title || 'this announcement'}"? This action cannot be undone.`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonColor: '#ef4444',
+    cancelButtonColor: '#6b7280',
+    confirmButtonText: 'Yes, delete',
+    cancelButtonText: 'Cancel'
+  });
+
+  if (!result.isConfirmed) return;
+
+  try {
+    let docTitle = title;
+    if (db) {
+      try {
+        const doc = await db.get(id);
+        if (doc?.title) docTitle = doc.title;
+        await db.remove(doc);
+      } catch (getErr) {
+        console.warn('Doc not found in PouchDB, removing from state only:', getErr);
+      }
+    }
+
+    setAnnouncementsList((prev) => prev.filter((ann) => (ann._id || ann.id) !== id));
+
+    try {
+      await createAuditLog({
+        action: 'DELETE',
+        module: 'ANNOUNCEMENTS',
+        recordId: id,
+        user: `${currentUser?.username || 'admin'} (${role || 'admin'})`,
+        details: `Deleted announcement: "${docTitle || id}"`
+      });
+    } catch (auditErr) {
+      console.warn('Audit log failed for delete announcement:', auditErr);
+    }
+
+    showToast('Announcement deleted successfully', 'success');
+  } catch (err) {
+    console.error('Failed to delete announcement:', err);
+    showToast('Failed to delete announcement', 'error');
+  }
 };
 
-const handleConfirmDeleteAnnouncement = () => {
-  setAnnouncementsList(announcementsList.filter(ann => ann.id !== annIdToDelete));
-  setShowAnnDeleteModal(false);
-  setAnnIdToDelete(null);
-};
+const filteredAnnouncements = React.useMemo(() => {
+  const q = searchAnnQuery.trim().toLowerCase();
+  return (announcementsList || [])
+    .slice()
+    .sort((a, b) => {
+      const pinDiff = (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0);
+      if (pinDiff !== 0) return pinDiff;
+      const timeA = new Date(a.updatedAt || a.createdAt || a.date || 0).getTime();
+      const timeB = new Date(b.updatedAt || b.createdAt || b.date || 0).getTime();
+      return timeB - timeA;
+    })
+    .filter((ann) => {
+      const title = String(ann.title || '').toLowerCase();
+      const content = String(ann.content || ann.body || '').toLowerCase();
+      const matchesQuery = !q || title.includes(q) || content.includes(q);
+      const matchesCategory = filterAnnCategory === 'All' || ann.category === filterAnnCategory;
+      const annStatus = ann.status || 'Draft';
+      const matchesStatus = filterAnnStatus === 'All' || annStatus === filterAnnStatus;
+      return matchesQuery && matchesCategory && matchesStatus;
+    });
+}, [announcementsList, searchAnnQuery, filterAnnCategory, filterAnnStatus]);
 
 // ── ADVANCED REGISTRY SEARCH & FILTER FIELDS ──
 const [searchFbQuery, setSearchFbQuery] = useState('');
@@ -3779,7 +4752,7 @@ const handleSubmitFeedbackAction = async (e) => {
       // HINDI NA kailangan mag-setFeedbackList dito manual dahil aabutan na ito ng live PouchDB listener mo!
     } catch (err) {
       console.error('Failed to update feedback in PouchDB:', err);
-      alert('Unable to save feedback update to offline database.');
+      showToast('Unable to save feedback update to offline database.', 'error');
       return;
     }
   } else {
@@ -3831,6 +4804,14 @@ const [conflictsList, setConflictsList] = useState([]);
 const [loadingConflicts, setLoadingConflicts] = useState(false);
 const [syncInstance, setSyncInstance] = useState(null);
 
+const [conflictSearch, setConflictSearch] = useState('');
+const [conflictStatusFilter, setConflictStatusFilter] = useState('all');
+const [conflictModuleFilter, setConflictModuleFilter] = useState('all');
+const [conflictSort, setConflictSort] = useState('newest');
+const [conflictPage, setConflictPage] = useState(1);
+const [selectedConflicts, setSelectedConflicts] = useState(new Set());
+const [showConflictDetail, setShowConflictDetail] = useState(null);
+const conflictsPerPage = 10;
 // ── CONFLICT CHECKER ──
 async function checkForConflicts() {
   try {
@@ -3870,6 +4851,7 @@ async function checkForConflicts() {
 const fetchDatabaseConflicts = async () => {
   if (typeof db === 'undefined') return;
   try {
+    setLoadingConflicts(true);
     const result = await db.allDocs({ conflicts: true, include_docs: true });
     const conflictList = [];
     for (const row of result.rows) {
@@ -3882,16 +4864,37 @@ const fetchDatabaseConflicts = async () => {
             const rawName = row.doc.name || `${row.doc.firstName || ''} ${row.doc.lastName || ''}`.trim() || 'Unknown Resident';
             const sanitizedName = String(rawName).replace(/</g, "&lt;").replace(/>/g, "&gt;");
             
-            conflictList.push({
-              id: `${row.id}-${conflictRev}`,
-              docId: row.id,
-              residentName: sanitizedName,
-              winningRev: row.doc._rev,
-              conflictRev: conflictRev,
-              docA: row.doc,
-              docB: conflictingDoc,
-              updatedAt: new Date().toLocaleTimeString()
-            });
+            const docADate = conflictDocTime(row.doc);
+const docBDate = conflictDocTime(conflictingDoc);
+const detectedAt = new Date().toISOString();
+
+const diff = computeConflictDiff(row.doc, conflictingDoc);
+const moduleLabel = conflictModuleLabel(row.doc?.type);
+const moduleKey = String(row.doc?.type || '').toLowerCase();
+const changedFields = diff.map((d) => d.field);
+const changedFieldsDisplay = diff.length === 0 ? '—' : diff.map((d) => d.label).join(', ');
+
+const conflictRecord = {
+  id: `${row.id}-${conflictRev}`,
+  docId: row.id,
+  residentName: sanitizedName,
+  winningRev: row.doc._rev,
+  conflictRev: conflictRev,
+  docA: row.doc,
+  docB: conflictingDoc,
+  updatedAt: detectedAt,
+  timeA: docADate,
+  timeB: docBDate,
+  latestConflictTime: Math.max(docADate, docBDate, Date.now() / 1000),
+  moduleLabel,
+  moduleKey,
+  type: row.doc?.type || conflictingDoc?.type,
+  diff,
+  changedFields,
+  changedFieldsDisplay,
+  status: 'unresolved',
+};
+conflictList.push(conflictRecord);
           } catch (fetchErr) {
             console.error('Error fetching conflicting revision doc:', fetchErr);
           }
@@ -3899,38 +4902,36 @@ const fetchDatabaseConflicts = async () => {
       }
     }
     setConflictsList(conflictList);
+    setSelectedConflicts(new Set());
   } catch (err) {
     console.error('Error fetching database conflicts:', err);
+  } finally {
+    setLoadingConflicts(false);
   }
 };
 
-const fetchResidents = async () => {
-  if (typeof db === 'undefined') return;
+
+const fetchArchivedResidents = async () => {
   try {
-    const result = await db.allDocs({ include_docs: true, conflicts: true });
-    const formattedResidents = result.rows
-      .filter(row => row.doc && (row.doc.type === 'residents' || row.id.startsWith('RES-')))
-      .map(row => {
-        const doc = row.doc;
-        return {
-          id: doc._id,
-          rbiId: doc.rbiId || '—',
-          name: doc.name || `${doc.firstName || ''} ${doc.lastName || ''}`.trim(),
-          purok: doc.purok || 'Unassigned',
-          age: doc.age || '—',
-          civilStatus: doc.civilStatus || 'Single',
-          voter: doc.voter || false,
-          household: doc.household || '—',
-          purokClass: doc.purokClass || 'g',
-          // Once the conflicting revision is removed via db.remove(), the _conflicts array will become empty or undefined, so this will evaluate to false.
-          conflict: Boolean(doc._conflicts && doc._conflicts.length > 0)
-        };
-      });
-    setResidentsList(formattedResidents);
+    const result = await db.allDocs({ include_docs: true });
+    const archived = result.rows
+      .filter(row => row.doc && (row.doc.type === 'resident' || row.doc.type === 'profile') && row.doc.isArchived === true)
+      .map(row => ({
+        id: row.doc._id,
+        name: row.doc.name || `${row.doc.firstName || ''} ${row.doc.lastName || ''}`.trim(),
+        purok: row.doc.purok || 'Unassigned',
+        archivedAt: row.doc.archivedAt
+      }));
+    setArchivedResidents(archived);
   } catch (err) {
-    console.error('Error fetching residents:', err);
+    console.error('Error fetching archived residents:', err);
   }
-};
+}
+
+// Siguraduhing tumatawag ito kapag nagbago ang viewMode
+useEffect(() => {
+  fetchResidents();
+}, [viewMode]); 
 
 
 
@@ -3946,14 +4947,17 @@ const handleKeepVersionA = async (conflict) => {
   try {
     // Attempt to remove the conflicting revision
     await db.remove(conflict.docId, conflict.conflictRev);
-    alert('✓ Conflict resolved. Retained Version A.');
+    showToast('✓ Conflict resolved. Retained Version A.', 'success');
     
-    await createAuditLog({
-      action: 'RESOLVE',
-      module: 'CONFLICTS',
-      recordId: conflict.docId,
-      details: `Kept Version A during conflict resolution for ${conflict.residentName}`
-    });
+    const diffSummary = Array.isArray(conflict.diff) && conflict.diff.length > 0
+  ? ` (${conflict.diff.map(d => d.label).join(', ')})`
+  : '';
+await createAuditLog({
+  action: 'CONFLICT_RESOLVED',
+  module: conflict.moduleLabel || 'CONFLICTS',
+  recordId: conflict.docId,
+  details: `Conflict resolved for ${conflict.residentName}. Selected: Version A${diffSummary}`
+});
     
     // Refresh UI
     if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
@@ -3962,17 +4966,16 @@ const handleKeepVersionA = async (conflict) => {
     console.error('Failed to purge conflict revision:', err);
     // If it's a 404 (already deleted) or 409 (already updated by sync), treat as success
     if (err.status === 404 || err.status === 409) {
-      alert('✓ Conflict was already resolved by background sync. Refreshing list...');
+      showToast('✓ Conflict was already resolved by background sync. Refreshing list...', 'success');
       if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
       if (typeof fetchResidents === 'function') fetchResidents();
     } else {
-      alert(`Error resolving conflict: ${err.message || 'Unknown error'}`);
+      showToast(`Error resolving conflict: ${err.message || 'Unknown error'}`, 'error');
     }
   }
 };
 
 // ── BULK RESOLVE ALL CONFLICTS (NUCLEAR OPTION) ──
-// ── BULK RESOLVE ALL CONFLICTS (ABSOLUTE FINAL FIX) ──
 const handleResolveAllConflicts = async () => {
   if (!window.confirm("⚠️ WARNING: This will permanently delete ALL conflicting revisions (Version B) and keep only the Local Winning version (Version A). This will also force a sync and compact the database. Continue?")) {
     return;
@@ -4072,7 +5075,7 @@ const handleResolveAllConflicts = async () => {
   setLoadingConflicts(false);
   
   const resultMsg = `✅ Bulk Resolution Complete!\n\nSuccessfully resolved: ${successCount} documents\nErrors/Skipped: ${errorCount}`;
-  alert(resultMsg);
+  showToast(resultMsg, 'success');
 
   // 7. FORCE REFRESH the UI and DB state
   if (typeof fetchDatabaseConflicts === 'function') {
@@ -4110,14 +5113,17 @@ const handleKeepVersionB = async (conflict) => {
       console.warn('Old conflict rev already resolved or removed by sync:', removeErr);
     }
     
-    alert('✓ Conflict resolved. Successfully kept Version B data.');
+    showToast('✓ Conflict resolved. Successfully kept Version B data.', 'success');
     
-    await createAuditLog({
-      action: 'RESOLVE',
-      module: 'CONFLICTS',
-      recordId: conflict.docId,
-      details: `Kept Version B data during conflict resolution for ${conflict.residentName}`
-    });
+    const diffSummary = Array.isArray(conflict.diff) && conflict.diff.length > 0
+  ? ` (${conflict.diff.map(d => d.label).join(', ')})`
+  : '';
+await createAuditLog({
+  action: 'CONFLICT_RESOLVED',
+  module: conflict.moduleLabel || 'CONFLICTS',
+  recordId: conflict.docId,
+  details: `Conflict resolved for ${conflict.residentName}. Selected: Version B${diffSummary}`
+});
     
     // Refresh UI
     if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
@@ -4126,11 +5132,11 @@ const handleKeepVersionB = async (conflict) => {
     console.error('Failed to resolve with Version B:', err);
     // Graceful fallback for race conditions with background sync
     if (err.status === 404 || err.status === 409) {
-      alert('✓ Conflict was already resolved by background sync. Refreshing list...');
+      showToast('✓ Conflict was already resolved by background sync. Refreshing list...', 'success');
       if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
       if (typeof fetchResidents === 'function') fetchResidents();
     } else {
-      alert(`Error resolving conflict: ${err.message || 'Unknown error'}`);
+      showToast(`Error resolving conflict: ${err.message || 'Unknown error'}`, 'error');
     }
   }
 };
@@ -4146,19 +5152,19 @@ const handleKeepBoth = async (conflict) => {
     
     await db.put(duplicateDoc);
     await db.remove(conflict.docId, conflict.conflictRev);
-    alert('✓ Conflict resolved. Saved Version B as a distinct record.');
+    showToast('✓ Conflict resolved. Saved Version B as a distinct record.', 'success');
     
-    await createAuditLog({
-      action: 'RESOLVE',
-      module: 'CONFLICTS',
-      recordId: conflict.docId,
-      details: `Split and kept both versions for ${conflict.residentName}`,
-    });
+await createAuditLog({
+  action: 'CONFLICT_RESOLVED',
+  module: conflict.moduleLabel || 'CONFLICTS',
+  recordId: conflict.docId,
+  details: `Conflict split for ${conflict.residentName}. Saved Version B as distinct record`,
+});
     
     fetchDatabaseConflicts();
   } catch (err) {
     console.error('Failed to split conflicting document:', err);
-    alert('Error splitting conflict.');
+    showToast('Error splitting conflict.', 'error');
   }
 };
 
@@ -4277,17 +5283,25 @@ const handleSelectCtc = (ctc) => {
 
 const handlePrintFormat = (format) => {
   if (!selectedCertificate) {
-    alert('Please select a certificate from the table first.');
+    showToast('Please select a certificate from the table first.', 'error');
     return;
   }
   setTimeout(() => window.print(), 150);
 };
 
-const handleSaveOnly = async () => {
-  if (!selectedCertificate) return;
+const handleSaveOnly = async (certOverride = null) => {
+  const targetCert = certOverride || selectedCertificate;
+
+  if (!targetCert) {
+    if (typeof showToast === 'function') {
+      showToast('No certificate selected.', 'error');
+    }
+    return;
+  }
 
   try {
-    const latestDoc = await db.get(selectedCertificate._id);
+    const latestDoc = await db.get(targetCert._id);
+
     const updatedDoc = {
       ...latestDoc,
       status: 'Issued',
@@ -4301,100 +5315,119 @@ const handleSaveOnly = async () => {
 
     await db.put(updatedDoc);
 
-    // ➔ Add Audit Log Call
-    try {
+    if (typeof createAuditLog === 'function') {
       await createAuditLog({
-        action: 'APPROVE_CERTIFICATE',
+        action: 'SAVE_CERTIFICATE',
         module: 'CERTIFICATES',
         recordId: updatedDoc.refNumber || updatedDoc._id,
         user: `${currentUser?.username || 'admin'} (${role})`,
-        details: `Saved & marked as Issued: ${
-          updatedDoc.certificateType || updatedDoc.certType || 'Certificate'
-        } for ${
-          updatedDoc.firstName || updatedDoc.lastName
-            ? `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim()
-            : updatedDoc.fullName || updatedDoc.residentName || 'Resident'
-        }`,
+        details: `Saved & marked as Issued: ${updatedDoc.certificateType || 'Certificate'} for ${updatedDoc.fullName || updatedDoc.residentName || 'Resident'}`,
       });
-    } catch (auditErr) {
-      console.warn('Audit log failed for Certificate save:', auditErr);
     }
 
     if (typeof forceSyncToRemote === 'function') {
       await forceSyncToRemote();
     }
 
-    // ✅ IMMEDIATE STATE UPDATE
     setIssuedCertificates((prev) => {
       const filtered = prev.filter((cert) => cert._id !== updatedDoc._id);
       return [updatedDoc, ...filtered];
     });
 
-    alert('Transaction saved and certificate marked as Issued!');
-
-    if (typeof clearSelectedCert === 'function') {
-      clearSelectedCert();
+    if (typeof showToast === 'function') {
+      showToast('Transaction saved and certificate marked as Issued!', 'success');
+    } else {
+      showToast('Transaction saved and certificate marked as Issued!', 'success');
     }
   } catch (err) {
     console.error('Save failed:', err);
-    alert('Failed to save transaction.');
+
+    if (typeof showToast === 'function') {
+      showToast('Failed to save transaction.', 'error');
+    } else {
+      showToast('Failed to save transaction.', 'error');
+    }
   }
 };
 
-const handlePrintDocument = async (passedCert = null) => {
-  // ✅ FIX: Gamitin ang passedCert kung meron, kung wala, fallback sa state
-  const targetCert = passedCert || selectedCertificate || selectedPrintCert;
-  
-  if (!targetCert) {
-    console.warn('No certificate selected for printing.');
+const onOpenPrintPreview = useCallback((cert, mode = 'copy') => {
+  setPrintMode(mode);
+  setPrintData(cert);
+}, [setPrintMode, setPrintData]);
+
+const issueAndPrint = async (cert) => {
+  if (!cert) return;
+
+  if (!issuanceMeta.orNumber?.trim()) {
+    Swal.fire({
+      icon: 'warning',
+      title: 'Missing O.R. Number',
+      text: 'Please enter the Official Receipt (O.R.) Number first.'
+    });
     return;
   }
 
-  try {
-    if (targetCert._id && targetCert.type === 'certificate_request') {
-      const latestDoc = await db.get(targetCert._id);
-      const updatedDoc = {
+  setPrintMode('original');
+
+  if (Number(cert.step) === 4) {
+    try {
+      const latestDoc = await db.get(cert._id);
+
+      const updatedCert = {
         ...latestDoc,
-        status: 'Issued',
         step: 5,
-        issuanceMeta: {
-          ...issuanceMeta,
-          printedAt: new Date().toISOString(),
-        },
+        status: 'Issued',
+        issuedAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
+        orNumber: issuanceMeta.orNumber,
+        amountPaid: issuanceMeta.amountPaid,
+        ctc: {
+          ...(latestDoc.ctc || {}),
+          number: issuanceMeta.ctcNumber || latestDoc.ctc?.number
+        }
       };
-      await db.put(updatedDoc);
 
-      try {
+      await db.put(updatedCert);
+
+      if (typeof setIssuedCertificates === 'function') {
+        setIssuedCertificates(prev =>
+          prev.map(c =>
+            c._id === updatedCert._id ? updatedCert : c
+          )
+        );
+      }
+
+      if (typeof createAuditLog === 'function') {
         await createAuditLog({
-          action: 'APPROVE_CERTIFICATE',
+          action: 'ISSUE_CERTIFICATE',
           module: 'CERTIFICATES',
-          recordId: updatedDoc.refNumber || updatedDoc._id,
-          user: `${currentUser?.username || 'admin'} (${role})`,
-          details: `Printed & issued ${updatedDoc.certificateType || updatedDoc.certType || 'Certificate'} for ${updatedDoc.firstName || updatedDoc.lastName ? `${updatedDoc.firstName || ''} ${updatedDoc.lastName || ''}`.trim() : updatedDoc.fullName || updatedDoc.residentName || 'Resident'}`,
+          recordId: updatedCert._id,
+          details: `Issued ${updatedCert.certificateType} for ${updatedCert.firstName} ${updatedCert.lastName}`
         });
-      } catch (auditErr) {
-        console.warn('Audit log failed for Certificate print:', auditErr);
       }
 
-      if (typeof forceSyncToRemote === 'function') {
-        await forceSyncToRemote();
-      }
+      setPrintData(updatedCert);
+      setSelectedCertificate(null);
 
-      setIssuedCertificates((prev) => {
-        const filtered = prev.filter((cert) => cert._id !== updatedDoc._id);
-        return [updatedDoc, ...filtered];
+      Swal.fire({
+        icon: 'success',
+        title: 'Certificate Issued!',
+        text: 'Document printed and status updated to Issued.',
+        timer: 2500,
+        showConfirmButton: false
+      });
+    } catch (err) {
+      console.error('Failed to auto-issue certificate:', err);
+
+      Swal.fire({
+        icon: 'error',
+        title: 'Update Failed',
+        text: 'Document printed, but failed to update status. Please check connection.'
       });
     }
-
-    setTimeout(() => {
-      window.print();
-    }, 300);
-  } catch (err) {
-    console.error('Print DB update failed (falling back to print only):', err);
-    setTimeout(() => {
-      window.print();
-    }, 300);
+  } else {
+    setPrintData(cert);
+    setSelectedCertificate(null);
   }
 };
 
@@ -4402,7 +5435,7 @@ const executePrintAndIssue = async (targetCert) => {
   const targetId = targetCert?._id || selectedCertificate?._id;
 
   if (!targetId) {
-    alert('No certificate selected.');
+    showToast('No certificate selected.', 'error');
     return;
   }
 
@@ -4411,8 +5444,9 @@ const executePrintAndIssue = async (targetCert) => {
     !String(issuanceMeta.orNumber).trim() ||
     !issuanceMeta.amountPaid
   ) {
-    alert(
-      'Please fill in required payment fields (OR No. and Amount Paid) in the receipt section before printing.'
+    showToast(
+      'Please fill in required payment fields (OR No. and Amount Paid) in the receipt section before printing.',
+      'error'
     );
     return;
   }
@@ -4475,10 +5509,10 @@ const executePrintAndIssue = async (targetCert) => {
     setSelectedCertificate(updatedDoc);
 
     window.print();
-    alert('✓ Certificate successfully issued, saved, and sent to printer!');
+    showToast('✓ Certificate successfully issued, saved, and sent to printer!', 'success');
   } catch (err) {
     console.error('Print release failed:', err);
-    alert('Failed to process certificate release.');
+    showToast('Failed to process certificate release.', 'error');
   }
 };
 
@@ -4490,7 +5524,6 @@ const [ctcForm, setCtcForm] = useState({
   rbiNo: '',
   ctcName: '',
   amtPaid: '',
-  dateIssued: new Date().toISOString().split('T')[0],
   placeIssued: 'Nabua, Camarines Sur',
   isIssuedByBarangay: true,
 });
@@ -4509,10 +5542,9 @@ const handleSaveCtc = async (e) => {
       ctcNo: ctcForm.ctcNo.trim(),
       ctcName: ctcForm.ctcName.trim() || 'Resident',
       amtPaid: ctcForm.amtPaid,
-      dateIssued: ctcForm.dateIssued,
       isIssuedByBarangay: ctcForm.isIssuedByBarangay,
       placeIssued: ctcForm.placeIssued,
-       dateIssued: ctcForm.dateIssued || toPHDateString(),
+      dateIssued: ctcForm.dateIssued || toPHDateString(),
       createdAt: new Date().toISOString(),
     };
 
@@ -4549,10 +5581,10 @@ const handleSaveCtc = async (e) => {
       isIssuedByBarangay: true,
     });
 
-    alert('✓ CTC Record successfully saved!');
+    showToast('✓ CTC Record successfully saved!', 'success');
   } catch (err) {
     console.error('Failed to save CTC record to local database:', err);
-    alert('Error saving CTC record.');
+    showToast('Error saving CTC record.', 'error');
   }
 };
 
@@ -4577,7 +5609,6 @@ const [businessForm, setBusinessForm] = useState({
   orDateIssued: toPHDateString(), 
 
   // Business Information
-  regDate: new Date().toISOString().split('T')[0],
   businessName: '',
   natureOfBusiness: '',
   businessCategory: '',
@@ -4645,7 +5676,6 @@ useEffect(() => {
 const handleSaveBusinessClearance = async (e) => {
   e.preventDefault();
 
-  // 1. Validate Page 1 Fields
   if (
     !businessForm.businessName?.trim() ||
     !businessForm.lastName?.trim() ||
@@ -4659,14 +5689,12 @@ const handleSaveBusinessClearance = async (e) => {
     return;
   }
 
-  // 2. Validate Page 2 Fields (OR No. and Fee)
   const hasOrNo =
     businessForm.orNo &&
     String(businessForm.orNo).trim().length > 0;
 
   const hasFee =
     businessForm.clearanceFee !== undefined &&
-    businessForm.clearanceFee !== null &&
     String(businessForm.clearanceFee).trim().length > 0;
 
   if (!hasOrNo || !hasFee) {
@@ -4675,17 +5703,6 @@ const handleSaveBusinessClearance = async (e) => {
       'error'
     );
     setBusinessTab('page2');
-
-    setTimeout(() => {
-      const orInput = document.querySelector(
-        'input[placeholder="e.g. 9876543"]'
-      );
-
-      if (orInput) {
-        orInput.focus();
-      }
-    }, 300);
-
     return;
   }
 
@@ -4693,7 +5710,6 @@ const handleSaveBusinessClearance = async (e) => {
 
   try {
     const isEditing = Boolean(businessForm._id);
-
     const docId = isEditing
       ? businessForm._id
       : `bus_clearance_${Date.now()}`;
@@ -4702,65 +5718,38 @@ const handleSaveBusinessClearance = async (e) => {
       ? businessForm.bcIdNo
       : await getNextBusinessSequence();
 
+    const formattedOwnerName = `${businessForm.lastName || ''}, ${businessForm.firstName || ''} ${businessForm.middleName || ''}`
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase();
+
     const payload = {
       ...businessForm,
-       regDate: businessForm.regDate || toPHDateString(),
-  orDateIssued: businessForm.orDateIssued || toPHDateString(),
-
-      bcIdNo: newBcIdNo,
+      ownerName: formattedOwnerName,
       _id: docId,
+      bcIdNo: newBcIdNo,
       type: 'business_clearance',
-
-      clearanceFee: Number(
-        businessForm.clearanceFee || 0
-      ).toFixed(2),
-
-      garbageFee: Number(
-        businessForm.garbageFee || 0
-      ).toFixed(2),
-
+      clearanceFee: Number(businessForm.clearanceFee || 0).toFixed(2),
+      garbageFee: Number(businessForm.garbageFee || 0).toFixed(2),
       updatedAt: new Date().toISOString(),
-
-      createdAt:
-        businessForm.createdAt ||
-        new Date().toISOString(),
+      createdAt: businessForm.createdAt || new Date().toISOString(),
     };
 
-    // Remove revision when creating a new record
     if (!isEditing) {
       delete payload._rev;
     }
 
-    // Save to local database
-    if (typeof db !== 'undefined' && db.put) {
-      await db.put(payload);
-    }
+    await db.put(payload);
 
-    // Create audit log
-    try {
-      await createAuditLog({
-        action: isEditing
-          ? 'UPDATE_BUSINESS_CLEARANCE'
-          : 'CREATE_BUSINESS_CLEARANCE',
+    await createAuditLog({
+      action: isEditing
+        ? 'UPDATE_BUSINESS_CLEARANCE'
+        : 'CREATE_BUSINESS_CLEARANCE',
+      module: 'BUSINESS_CLEARANCE',
+      recordId: newBcIdNo,
+      details: `${isEditing ? 'Updated' : 'Created'} Business Clearance ${newBcIdNo} for ${businessForm.businessName}`,
+    });
 
-        module: 'BUSINESS_CLEARANCE',
-
-        recordId: newBcIdNo,
-
-        details: `${
-          isEditing ? 'Updated' : 'Created'
-        } Business Clearance ${newBcIdNo} for ${
-          businessForm.businessName
-        }`,
-      });
-    } catch (auditErr) {
-      console.warn(
-        'Audit log failed:',
-        auditErr
-      );
-    }
-
-    // Success notification
     showToast(
       isEditing
         ? 'Business Clearance updated successfully!'
@@ -4768,30 +5757,15 @@ const handleSaveBusinessClearance = async (e) => {
       'success'
     );
 
-    // Reset form without confirmation after successful save/update
     await resetBusinessForm(true);
-
-    // Return to Page 1
     setBusinessTab('page1');
-
-    // Scroll back to the top
-    window.scrollTo({
-      top: 0,
-      behavior: 'smooth',
-    });
-
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   } catch (err) {
-    console.error(
-      'Failed to save/update Business Clearance record:',
-      err
-    );
-
+    console.error('Failed to save/update Business Clearance:', err);
     showToast(
-      'Error saving record to local database: ' +
-        err.message,
+      `Error saving record: ${err.message || 'Database error'}`,
       'error'
     );
-
   } finally {
     setIsSavingBusiness(false);
   }
@@ -4802,111 +5776,116 @@ const handleEditBusinessClearance = (record) => {
     showToast('Error: Cannot edit. Record ID is missing.', 'error');
     return;
   }
-  
+
+  let lastName = record.lastName;
+  let firstName = record.firstName;
+  let middleName = record.middleName;
+
+  if ((!lastName || !firstName) && record.ownerName) {
+    const parts = record.ownerName.split(',');
+
+    if (parts.length >= 2) {
+      lastName = parts[0].trim();
+      const nameParts = parts[1].trim().split(' ');
+      firstName = nameParts[0] || '';
+      middleName = nameParts.slice(1).join(' ') || '';
+    }
+  }
+
+  const formatDateForInput = (dateStr) => {
+    if (!dateStr) return '';
+
+    const d = new Date(dateStr);
+    return isNaN(d.getTime()) ? '' : d.toISOString().split('T')[0];
+  };
+
   setBusinessForm({
-    bcIdNo: record.bcIdNo || '',
-    civilStatus: record.civilStatus || '',
-    lastName: record.lastName || '',
-    firstName: record.firstName || '',
-    middleName: record.middleName || '',
-    contactNo: record.contactNo || '',
-    email: record.email || '',
-    applicantAddress: record.applicantAddress || '',
-    applicantBgyCityProv: record.applicantBgyCityProv || '',
-    occupation: record.occupation || '',
-    nationality: record.nationality || '',
-    isFemale: record.isFemale || false,
-    remarks: record.remarks || '',
-    photoUrl: record.photoUrl || null,
-    regDate: record.regDate || '',
-    storeAreaSqm: record.storeAreaSqm || '',
-    businessName: record.businessName || '',
-    natureOfBusiness: record.natureOfBusiness || '',
-    businessCategory: record.businessCategory || '',
-    typeOfBusiness: record.typeOfBusiness || '',
-    businessAddress: record.businessAddress || '',
-    businessBgyCityProv: record.businessBgyCityProv || '',
-    businessContactNo: record.businessContactNo || '',
-    businessEmail: record.businessEmail || '',
-    cctvEnabled: record.cctvEnabled || false,
-    sanitaryWasteDisposal: record.sanitaryWasteDisposal || false,
-    hasFireExtinguisher: record.hasFireExtinguisher || false,
-    hasFireExit: record.hasFireExit || false,
-    sanitaryCompliant: record.sanitaryCompliant || false,
-    employeeCount: record.employeeCount || 0,
-    employeeMasterlistName: record.employeeMasterlistName || '',
-    orNo: record.orNo || '',
-    orDateIssued: record.orDateIssued || new Date().toISOString().split('T')[0],
-    clearanceFee: record.clearanceFee || '',
-    garbageFee: record.garbageFee || '',
-    _id: record._id,   
-    _rev: record._rev   
+    ...INITIAL_BUSINESS_STATE,
+    ...record,
+    lastName: lastName || '',
+    firstName: firstName || '',
+    middleName: middleName || '',
+    regDate: formatDateForInput(record.regDate),
+    orDateIssued: formatDateForInput(record.orDateIssued),
+    secretary:
+      record.secretary ||
+      settingsForm?.luponSecretary ||
+      'MRS. MELY M. PRESADO',
+    captain:
+      record.captain ||
+      settingsForm?.punongBarangay ||
+      'HON. ANNABELLE E. RULL',
   });
 
-  setBusinessTab('page1'); 
-  window.scrollTo({ top: 0, behavior: 'smooth' });
-  showToast('Record loaded for editing.', 'success');
+  setBusinessTab('page1');
+  showToast(`Loaded "${record.businessName}" for editing.`, 'info');
 
-    // Scroll smoothly papunta sa form after ng state update
   setTimeout(() => {
     if (businessFormRef.current) {
-      businessFormRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      businessFormRef.current.scrollIntoView({
+        behavior: 'smooth',
+        block: 'start'
+      });
+
+      businessFormRef.current.style.boxShadow =
+        '0 0 0 4px rgba(59, 130, 246, 0.4)';
+      businessFormRef.current.style.transition = 'box-shadow 0.3s ease';
+
+      const businessNameInput =
+        businessFormRef.current.querySelector(
+          'input[placeholder*="Business Name"]'
+        );
+
+      if (businessNameInput) {
+        businessNameInput.focus();
+      }
+
+      setTimeout(() => {
+        if (businessFormRef.current) {
+          businessFormRef.current.style.boxShadow = 'none';
+        }
+      }, 1500);
     } else {
-      window.scrollTo({ top: 0, behavior: 'smooth' }); // Fallback
+      window.scrollTo({
+        top: 0,
+        behavior: 'smooth'
+      });
     }
-  }, 100); // 100ms delay para siguradong na-render na ang Page 1
+  }, 100);
 };
 
 // ── RESET BUSINESS CLEARANCE FORM ──
 const resetBusinessForm = async (skipConfirm = false) => {
-  if (!skipConfirm && (businessForm.businessName.trim() || businessForm.lastName.trim() || businessForm.firstName.trim())) {
-    if (!window.confirm('Are you sure you want to clear the form? All unsaved data will be lost.')) {
+  if (
+    !skipConfirm &&
+    (
+      businessForm.businessName?.trim() ||
+      businessForm.lastName?.trim() ||
+      businessForm.firstName?.trim()
+    )
+  ) {
+    if (
+      !window.confirm(
+        'Are you sure you want to clear the form? All unsaved data will be lost.'
+      )
+    ) {
       return;
     }
   }
 
   const nextBcIdNo = await peekNextBusinessSequence();
+
   setBusinessForm({
+    ...INITIAL_BUSINESS_STATE,
     bcIdNo: nextBcIdNo,
-    lastName: '',
-    firstName: '',
-    middleName: '',
-    contactNo: '',
-    email: '',
-    applicantAddress: '',
-    applicantBgyCityProv: 'Bustrac, Nabua, Camarines Sur',
-    civilStatus: '',
-    occupation: '',
-    nationality: 'Filipino',
-    isFemale: false,
-    remarks: '',
-    photoUrl: null,
     regDate: new Date().toISOString().split('T')[0],
-    businessName: '',
-    natureOfBusiness: '',
-    businessCategory: '',
-    typeOfBusiness: '',
-    storeAreaSqm: '',
-    businessAddress: '',
-    businessBgyCityProv: 'BUSTRAC, NABUA, CAMARINES SUR',
-    businessContactNo: '',
-    businessEmail: '',
-    cctvEnabled: false,
-    sanitaryWasteDisposal: false,
-    hasFireExtinguisher: false,
-    hasFireExit: false,
-    sanitaryCompliant: false,
-    employeeCount: 0,
-    employeeMasterlistName: '',
-    orNo: '',
     orDateIssued: new Date().toISOString().split('T')[0],
-    clearanceFee: '',
-    garbageFee: '',
     secretary: settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
     captain: settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
-    _id: '',
-    _rev: undefined
+    _id: null,
+    _rev: null
   });
+
   setBusinessTab('page1');
 };
 
@@ -5011,23 +5990,34 @@ const sortedFilteredResidents = [...filteredResidents].sort((a, b) => {
   return 0;
 });
 
-const isBlotterFormValid = useMemo(() => {
-  const getPartyName = (party) => {
-    if (!party) return '';
-    if (typeof party === 'string') return party.trim();
-    if (typeof party === 'object') return (party.name || party.displayName || party.firstName || '').trim();
-    return '';
-  };
+const handleExportResidentsExcel = async () => { try { // Kung may selected residents, export lang ang selected // Kung wala, export lahat ng currently filtered const dataToExport = selectedResidents.length > 0 ? sortedFilteredResidents.filter((r) => selectedResidents.includes(r.id)) : sortedFilteredResidents;
 
-  const hasComplainant = getPartyName(blotterForm.complainant) !== '' || getPartyName(blotterForm.complainantName) !== '';
-  const hasRespondent = getPartyName(blotterForm.respondent) !== '' || getPartyName(blotterForm.respondentName) !== '';
-  const hasDate = Boolean(blotterForm.date);
-  const hasTime = Boolean(blotterForm.time);
-  const hasLocation = Boolean(blotterForm.location && blotterForm.location.trim() !== '');
-  const hasNarrative = Boolean(blotterForm.narrative && blotterForm.narrative.trim() !== '');
+if (dataToExport.length === 0) {
+  showToast('warning', 'No residents to export');
+  return;
+}
 
-  return hasComplainant && hasRespondent && hasDate && hasTime && hasLocation && hasNarrative;
-}, [blotterForm]);
+const rows = dataToExport.map((r) => ({
+  'Resident ID': r.id,
+  'RBI ID': r.rbiId || '—',
+  'Full Name': r.name,
+  'Purok': r.purok,
+  'Age': r.age,
+  'Gender': r.gender || '—',
+  'Civil Status': r.civilStatus,
+  'Voter': r.voter ? 'Yes' : 'No',
+  'Household': r.household || '—',
+  'Status': viewMode === 'archived' ? 'Archived' : 'Active',
+}));
+
+await exportToExcel({
+  data: rows,
+  filename: `Bustrac_Residents_${viewMode}_${new Date().toISOString().slice(0, 10)}`,
+  sheetName: 'Residents',
+});
+
+showToast('success', `Exported ${rows.length} residents to Excel`);
+} catch (err) { console.error('Excel export failed:', err); showToast('error', 'Failed to export: ' + err.message); } };
 
 const filteredFeedback = feedbackList
   .slice()
@@ -5054,28 +6044,736 @@ const filteredFeedback = feedbackList
   });
 
   // ── USERS FILTER STATES ──
-const [searchUserQuery, setSearchUserQuery] = useState('');
-const [filterUserRole, setFilterUserRole] = useState('All');
+  // ── INITIAL SEED ACCOUNTS FOR LOCAL POUCHDB ──
+  const INITIAL_SYSTEM_USERS = [
+    { 
+      _id: 'user_admin', type: 'user', docType: 'user', username: 'admin', 
+      name: 'System Administrator', fullName: 'System Administrator',
+      role: 'Admin', purok: 'N/A', status: 'Active', contact: '09123456780', email: 'admin@bustrac.gov.ph',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: new Date().toISOString() 
+    },
+    { 
+      _id: 'user_jmacabangon', type: 'user', docType: 'user', username: 'jmacabangon', 
+      name: 'Macabangon, Juhairo B.', fullName: 'Macabangon, Juhairo B.',
+      role: 'Admin', purok: 'N/A', status: 'Active', contact: '09123456781', email: 'jmacabangon@bustrac.gov.ph',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: new Date().toISOString() 
+    },
+    { 
+      _id: 'user_mgcortero', type: 'user', docType: 'user', username: 'mgcortero', 
+      name: 'Cortero, Mark Gian A.', fullName: 'Cortero, Mark Gian A.',
+      role: 'Staff', purok: 'Purok 2', status: 'Active', contact: '09123456782', email: 'mgcortero@bustrac.gov.ph',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: new Date().toISOString() 
+    },
+    { 
+      _id: 'user_jonapagal', type: 'user', docType: 'user', username: 'jonapagal', 
+      name: 'Napagal, Jay O.', fullName: 'Napagal, Jay O.',
+      role: 'Staff', purok: 'Purok 4', status: 'Active', contact: '09123456783', email: 'jonapagal@bustrac.gov.ph',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: new Date().toISOString() 
+    },
+    { 
+      _id: 'user_mdregaspi', type: 'user', docType: 'user', username: 'mdregaspi', 
+      name: 'Regaspi, Mark Denver S.', fullName: 'Regaspi, Mark Denver S.',
+      role: 'Staff', purok: 'Purok 1', status: 'Inactive', contact: '09123456784', email: 'mdregaspi@bustrac.gov.ph',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: new Date().toISOString() 
+    },
+    { 
+      _id: 'user_kjamparado', type: 'user', docType: 'user', username: 'kjamparado', 
+      name: 'Amparado, Ken Jette T.', fullName: 'Amparado, Ken Jette T.',
+      role: 'Staff', purok: 'Purok 3', status: 'Active', contact: '09123456785', email: 'kjamparado@bustrac.gov.ph',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: new Date().toISOString() 
+    },
+    { 
+      _id: 'user_mdsantos', type: 'user', docType: 'user', username: 'mdsantos', 
+      name: 'Santos, Maria D.', fullName: 'Santos, Maria D.',
+      role: 'Resident', purok: 'Purok 5', status: 'Active', contact: '09123456786', email: 'mdsantos@bustrac.gov.ph',
+      createdAt: '2026-01-01T00:00:00.000Z', updatedAt: new Date().toISOString() 
+    },
+  ];
 
-const usersList = [
-  { id: 'USR-001', name: 'Macabangon, Juhairo B.', uname: 'jmacabangon', role: 'Admin',    rClass: 'r', status: 'Active', last: 'Apr 7, 07:30' },
-  { id: 'USR-002', name: 'Cortero, Mark Gian A.',    uname: 'mgcortero',   role: 'Staff',   rClass: 'p', status: 'Active', last: 'Apr 7, 08:00' },
-  { id: 'USR-003', name: 'Napagal, Jay O.',          uname: 'jonapagal',   role: 'Staff',   rClass: 'p', status: 'Active', last: 'Apr 7, 07:45' },
-  { id: 'USR-004', name: 'Regaspi, Mark Denver S.',  uname: 'mdregaspi',   role: 'Staff',   rClass: 'p', status: 'Active', last: 'Apr 6, 05:00' },
-  { id: 'USR-005', name: 'Amparado, Ken Jette T.',   uname: 'kjamparado',  role: 'Staff',   rClass: 'p', status: 'Active', last: 'Apr 7, 09:00' },
-  { id: 'USR-006', name: 'Santos, Maria D.',         uname: 'mdsantos',    role: 'Resident', rClass: 't', status: 'Active', last: 'Apr 5, 10:00' },
-];
+  // ── USERS FILTER & MODAL STATES ──
+  const [usersList, setUsersList] = useState([]);
+  const [editingUser, setEditingUser] = useState(null);
+  const [showAddUserModal, setShowAddUserModal] = useState(false);
+  const [linkRequestTarget, setLinkRequestTarget] = useState(null);
+  const [activeActionMenu, setActiveActionMenu] = useState(null);
+  const [searchUserQuery, setSearchUserQuery] = useState('');
+  const [filterUserRole, setFilterUserRole] = useState('All');
 
-const filteredUsers = usersList.filter((u) => {
-  const q = searchUserQuery.toLowerCase();
-  const matchesSearch =
-    !q ||
-    u.name.toLowerCase().includes(q) ||
-    u.uname.toLowerCase().includes(q) ||
-    u.id.toLowerCase().includes(q);
-  const matchesRole = filterUserRole === 'All' || u.role === filterUserRole;
-  return matchesSearch && matchesRole;
-});
+  // Close active row action menu when clicking outside
+  useEffect(() => {
+    const handleOutsideClick = () => setActiveActionMenu(null);
+    window.addEventListener('click', handleOutsideClick);
+    return () => window.removeEventListener('click', handleOutsideClick);
+  }, []);
+
+  // Fetch users from PouchDB (seed defaults if empty)
+  const fetchUsers = useCallback(async () => {
+    if (!db) return;
+    try {
+      const res = await db.find({
+        selector: {
+          $or: [{ type: 'user' }, { docType: 'user' }],
+        },
+      });
+
+      if (!res.docs || res.docs.length === 0) {
+        // Seed default system users with SHA-256 hashed password into PouchDB
+        const defaultHash = await hashPassword('capstone2026');
+        const docsToSeed = INITIAL_SYSTEM_USERS.map((u) => ({
+          ...u,
+          passwordHash: defaultHash,
+        }));
+        await db.bulkDocs(docsToSeed);
+        setUsersList(docsToSeed);
+      } else {
+        // Sort: Admin first, then Staff, then Resident, then by Full Name
+        const sorted = [...res.docs].sort((a, b) => {
+          const roleOrder = { admin: 1, staff: 2, secretary: 2, resident: 3 };
+          const orderA = roleOrder[(a.role || '').toLowerCase()] || 4;
+          const orderB = roleOrder[(b.role || '').toLowerCase()] || 4;
+          if (orderA !== orderB) return orderA - orderB;
+          const nameA = a.fullName || a.name || a.username || '';
+          const nameB = b.fullName || b.name || b.username || '';
+          return nameA.localeCompare(nameB);
+        });
+        setUsersList(sorted);
+      }
+    } catch (e) {
+      console.error('Failed to load users from PouchDB:', e);
+    }
+  }, [db]);
+
+  useEffect(() => {
+    fetchUsers();
+  }, [fetchUsers]);
+
+  const filteredUsers = useMemo(() => {
+    return (usersList || []).filter((u) => {
+      const query = searchUserQuery.toLowerCase().trim();
+      const uname = (u.username || u.uname || '').toLowerCase();
+      const name = (u.fullName || u.name || '').toLowerCase();
+      const purok = (u.purok || '').toLowerCase();
+
+      const matchesSearch =
+        !query ||
+        name.includes(query) ||
+        uname.includes(query) ||
+        purok.includes(query);
+
+      const userRole = (u.role || '').toLowerCase();
+      const filterRole = filterUserRole.toLowerCase();
+      const matchesRole =
+        filterUserRole === 'All' ||
+        userRole === filterRole ||
+        (filterRole === 'staff' && (userRole === 'staff' || userRole === 'secretary'));
+
+      return matchesSearch && matchesRole;
+    });
+  }, [usersList, searchUserQuery, filterUserRole]);
+
+  // ── PENDING ACCOUNT REQUESTS (Manage Users section) ──
+  const [accountRequests, setAccountRequests] = useState([]);
+
+  const fetchAccountRequests = useCallback(async () => {
+    try {
+      const result = await db.allDocs({ include_docs: true });
+      const requests = result.rows
+        .map((row) => row.doc)
+        .filter(
+          (doc) =>
+            doc &&
+            ['account_request', 'resident_account_request'].includes(doc.type) &&
+            ['Pending', 'Pending Verification'].includes(doc.status)
+        )
+        .sort((a, b) => new Date(b.requestedAt) - new Date(a.requestedAt));
+      setAccountRequests(requests);
+    } catch (err) {
+      console.error('Failed to fetch account requests:', err);
+    }
+  }, [db]);
+
+  useEffect(() => {
+    fetchAccountRequests();
+  }, [fetchAccountRequests]);
+
+  // ── HANDLE APPROVE RESIDENT ACCOUNT REQUEST (CONTROLLED REGISTRY LINKING) ──
+  const handleApproveRequest = async (requestDoc) => {
+    const normalizeName = (name) =>
+      (name || '').toLowerCase().replace(/[,.-]/g, '').trim().replace(/\s+/g, ' ');
+    const reqNameNormalized = normalizeName(requestDoc.fullName || requestDoc.name);
+    const reqWords = reqNameNormalized.split(' ').filter((w) => w.length > 1);
+
+    const exactMatches = [];
+
+    (residentsList || []).forEach((r) => {
+      const rNameNormalized = normalizeName(r.name || `${r.firstName || ''} ${r.lastName || ''}`);
+      const isSamePurok = (r.purok || '').toLowerCase() === (requestDoc.purok || '').toLowerCase();
+      if (rNameNormalized === reqNameNormalized) {
+        exactMatches.push({ resident: r, isSamePurok });
+      } else if (reqWords.length >= 2 && reqWords.every((w) => rNameNormalized.includes(w))) {
+        exactMatches.push({ resident: r, isSamePurok });
+      }
+    });
+
+    // CASE 1: Exactly One Match Found
+    if (exactMatches.length === 1) {
+      const candidate = exactMatches[0].resident;
+      const result = await Swal.fire({
+        icon: 'question',
+        title: 'Link to Existing Resident?',
+        html: `
+          <div style="text-align: left; background: #f8fafc; padding: 14px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px; color: #0f172a;">
+            <p style="margin: 0 0 8px 0; color: #475569;">Natagpuan ang <strong>1 matching resident</strong> sa Registry:</p>
+            <div style="margin-bottom: 6px;"><strong>Name:</strong> ${candidate.name}</div>
+            <div style="margin-bottom: 6px;"><strong>RBI ID:</strong> <code style="background: #e2e8f0; padding: 2px 6px; border-radius: 4px;">${candidate.rbiId || candidate.rbiNo || '—'}</code></div>
+            <div style="margin-bottom: 6px;"><strong>Purok:</strong> ${candidate.purok || 'N/A'}</div>
+            <div style="margin-bottom: 6px;"><strong>Contact:</strong> ${candidate.contactNo || candidate.contact || requestDoc.contact || 'N/A'}</div>
+            ${candidate.hasAccount ? '<div style="color: #ea580c; font-weight: 600; margin-top: 8px; padding-top: 6px; border-top: 1px dashed #cbd5e1;">⚠️ Mayroon nang aktibong portal account ang residenteng ito. Ang pag-apruba ay magreregister ng bagong credentials.</div>' : ''}
+          </div>
+        `,
+        showCancelButton: true,
+        showDenyButton: true,
+        confirmButtonText: 'Yes, Link & Approve',
+        denyButtonText: 'Select Another Resident',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#10b981',
+        denyButtonColor: '#3b82f6',
+        cancelButtonColor: '#64748b',
+      });
+
+      if (result.isConfirmed) {
+        await proceedToGenerateAndLink(requestDoc, candidate);
+        return;
+      }
+      if (result.isDenied) {
+        setLinkRequestTarget(requestDoc);
+        return;
+      }
+      return;
+    }
+
+    // CASE 2: Multiple Matches Found (Admin Must Select)
+    if (exactMatches.length > 1) {
+      const inputOptions = {};
+      exactMatches.forEach((m) => {
+        const r = m.resident;
+        const resId = r.id || r._id;
+        inputOptions[resId] = `${r.name} (${r.purok || 'Purok N/A'}) — RBI: ${r.rbiId || r.rbiNo || 'N/A'}`;
+      });
+
+      const selectResult = await Swal.fire({
+        title: 'Multiple Matching Residents Found',
+        text: `May ${exactMatches.length} residenteng tugma sa "${requestDoc.fullName || requestDoc.name}". Piliin ang tamang resident profile upang i-link:`,
+        input: 'radio',
+        inputOptions,
+        inputValue: exactMatches[0].resident.id || exactMatches[0].resident._id,
+        showCancelButton: true,
+        showDenyButton: true,
+        confirmButtonText: 'Link Selected Resident',
+        denyButtonText: 'Search Registry Manually',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#10b981',
+        denyButtonColor: '#3b82f6',
+        cancelButtonColor: '#64748b',
+        inputValidator: (value) => {
+          if (!value) return 'Pumili muna ng resident bago magpatuloy!';
+        },
+      });
+
+      if (selectResult.isConfirmed) {
+        const selectedRes = residentsList.find((r) => (r.id || r._id) === selectResult.value);
+        if (selectedRes) {
+          await proceedToGenerateAndLink(requestDoc, selectedRes);
+        }
+        return;
+      }
+      if (selectResult.isDenied) {
+        setLinkRequestTarget(requestDoc);
+        return;
+      }
+      return;
+    }
+
+    // CASE 3: No Match Found (Controlled Link or Create Resident)
+    const noMatchResult = await Swal.fire({
+      icon: 'warning',
+      title: 'No Matching Resident Found',
+      html: `
+        <div style="text-align: left; font-size: 13px; color: #475569;">
+          <p style="margin: 0 0 10px 0;">Walang natagpuang resident record para kay <strong>"${requestDoc.fullName || requestDoc.name}"</strong> sa Purok <strong>${requestDoc.purok || 'N/A'}</strong>.</p>
+          <p style="margin: 0 0 8px 0; font-weight: 600; color: #0f172a;">Upang maiwasan ang duplicate records, pumili ng nais gawin:</p>
+          <ul style="padding-left: 18px; margin: 0 0 10px 0; line-height: 1.5;">
+            <li><strong>Search & Link Existing:</strong> Hanapin ang resident sa registry (hal. kung may typo, ibang purok, o maiden name).</li>
+            <li><strong>Register as New Resident:</strong> Lumikha muna ng opisyal na Resident Profile sa Registry bago i-link.</li>
+          </ul>
+        </div>
+      `,
+      showCancelButton: true,
+      showDenyButton: true,
+      confirmButtonText: '🔍 Search & Link Existing',
+      denyButtonText: '➕ Register as New Resident',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#3b82f6',
+      denyButtonColor: '#10b981',
+      cancelButtonColor: '#64748b',
+    });
+
+    if (noMatchResult.isConfirmed) {
+      setLinkRequestTarget(requestDoc);
+      return;
+    }
+    if (noMatchResult.isDenied) {
+      await handleCreateAndLinkResident(requestDoc);
+      return;
+    }
+  };
+
+  // ── CREATE NEW RESIDENT IN REGISTRY AND LINK ACCOUNT ──
+  const handleCreateAndLinkResident = async (requestDoc) => {
+    const reqName = requestDoc.fullName || requestDoc.name || 'Resident';
+    const reqPurok = requestDoc.purok || 'Purok 1';
+    const reqContact = requestDoc.contact || requestDoc.contactNumber || '';
+
+    const confirmCreate = await Swal.fire({
+      title: 'Create New Resident Profile?',
+      html: `
+        <div style="text-align: left; background: #f8fafc; padding: 14px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px; color: #0f172a;">
+          <p style="margin: 0 0 8px 0; color: #64748b;">Ang sumusunod na profile ay idaragdag sa opisyal na Barangay Registry:</p>
+          <div><strong>Name:</strong> ${reqName}</div>
+          <div><strong>Purok:</strong> ${reqPurok}</div>
+          <div><strong>Contact:</strong> ${reqContact || 'N/A'}</div>
+        </div>
+      `,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, Create & Link Account',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#10b981',
+      cancelButtonColor: '#64748b',
+    });
+    if (!confirmCreate.isConfirmed) return;
+
+    try {
+      const newResidentId = `RES-${Date.now().toString().slice(-6)}`;
+      const newRbiId = await generateRbiId(db);
+      const nowIso = new Date().toISOString();
+
+      const nameParts = reqName.trim().split(' ');
+      const firstName = nameParts.length > 1 ? nameParts.slice(0, -1).join(' ') : reqName;
+      const lastName = nameParts.length > 1 ? nameParts[nameParts.length - 1] : '';
+
+      const newResidentDoc = {
+        _id: newResidentId,
+        type: 'resident',
+        ...EMPTY_RESIDENT,
+        residentId: newResidentId,
+        rbiId: newRbiId,
+        rbiNo: newRbiId,
+        name: reqName,
+        firstName,
+        lastName,
+        purok: reqPurok,
+        purokZoneAddress: reqPurok,
+        contact: reqContact,
+        contactNo: reqContact,
+        status: 'Active',
+        hasAccount: false,
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+
+      await db.put(newResidentDoc);
+
+      try {
+        await createAuditLog({
+          action: 'CREATE',
+          module: 'RESIDENTS',
+          recordId: newResidentId,
+          user: currentUser?.username || 'admin',
+          details: `Created new resident ${reqName} (${newRbiId}) from account request approval`,
+        });
+      } catch (auditErr) {
+        console.warn('Audit log error:', auditErr);
+      }
+
+      await fetchResidents();
+      await proceedToGenerateAndLink(requestDoc, { ...newResidentDoc, id: newResidentId });
+    } catch (err) {
+      console.error('Failed to create new resident:', err);
+      Swal.fire('Error', `Failed to create resident: ${err.message}`, 'error');
+    }
+  };
+
+  // ── CORE ACCOUNT GENERATION & SAFE LINKING ──
+  const proceedToGenerateAndLink = async (requestDoc, matchedResident) => {
+    const contactToSend =
+      requestDoc.contactNumber || requestDoc.contact || matchedResident.contactNo || matchedResident.contact || 'N/A';
+    const residentId = matchedResident.id || matchedResident._id;
+
+    try {
+      const resName =
+        matchedResident.name || `${matchedResident.firstName || ''} ${matchedResident.lastName || ''}`.trim();
+      const rawFirst = (matchedResident.firstName || resName.split(' ')[0] || 'resident').trim();
+      const rawLast = (matchedResident.lastName || resName.split(' ').slice(-1)[0] || 'user').trim();
+
+      const cleanFirst = rawFirst.toLowerCase().replace(/[^a-z0-9]/g, '') || 'resident';
+      const cleanLast = rawLast.toLowerCase().replace(/[^a-z0-9]/g, '') || 'user';
+
+      let username = '';
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const candidate = `${cleanFirst}.${cleanLast}${Math.floor(100 + Math.random() * 900)}`;
+        try {
+          await db.get(`user_${candidate}`);
+        } catch (notFound) {
+          username = candidate;
+          break;
+        }
+      }
+      if (!username) {
+        username = `${cleanFirst}.${cleanLast}${Date.now().toString().slice(-4)}`;
+      }
+
+      const tempPassword = `Bustrac${Math.floor(100000 + Math.random() * 900000)}`;
+      const passwordHash = await hashPassword(tempPassword);
+      const nowIso = new Date().toISOString();
+
+      // 1. Update Resident Document in PouchDB
+      let existingResDoc;
+      try {
+        existingResDoc = await db.get(residentId);
+      } catch (e) {
+        existingResDoc = { _id: residentId };
+      }
+
+      const updatedResDoc = {
+        ...existingResDoc,
+        hasAccount: true,
+        username: username,
+        linkedUserId: `user_${username}`,
+        accountCreatedAt: nowIso,
+        updatedAt: nowIso,
+      };
+      // Tanggalin ang plain-text password upang maging ligtas sa DB
+      delete updatedResDoc.password;
+      await db.put(updatedResDoc);
+
+      // 2. Create Resident User Account document (user_<username>)
+      const userDocId = `user_${username}`;
+      const newUserDoc = {
+        _id: userDocId,
+        type: 'user',
+        docType: 'user',
+        username,
+        passwordHash,
+        role: 'resident',
+        fullName: resName,
+        name: resName,
+        residentId: residentId,
+        purok: matchedResident.purok || requestDoc.purok || 'N/A',
+        contact: contactToSend,
+        status: 'Active',
+        createdAt: nowIso,
+        updatedAt: nowIso,
+      };
+      // Tanggalin ang plain-text password
+      delete newUserDoc.password;
+      await db.put(newUserDoc);
+
+      // 3. Offline auth cache (SHA-256 password hash for offline verification)
+      try {
+        const offlineAuth = JSON.parse(localStorage.getItem('bustrac_offline_auth') || '{}');
+        offlineAuth[username] = {
+          username,
+          passwordHash,
+          role: 'resident',
+          user: { id: userDocId, username, role: 'resident', fullName: resName, status: 'Active' },
+        };
+        localStorage.setItem('bustrac_offline_auth', JSON.stringify(offlineAuth));
+      } catch (storageErr) {
+        console.warn('Failed to cache offline auth:', storageErr);
+      }
+
+      // 4. Update Request Document status to Approved
+      await db.put({
+        ...requestDoc,
+        status: 'Approved',
+        linkedResidentId: residentId,
+        approvedBy: currentUser?.username || 'admin',
+        approvedAt: nowIso,
+        generatedUsername: username,
+        updatedAt: nowIso,
+      });
+
+      // 5. Audit Log
+      try {
+        await createAuditLog({
+          action: 'APPROVE_ACCOUNT_REQUEST',
+          module: 'USERS',
+          recordId: requestDoc._id,
+          user: currentUser?.username || 'admin',
+          details: `Approved account request for ${resName} linked to Resident ID: ${residentId}. Generated username: @${username}`,
+        });
+      } catch (auditErr) {
+        console.warn('Audit log error:', auditErr);
+      }
+
+      // 6. Force Sync
+      if (typeof forceSyncToRemote === 'function') {
+        await forceSyncToRemote().catch(() => {});
+      }
+
+      // 7. Refresh Lists
+      await fetchAccountRequests();
+      await fetchResidents();
+      await fetchUsers();
+
+      // 8. Show Credentials to Admin (Copyable & Safe)
+      await Swal.fire({
+        icon: 'success',
+        title: 'Account Linked & Credentials Generated!',
+        html: `
+          <div style="text-align: left; background: #f8fafc; padding: 16px; border-radius: 8px; margin-top: 12px; border: 1px solid #e2e8f0; color: #0f172a;">
+            <p style="margin: 0 0 12px 0; font-size: 13px; color: #64748b;">
+              Linked Resident: <strong style="color: #0f172a;">${resName}</strong> (${matchedResident.purok || 'Purok N/A'})<br/>
+              📱 Send these credentials to: <strong style="color: #0f172a;">${contactToSend}</strong>
+            </p>
+            <div style="margin-bottom: 8px;">
+              <span style="font-size: 12px; color: #64748b;">Username:</span><br/>
+              <code style="display: block; background: #e2e8f0; padding: 6px 10px; border-radius: 4px; font-size: 14px; font-weight: 600; color: #0f172a; margin-top: 4px;">${username}</code>
+            </div>
+            <div>
+              <span style="font-size: 12px; color: #64748b;">Temporary Password:</span><br/>
+              <code style="display: block; background: #e2e8f0; padding: 6px 10px; border-radius: 4px; font-size: 14px; font-weight: 600; color: #0f172a; margin-top: 4px;">${tempPassword}</code>
+            </div>
+          </div>
+        `,
+        confirmButtonText: 'Done',
+        confirmButtonColor: '#3b82f6',
+      });
+
+      showToast('Account request approved and credentials generated.', 'success');
+    } catch (err) {
+      console.error('Failed to link and generate credentials:', err);
+      Swal.fire('Error', `Failed to generate credentials: ${err.message}`, 'error');
+    }
+  };
+
+  // ── RESET PASSWORD (SECURE SHA-256 HASH IN DATABASE) ──
+  const handleResetPassword = async (u) => {
+    const userName = u.fullName || u.name || u.uname || u.username || 'Unknown User';
+    const uname = (u.username || u.uname || '').toLowerCase();
+    const userDocId = u._id?.startsWith('user_') ? u._id : `user_${uname}`;
+
+    const confirmReset = await Swal.fire({
+      title: 'Reset User Password?',
+      text: `Generate a new temporary password for ${userName} (@${uname})?`,
+      icon: 'question',
+      showCancelButton: true,
+      confirmButtonText: 'Yes, Reset Password',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#3b82f6',
+      cancelButtonColor: '#64748b',
+    });
+    if (!confirmReset.isConfirmed) return;
+
+    const tempPassword = `Bustrac${Math.floor(100000 + Math.random() * 900000)}`;
+
+    try {
+      const passwordHash = await hashPassword(tempPassword);
+      const nowIso = new Date().toISOString();
+
+      let doc;
+      try {
+        doc = await db.get(userDocId);
+      } catch (notFound) {
+        const findRes = await db.find({ selector: { $or: [{ username: uname }, { uname }] } });
+        if (findRes.docs && findRes.docs.length > 0) doc = findRes.docs[0];
+        else throw new Error('User document not found in database.');
+      }
+
+      const updatedDoc = {
+        ...doc,
+        passwordHash,
+        updatedAt: nowIso,
+      };
+      // Tanggalin ang anumang plain-text password
+      delete updatedDoc.password;
+
+      await db.put(updatedDoc);
+
+      // Offline auth cache update
+      try {
+        const stored = JSON.parse(localStorage.getItem('bustrac_offline_auth') || '{}');
+        if (stored[uname]) {
+          stored[uname].passwordHash = passwordHash;
+          localStorage.setItem('bustrac_offline_auth', JSON.stringify(stored));
+        }
+      } catch (storageErr) {
+        console.warn('Failed to update offline auth cache:', storageErr);
+      }
+
+      // Audit log
+      try {
+        await createAuditLog({
+          action: 'RESET_USER_PASSWORD',
+          module: 'USERS',
+          recordId: doc._id,
+          user: currentUser?.username || 'admin',
+          details: `Reset password for user @${uname} (${userName})`,
+        });
+      } catch (auditErr) {
+        console.warn('Audit log error:', auditErr);
+      }
+
+      await fetchUsers();
+
+      await Swal.fire({
+        title: 'Password Reset Successfully',
+        html: `
+          <div style="text-align: left; background: #f8fafc; padding: 14px; border-radius: 8px; border: 1px solid #e2e8f0; font-size: 13px; color: #0f172a;">
+            <p style="margin: 0 0 10px 0; color: #64748b;">Ang bagong temporary password para kay <strong>${userName}</strong> ay:</p>
+            <code style="display: block; background: #e2e8f0; padding: 8px 12px; border-radius: 6px; font-size: 16px; font-weight: 700; color: #0f172a; text-align: center; letter-spacing: 1px;">${tempPassword}</code>
+            <p style="margin: 10px 0 0 0; font-size: 11px; color: #64748b;">Pakibigay ito sa user. Hinihikayat silang palitan ito sa pag-login.</p>
+          </div>
+        `,
+        icon: 'success',
+        confirmButtonText: 'Copy Password',
+        showCancelButton: true,
+        cancelButtonText: 'Close',
+        confirmButtonColor: '#10b981',
+        cancelButtonColor: '#64748b',
+      }).then((result) => {
+        if (result.isConfirmed) {
+          navigator.clipboard.writeText(tempPassword);
+          showToast('Password copied to clipboard!', 'success');
+        }
+      });
+    } catch (err) {
+      console.error('Password reset failed:', err);
+      Swal.fire('Error', `Failed to reset password: ${err.message}`, 'error');
+    }
+  };
+
+  // ── TOGGLE DEACTIVATE / ACTIVATE USER STATUS IN DATABASE ──
+  const handleToggleUserStatus = async (u) => {
+    const userName = u.fullName || u.name || u.uname || u.username || 'Unknown User';
+    const uname = (u.username || u.uname || '').toLowerCase();
+    const userDocId = u._id?.startsWith('user_') ? u._id : `user_${uname}`;
+
+    // Huwag pahintulutan ang pag-deactivate sa administrator account
+    if (uname === 'admin' || uname === (currentUser?.username || '').toLowerCase()) {
+      Swal.fire('Action Prohibited', 'Hindi maaaring i-deactivate ang administrator account.', 'warning');
+      return;
+    }
+
+    const isCurrentlyActive = (u.status || 'Active').toLowerCase() === 'active';
+    const targetStatus = isCurrentlyActive ? 'Inactive' : 'Active';
+
+    const confirmResult = await Swal.fire({
+      title: isCurrentlyActive ? 'Deactivate User?' : 'Activate User?',
+      text: isCurrentlyActive
+        ? `Sigurado ka bang nais mong i-deactivate si ${userName}? Hindi na makakapag-log in ang account na ito sa portal.`
+        : `I-activate muli ang account para kay ${userName}?`,
+      icon: isCurrentlyActive ? 'warning' : 'question',
+      showCancelButton: true,
+      confirmButtonColor: isCurrentlyActive ? '#ef4444' : '#10b981',
+      cancelButtonColor: '#64748b',
+      confirmButtonText: isCurrentlyActive ? 'Yes, Deactivate' : 'Yes, Activate',
+      cancelButtonText: 'Cancel',
+      customClass: { popup: 'rounded-xl' },
+    });
+    if (!confirmResult.isConfirmed) return;
+
+    try {
+      const nowIso = new Date().toISOString();
+      let doc;
+      try {
+        doc = await db.get(userDocId);
+      } catch (notFound) {
+        const findRes = await db.find({ selector: { $or: [{ username: uname }, { uname }] } });
+        if (findRes.docs && findRes.docs.length > 0) doc = findRes.docs[0];
+        else throw new Error('User document not found in database.');
+      }
+
+      const updatedDoc = {
+        ...doc,
+        status: targetStatus,
+        updatedAt: nowIso,
+      };
+      await db.put(updatedDoc);
+
+      // Offline auth storage update
+      try {
+        const stored = JSON.parse(localStorage.getItem('bustrac_offline_auth') || '{}');
+        if (stored[uname]) {
+          stored[uname].status = targetStatus;
+          if (stored[uname].user) stored[uname].user.status = targetStatus;
+          localStorage.setItem('bustrac_offline_auth', JSON.stringify(stored));
+        }
+      } catch (storageErr) {
+        console.warn('Failed to update offline auth cache:', storageErr);
+      }
+
+      // Audit log
+      try {
+        await createAuditLog({
+          action: isCurrentlyActive ? 'DEACTIVATE_USER' : 'ACTIVATE_USER',
+          module: 'USERS',
+          recordId: doc._id,
+          user: currentUser?.username || 'admin',
+          details: `${isCurrentlyActive ? 'Deactivated' : 'Activated'} user account @${uname} (${userName})`,
+        });
+      } catch (auditErr) {
+        console.warn('Audit log error:', auditErr);
+      }
+
+      await fetchUsers();
+      showToast(`User ${userName} has been ${isCurrentlyActive ? 'deactivated' : 'activated'}.`, 'success');
+    } catch (err) {
+      console.error('Failed to update user status:', err);
+      Swal.fire('Error', `Failed to update status: ${err.message}`, 'error');
+    }
+  };
+
+// ── HANDLE REJECT RESIDENT ACCOUNT REQUEST ──
+const handleRejectRequest = async (requestId) => {
+  const result = await Swal.fire({
+    title: 'Reject Request?',
+    text: 'This action cannot be undone. The resident will need to submit a new request.',
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Reject',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#ef4444',
+    cancelButtonColor: '#64748b'
+  });
+  if (!result.isConfirmed) return;
+
+  try {
+    const doc = await db.get(requestId);
+    await db.put({
+      ...doc,
+      status: 'Rejected',
+      rejectedBy: currentUser?.username || 'admin',
+      rejectedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    });
+
+    await createAuditLog({
+      action: 'REJECT_ACCOUNT_REQUEST',
+      module: 'USERS',
+      recordId: requestId,
+      user: currentUser?.username || 'admin',
+      details: `Rejected account request ID: ${requestId}`,
+    });
+
+    fetchAccountRequests();
+    showToast('Account request has been rejected.', 'info');
+  } catch (err) {
+    console.error('Failed to reject request:', err);
+    showToast('Failed to reject request.', 'error');
+  }
+};
 
 const [generatingReport, setGeneratingReport] = useState(null);
 const handleGenerateReport = async (module) => {
@@ -5093,7 +6791,7 @@ const handleGenerateReport = async (module) => {
   const openPrintWindow = (title, headers, rows, summary = '') => {
   const printWindow = window.open('', '_blank');
   if (!printWindow) {
-    alert('Please allow popups to generate the report.');
+    showToast('Please allow popups to generate the report.', 'error');
     setGeneratingReport(null);
     return;
   }
@@ -5349,17 +7047,17 @@ const handleGenerateReport = async (module) => {
       }
 
       default:
-        alert('Unknown report module.');
+        showToast('Unknown report module.', 'error');
     }
   } catch (err) {
     console.error('Report generation failed:', err);
-    alert('Failed to generate report. Please try again.');
+    showToast('Failed to generate report. Please try again.', 'error');
   } finally {
     setGeneratingReport(null);
   }
 };
 
-const handleGenerateExcelReport = (moduleType) => {
+const handleGenerateExcelReport = async (moduleType) => {
   let exportData = [];
   const currentDate = new Date().toISOString().split('T')[0];
   let fileName = `Barangay_Bustrac_${moduleType}_${currentDate}.xlsx`;
@@ -5478,38 +7176,193 @@ const handleGenerateExcelReport = (moduleType) => {
       break;
 
     default:
-      alert('Pumili ng tamang report type.');
+      showToast('Pumili ng tamang report type.', 'error');
       return;
   }
 
   if (exportData.length === 0) {
-    alert('Walang available data para i-export sa piniling report category.');
+    showToast('Walang available data para i-export sa piniling report category.', 'error');
     return;
+  }
+
+  try {
+    await createAuditLog({
+      action: 'EXPORT_DATA',
+      module: moduleType.toUpperCase().replace('_', ' '),
+      recordId: fileName,
+      details: `Admin exported ${moduleType} Masterlist to Excel (${exportData.length} records).`,
+    });
+  } catch (err) {
+    console.warn('Audit log for export failed:', err);
   }
 
   exportToExcel(exportData, fileName, moduleType);
 };
 
-const getPageTitle = () => {
-  const currentScreen = typeof screen !== 'undefined' ? screen : (typeof activeScreen !== 'undefined' ? activeScreen : '');
-  if (currentScreen === 'profile' || currentScreen === 's-profile') return 'My Profile';
-  if (currentScreen === 'dashboard') return 'Dashboard Overview';
-  if (currentScreen === 'residents') return 'Residents Directory';
-  if (currentScreen === 'certificates') return 'Certificates & Clearances';
-  return title || 'Dashboard';
+const handleExportBackup = async () => {
+  setIsDbProcessing(true);
+
+  try {
+    const allDocs = await db.allDocs({ include_docs: true });
+
+    const cleanRows = allDocs.rows.filter(
+      r => r.doc && !r.doc._id.startsWith('_')
+    );
+
+    const backupPayload = {
+      app: 'Bustrac Hub',
+      exportDate: new Date().toISOString(),
+      rows: cleanRows
+    };
+
+    const blob = new Blob(
+      [JSON.stringify(backupPayload, null, 2)],
+      { type: 'application/json' }
+    );
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+
+    a.href = url;
+    a.download = `bustrac_backup_${new Date().toISOString().split('T')[0]}.json`;
+
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    if (typeof createAuditLog === 'function') {
+      await createAuditLog({
+        action: 'EXPORT_DATABASE_BACKUP',
+        module: 'SYSTEM',
+        recordId: 'FULL_DB',
+        details: `Admin exported full database backup (${cleanRows.length} documents).`
+      });
+    }
+
+    showToast(
+      `Database backup exported successfully! (${cleanRows.length} docs)`,
+      'success'
+    );
+  } catch (err) {
+    console.error('Backup export failed:', err);
+    showToast('Failed to export backup. Check console.', 'error');
+  } finally {
+    setIsDbProcessing(false);
+  }
 };
 
-const getPageSubtitle = () => {
-  const currentScreen = typeof screen !== 'undefined' ? screen : (typeof activeScreen !== 'undefined' ? activeScreen : '');
-  if (currentScreen === 'profile' || currentScreen === 's-profile') return 'Manage your account and credentials';
-  return subtitle || '';
-};
+const handleImportBackup = async (file) => {
+  setIsDbProcessing(true);
+  try {
+    const text = await file.text();
+    const data = JSON.parse(text);
+    const rawDocs = data.rows ? data.rows.map(r => r.doc) : data;
 
-const [printData, setPrintData] = useState(null);
+    let docsToImport = rawDocs.filter(
+      doc => doc !== null && !doc._id.startsWith('_')
+    );
+
+    if (docsToImport.length === 0) {
+      throw new Error('No valid documents found.');
+    }
+
+    const existingDocs = await db.allDocs({
+      keys: docsToImport.map(d => d._id)
+    });
+
+    docsToImport = docsToImport.map(doc => {
+      const existing = existingDocs.rows.find(r => r.id === doc._id);
+
+      if (existing && !existing.error) {
+        return { ...doc, _rev: existing.value.rev };
+      }
+
+      return doc;
+    });
+
+    await db.bulkDocs(docsToImport);
+
+    showToast(
+      `Backup restored! ${docsToImport.length} docs imported. Reloading...`,
+      'success'
+    );
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
+    setTimeout(() => window.location.reload(), 1500);
+  } catch (err) {
+    console.error('Backup import failed:', err);
+    showToast('Failed to import backup. Invalid file or DB error.', 'error');
+    setIsDbProcessing(false);
+  }
+};
 
 const closePrint = useCallback(() => {
   setPrintData(null);
 }, []);
+
+const printPreviewProps = React.useMemo(() => {
+  if (!printData) return null;
+
+  const printType = normalizeCertType(
+    printData.type || printData.certificateType
+  );
+
+  if (!printType) {
+    return {
+      valid: false,
+      error: `Unknown certificate type: ${String(
+        printData.type || printData.certificateType || 'undefined'
+      )}`
+    };
+  }
+
+  const issueDateRaw =
+    printData.issueDate || printData.issuedAt || printData.dateIssued;
+
+  const issueDate = issueDateRaw
+    ? new Date(issueDateRaw).toLocaleDateString('en-PH', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      })
+    : new Date().toLocaleDateString('en-PH', {
+        month: 'long',
+        day: 'numeric',
+        year: 'numeric'
+      });
+
+  return {
+    valid: true,
+    printType,
+    mode: printMode,
+    data: {
+      trackingCode: printData.trackingCode || printData._id || 'CERT-000000',
+      fullName:
+        printData.residentName ||
+        (printData.firstName
+          ? `${printData.firstName} ${printData.lastName}`
+          : printData.fullName) ||
+        'JUAN DELA CRUZ',
+      address:
+        printData.address ||
+        printData.purok ||
+        'Barangay Bustrac, Nabua, Camarines Sur',
+      purpose: printData.purpose || 'Local Employment',
+      issueDate,
+      orNumber: printData.orNumber ?? 'N/A',
+      ctcNumber: printData.ctc?.number ?? printData.ctcNumber ?? 'N/A',
+      amountPaid: printData.amountPaid ?? printData.ctc?.amountPaid ?? 0,
+      civilStatus: printData.civilStatus || 'Single',
+      age: printData.age || 'N/A',
+      punongBarangay:
+        printData.punongBarangay || 'HON. ANNABELLE E. RULL'
+    }
+  };
+}, [printData, printMode]);
 
 const handleTriggerPrint = () => {
   setTimeout(() => {
@@ -5541,104 +7394,156 @@ const handleSaveBlotter = async (e) => {
     return;
   }
   if (!blotterForm.time) {
-    alert('⚠️ Please enter the Time Matrix for the incident.');
+    showToast('⚠️ Please enter the Time Matrix for the incident.', 'error');
     document.getElementById('blotter-time')?.focus();
     return;
   }
   if (!blotterForm.location || blotterForm.location.trim() === '') {
-    alert('⚠️ Please enter the Exact Location Address.');
+    showToast('⚠️ Please enter the Exact Location Address.', 'error');
     document.getElementById('blotter-location')?.focus();
     return;
   }
   if (!compName) {
-    alert('⚠️ Please select or input the Complainant (Nagrereklamo).');
+    showToast('⚠️ Please select or input the Complainant (Nagrereklamo).', 'error');
     document.getElementById('blotter-complainant')?.focus();
     return;
   }
   if (!respName) {
-    alert('⚠️ Please select or input the Respondent (Inirereklamo).');
+    showToast('⚠️ Please select or input the Respondent (Inirereklamo).', 'error');
     document.getElementById('blotter-respondent')?.focus();
     return;
   }
   if (!blotterForm.narrative || blotterForm.narrative.trim() === '') {
-    alert('⚠️ Please provide the Incident Narrative Report Statement.');
+    showToast('⚠️ Please provide the Incident Narrative Report Statement.', 'error');
     document.getElementById('blotter-narrative')?.focus();
     return;
   }
 
   try {
-    const trackingNo = blotterForm.trackingNo || `BLT-${new Date().getFullYear()}-${Date.now().toString(36).slice(-4).toUpperCase()}`;
+  const trackingNo =
+    blotterForm.trackingNo ||
+    `BLT-${new Date().getFullYear()}-${Date.now()
+      .toString(36)
+      .slice(-4)
+      .toUpperCase()}`;
 
-    const blotterPayload = {
-      _id: trackingNo,
-      type: 'blotter_record',
-      trackingNo: trackingNo,
-      id: trackingNo,
-      caseNum: trackingNo,
-      officer: blotterForm.officer || 'Juhairo Macabangon',
-      dateLogged: blotterForm.dateLogged || new Date().toISOString().split('T')[0],
-      date: blotterForm.date || blotterForm.incidentDate || new Date().toISOString().split('T')[0],
-      incidentDate: blotterForm.incidentDate || blotterForm.date || new Date().toISOString().split('T')[0],
-      incidentTime: blotterForm.incidentTime || blotterForm.time || '22:30',
-      time: blotterForm.incidentTime || blotterForm.time || '22:30',
-      priority: blotterForm.priority || 'Medium Priority',
-      incidentType: blotterForm.incidentType || blotterForm.type || 'Noise Complaint',
-      location: blotterForm.location || '',
-      isVAWC: !!blotterForm.isVawc,
-      isVawc: !!blotterForm.isVawc,
-      complainant: compName,
-      complainantName: compName,
-      complainantId: blotterForm.complainantId || '',
-      isComplainantNonResident: !!blotterForm.isComplainantNonResident,
-      respondent: respName,
-      respondentName: respName,
-      respondentEmail: blotterForm.respondentEmail || blotterForm.email || '',
-      respondentId: blotterForm.respondentId || '',
-      isRespondentNonResident: !!blotterForm.isRespondentNonResident,
-      witnesses: blotterForm.witnesses || '',
-      narrative: blotterForm.narrative || '',
-      formalAction: blotterForm.actionTaken || blotterForm.formalAction || 'Summoned Parties',
-      status: blotterForm.status || 'Open',
-      summonCount: blotterForm.summonCount || 0,
-      nextHearingDate: blotterForm.nextHearingDate || '',
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-      sla: {
-        startDate: new Date().toISOString(),
-        mediationDeadline: addDays(new Date(), 15).toISOString(),
-        luponDeadline: null,
-        isBreached: false,
-        escalationLevel: 'barangay',
-      }
-    };
+  const blotterPayload = {
+    _id: trackingNo,
+    type: 'blotter_record',
+    trackingNo,
+    id: trackingNo,
+    caseNum: trackingNo,
+    officer: blotterForm.officer || 'Juhairo Macabangon',
+    dateLogged:
+      blotterForm.dateLogged ||
+      new Date().toISOString().split('T')[0],
+    date:
+      blotterForm.date ||
+      blotterForm.incidentDate ||
+      new Date().toISOString().split('T')[0],
+    incidentDate:
+      blotterForm.incidentDate ||
+      blotterForm.date ||
+      new Date().toISOString().split('T')[0],
+    incidentTime:
+      blotterForm.incidentTime ||
+      blotterForm.time ||
+      '22:30',
+    time:
+      blotterForm.incidentTime ||
+      blotterForm.time ||
+      '22:30',
+    priority: blotterForm.priority || 'Medium Priority',
+    incidentType:
+      blotterForm.incidentType ||
+      blotterForm.type ||
+      'Noise Complaint',
+    location: blotterForm.location || '',
+    isVAWC: !!blotterForm.isVawc,
+    isVawc: !!blotterForm.isVawc,
+    complainant: compName,
+    complainantName: compName,
+    complainantId: blotterForm.complainantId || '',
+    isComplainantNonResident:
+      !!blotterForm.isComplainantNonResident,
+    respondent: respName,
+    respondentName: respName,
+    respondentEmail:
+      blotterForm.respondentEmail ||
+      blotterForm.email ||
+      '',
+    respondentId: blotterForm.respondentId || '',
+    isRespondentNonResident:
+      !!blotterForm.isRespondentNonResident,
+    witnesses: blotterForm.witnesses || '',
+    narrative: blotterForm.narrative || '',
+    formalAction:
+      blotterForm.actionTaken ||
+      blotterForm.formalAction ||
+      'Summoned Parties',
+    status: blotterForm.status || 'Open',
+    summonCount: blotterForm.summonCount || 0,
+    nextHearingDate: blotterForm.nextHearingDate || '',
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+    sla: {
+      startDate: new Date().toISOString(),
+      mediationDeadline: addDays(new Date(), 15).toISOString(),
+      luponDeadline: null,
+      isBreached: false,
+      escalationLevel: 'barangay',
+    },
+  };
 
-    await db.put(blotterPayload);
+  if (blotterForm.attachments?.length) {
+    blotterPayload._attachments = {};
 
-    if (typeof setBlotterList === 'function') {
-      setBlotterList(prev => {
-        const filtered = prev.filter(b => b._id !== trackingNo && b.id !== trackingNo);
-        return [blotterPayload, ...filtered];
-      });
+    for (const att of blotterForm.attachments) {
+      const blobData = att.file || dataURLtoBlob(att.data);
+      if (!blobData) continue;
+
+      blotterPayload._attachments[att.name] = {
+        content_type: att.type || 'application/octet-stream',
+        data: blobData,
+      };
     }
-
-    if (typeof createAuditLog === 'function') {
-      await createAuditLog({
-        action: 'CREATE_BLOTTER',
-        module: 'BLOTTER',
-        recordId: trackingNo,
-        details: `Filed blotter entry ${trackingNo} for ${compName} vs ${respName}`,
-      });
-    }
-
-    alert(`✓ Blotter Record successfully saved!\n\nTracking No: ${trackingNo}`);
-
-    if (typeof nav === 'function') {
-      nav('blotter-manage');
-    }
-  } catch (err) {
-    console.error('Error saving blotter record:', err);
-    alert('An error occurred while saving the Blotter Record. Please try again.');
   }
+
+  await db.put(blotterPayload);
+
+  if (typeof setBlotterList === 'function') {
+    setBlotterList((prev) => {
+      const filtered = prev.filter(
+        (b) => b._id !== trackingNo && b.id !== trackingNo
+      );
+      return [blotterPayload, ...filtered];
+    });
+  }
+
+  if (typeof createAuditLog === 'function') {
+    await createAuditLog({
+      action: 'CREATE_BLOTTER',
+      module: 'BLOTTER',
+      recordId: trackingNo,
+      details: `Filed blotter entry ${trackingNo} for ${compName} vs ${respName}`,
+    });
+  }
+
+  showToast(
+    `✓ Blotter Record successfully saved!\n\nTracking No: ${trackingNo}`,
+    'success'
+  );
+
+  if (typeof nav === 'function') {
+    nav('blotter-manage');
+  }
+} catch (err) {
+  console.error('Error saving blotter record:', err);
+  showToast(
+    'An error occurred while saving the Blotter Record. Please try again.',
+    'error'
+  );
+}
 };
 
 const activeCase = selectedBlotter || staffCase || INITIAL_COMPLAINT;
@@ -5670,18 +7575,8 @@ useEffect(() => {
 
   return () => changes.cancel();
 }, []);
-const [isBusinessModalOpen, setIsBusinessModalOpen] = useState(false);
-const [businessModalMode, setBusinessModalMode] = useState('edit');
-const [showBlotterModal, setShowBlotterModal] = useState(false);
-  // ── ADVISORIES STATE ──
-  const [advisoriesList, setAdvisoriesList] = useState(() => {
-    try {
-      const saved = localStorage.getItem('bustrac_advisories');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
+
+  const [advisoriesList, setAdvisoriesList] = useState([]);
 
   const [advisoryForm, setAdvisoryForm] = useState({
     title: '',
@@ -5694,17 +7589,16 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
 
   const [advisorySubScreen, setAdvisorySubScreen] = useState('list'); // 'list' | 'new' | 'edit'
   const [editingAdvisoryId, setEditingAdvisoryId] = useState(null);
-  
-  
-  // Auto-save advisories to localStorage
-  useEffect(() => {
-    localStorage.setItem('bustrac_advisories', JSON.stringify(advisoriesList));
-  }, [advisoriesList]);
+  const [advisorySearch, setAdvisorySearch] = useState('');
+  const [advisoryCategoryFilter, setAdvisoryCategoryFilter] = useState('All');
+  const [advisoryStatusFilter, setAdvisoryStatusFilter] = useState('All');
+  const [advisoryPriorityFilter, setAdvisoryPriorityFilter] = useState('All');
+
     
   const handleSaveAdvisory = async (e) => {
   e.preventDefault();
   if (!advisoryForm.title.trim() || !advisoryForm.description.trim()) {
-    alert('Please fill in the Title and Description.');
+    showToast('Please fill in the Title and Description.', 'error');
     return;
   }
 
@@ -5735,7 +7629,7 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
     await db.put(payload);
   } catch (err) {
     console.error('Failed to save advisory:', err);
-    alert('Failed to save advisory to database.');
+    showToast('Failed to save advisory to database.', 'error');
     return;
   }
 
@@ -5778,109 +7672,19 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
     }
   };
   
-    const [activitiesList, setActivitiesList] = useState(() => {
-    try {
-      const saved = localStorage.getItem('bustrac_activities');
-      return saved ? JSON.parse(saved) : [];
-    } catch (e) {
-      return [];
-    }
-  });
+    const [activitiesList, setActivitiesList] = useState([]);
 
-    const handleSaveActivity = async (e) => {
-  e.preventDefault();
-  if (!activityForm.title.trim() || !activityForm.description.trim()) {
-    alert('Please fill in the Title and Description.');
-    return;
-  }
-
-  const now = new Date().toISOString();
-  
-  try {
-    if (editingActivityId) {
-  const existingDoc = activitiesList.find((a) => (a._id || a.id) === editingActivityId);
-  const updatedPayload = {
-    ...existingDoc,
-    ...activityForm,
-    updatedAt: now,
-  };
-
-  const res = await db.put(updatedPayload);
-
-  const finalDoc = { ...updatedPayload, _rev: res.rev };
-  setActivitiesList((prev) =>
-    prev.map((a) => ((a._id || a.id) === editingActivityId ? finalDoc : a))
-  );
-} else {
-      const newPayload = {
-        _id: `activity_${Date.now()}`,
-        type: 'activity',
-        ...activityForm,
-        createdAt: now,
-        updatedAt: now,
-      };
-
-      await db.put(newPayload);
-
-      setActivitiesList((prev) => [newPayload, ...prev]);
-    }
-
-    setActivityForm({
-      title: '',
-      category: 'Events',
-      description: '',
-      date: new Date().toISOString().split('T')[0],
-      time: '',
-      location: '',
-    });
-    setEditingActivityId(null);
-    setActivitySubScreen('list');
-  } catch (err) {
-    console.error('Error saving activity:', err);
-    alert('Failed to save activity to local database.');
-  }
-    };
-
-  const handleEditActivity = (act) => {
-  setEditingActivityId(act._id || act.id);
-  setActivityForm({
-    _id: act._id,       
-    _rev: act._rev,   
-    title: act.title || '',
-    category: act.category || 'Events',
-    description: act.description || act.content || act.body || '',
-    date: act.date ? act.date.split('T')[0] : new Date().toISOString().split('T')[0],
-    time: act.time || '',
-    location: act.location || '',
-  });
-  setActivitySubScreen('edit');
-};
-  
   const formatTime12hr = (timeStr) => {
-  if (!timeStr) return '';
+  if (!timeStr || typeof timeStr !== 'string' || !timeStr.includes(':')) {
+    return timeStr || ''; 
+  }
   const [hours, minutes] = timeStr.split(':');
   let h = parseInt(hours, 10);
   const ampm = h >= 12 ? 'PM' : 'AM';
   h = h % 12 || 12;
-  return `@ ${h}:${minutes} ${ampm}`;
+  return `${h}:${minutes} ${ampm}`; 
 };
 
-    const handleDeleteActivity = async (id) => {
-  if (!window.confirm('Are you sure you want to delete this activity?')) return;
-
-  try {
-    const docToDelete = activitiesList.find((a) => (a._id || a.id) === id);
-    if (docToDelete && docToDelete._id) {
-      await db.remove(docToDelete._id, docToDelete._rev);
-    }
-
-    setActivitiesList((prev) => prev.filter((a) => (a._id || a.id) !== id));
-  } catch (err) {
-    console.error('Error deleting activity:', err);
-    alert('Failed to delete activity.');
-  }
-};
-  
     const [activityForm, setActivityForm] = useState({
     title: '',
     category: 'Events',
@@ -5890,10 +7694,8 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
   });
   const [activitySubScreen, setActivitySubScreen] = useState('list');
   const [editingActivityId, setEditingActivityId] = useState(null);
-
-  useEffect(() => {
-    localStorage.setItem('bustrac_activities', JSON.stringify(activitiesList));
-  }, [activitiesList]);
+  const [activitySearch, setActivitySearch] = useState('');
+  const [activityCategoryFilter, setActivityCategoryFilter] = useState('All');
   
     useEffect(() => {
       async function loadActivities() {
@@ -5914,7 +7716,10 @@ const [showBlotterModal, setShowBlotterModal] = useState(false);
       }
     }, [screen]);
 
-const saveSettings = async (updatedSettings) => {
+const handleSaveSettings = async (e) => {
+  if (e) e.preventDefault();
+  setIsSaving(true);
+
   try {
     let existingRev = systemSettings?._rev;
 
@@ -5932,44 +7737,156 @@ const saveSettings = async (updatedSettings) => {
     const payload = {
       _id: 'setting_barangay_officials',
       type: 'barangay_settings',
-      punongBarangay: updatedSettings.punongBarangay,
-      luponSecretary: updatedSettings.luponSecretary,
-      treasurer: updatedSettings.treasurer || '',
+      punongBarangay: settingsForm.punongBarangay,
+      luponSecretary: settingsForm.luponSecretary,
+      treasurer: settingsForm.treasurer || '',
       updatedAt: new Date().toISOString(),
       ...(existingRev ? { _rev: existingRev } : {})
     };
 
     const response = await db.put(payload);
-
     const savedPayload = { ...payload, _rev: response.rev };
+
+    // I-update ang local state para mag-match sa nai-save
     setSystemSettings(savedPayload);
 
-    await createAuditLog({
-      action: 'UPDATE_OFFICIAL_SETTINGS',
-      category: 'SETTINGS',
-      targetId: 'setting_barangay_officials',
-      details: `Updated Officials: PB ${updatedSettings.punongBarangay}, Sec ${updatedSettings.luponSecretary}`,
-      user: currentUser?.name || currentUser?.username || 'Admin'
-    });
+    // Audit log
+    if (typeof createAuditLog === 'function') {
+      await createAuditLog({
+        action: 'UPDATE_OFFICIAL_SETTINGS',
+        module: 'SETTINGS',
+        recordId: 'setting_barangay_officials',
+        details: `Updated Officials: PB ${settingsForm.punongBarangay}, Sec ${settingsForm.luponSecretary}`,
+        user: currentUser?.name || currentUser?.username || 'Admin'
+      });
+    }
 
     if (typeof forceSyncToRemote === 'function') {
       await forceSyncToRemote();
     }
 
-    alert('Barangay settings saved successfully!');
+    showToast('Matagumpay na nai-save ang settings ng Barangay Officials!', 'success');
   } catch (err) {
     console.error('Error saving settings to PouchDB:', err);
-    alert(`Failed to save settings: ${err.message || 'Database error'}`);
+    showToast(`Bigo sa pag-save: ${err.message || 'Database error'}`, 'error');
+  } finally {
+    setIsSaving(false);
+  }
+};
+
+// ── ACTIVITY MANAGEMENT HANDLERS ──
+const handleSaveActivity = async (e) => {
+  e.preventDefault();
+  if (!activityForm.title.trim() || !activityForm.description.trim()) {
+    showToast('Please fill in the Title and Description.', 'error');
+    return;
+  }
+  
+  const now = new Date().toISOString();
+  try {
+    if (editingActivityId) {
+      // UPDATE EXISTING
+      const existingDoc = activitiesList.find((a) => (a._id || a.id) === editingActivityId);
+      const updatedPayload = {
+        ...existingDoc,
+        ...activityForm,
+        updatedAt: now,
+      };
+      const res = await db.put(updatedPayload);
+      const finalDoc = { ...updatedPayload, _rev: res.rev };
+      
+      setActivitiesList((prev) =>
+        prev.map((a) => ((a._id || a.id) === editingActivityId ? finalDoc : a))
+      );
+      
+      await createAuditLog({
+        action: 'UPDATE_ACTIVITY',
+        module: 'ACTIVITIES',
+        recordId: editingActivityId,
+        details: `Updated activity: ${activityForm.title}`,
+      });
+    } else {
+      // CREATE NEW
+      const newPayload = {
+        _id: `activity_${Date.now()}`,
+        type: 'activity',
+        ...activityForm,
+        createdAt: now,
+        updatedAt: now,
+      };
+      await db.put(newPayload);
+      setActivitiesList((prev) => [newPayload, ...prev]);
+      
+      await createAuditLog({
+        action: 'CREATE_ACTIVITY',
+        module: 'ACTIVITIES',
+        recordId: newPayload._id,
+        details: `Created new activity: ${activityForm.title}`,
+      });
+    }
+    
+    // Reset Form
+    setActivityForm({
+      title: '',
+      category: 'Events',
+      description: '',
+      date: new Date().toISOString().split('T')[0],
+      time: '',
+      location: '',
+    });
+    setEditingActivityId(null);
+    setActivitySubScreen('list');
+  } catch (err) {
+    console.error('Error saving activity:', err);
+    showToast('Failed to save activity to local database.', 'error');
+  }
+};
+
+const handleEditActivity = (act) => {
+  setEditingActivityId(act._id || act.id);
+  setActivityForm({
+    _id: act._id,
+    _rev: act._rev,
+    title: act.title || '',
+    category: act.category || 'Events',
+    description: act.description || act.content || act.body || '',
+    date: act.date ? act.date.split('T')[0] : new Date().toISOString().split('T')[0],
+    time: act.time || '',
+    location: act.location || '',
+  });
+  setActivitySubScreen('edit');
+};
+
+const handleDeleteActivity = async (id) => {
+  if (!window.confirm('Are you sure you want to delete this activity?')) return;
+  try {
+    const docToDelete = activitiesList.find((a) => (a._id || a.id) === id);
+    if (docToDelete && docToDelete._id) {
+      await db.remove(docToDelete._id, docToDelete._rev);
+    }
+    setActivitiesList((prev) => prev.filter((a) => (a._id || a.id) !== id));
+    
+    await createAuditLog({
+      action: 'DELETE_ACTIVITY',
+      module: 'ACTIVITIES',
+      recordId: id,
+      details: `Deleted activity record`,
+    });
+  } catch (err) {
+    console.error('Error deleting activity:', err);
+    showToast('Failed to delete activity.', 'error');
   }
 };
 
 const [systemSettings, setSystemSettings] = useState(null);
 
+const [isSaving, setIsSaving] = useState(false);
 const [settingsForm, setSettingsForm] = useState({
   punongBarangay: 'HON. ANNABELLE E. RULL',
   luponSecretary: 'MRS. MELY M. PRESADO',
   treasurer: '',
 });
+
 
   useEffect(() => {
   async function fetchBarangaySettings() {
@@ -5977,12 +7894,6 @@ const [settingsForm, setSettingsForm] = useState({
       const savedData = await db.get('setting_barangay_officials');
       if (savedData) {
         setSystemSettings(savedData);
-        setSettingsForm({
-          punongBarangay: savedData.punongBarangay || 'HON. ANNABELLE E. RULL',
-          luponSecretary: savedData.luponSecretary || 'MRS. MELY M. PRESADO',
-          treasurer: savedData.treasurer || '',
-          publicDomain: savedData.publicDomain || ''
-        });
       }
     } catch (err) {
       if (err.status === 404) {
@@ -5994,6 +7905,16 @@ const [settingsForm, setSettingsForm] = useState({
 
   fetchBarangaySettings();
 }, []);
+
+useEffect(() => {
+  if (systemSettings) {
+    setSettingsForm({
+      punongBarangay: systemSettings.punongBarangay || 'HON. ANNABELLE E. RULL',
+      luponSecretary: systemSettings.luponSecretary || 'MRS. MELY M. PRESADO',
+      treasurer: systemSettings.treasurer || '',
+    });
+  }
+}, [systemSettings]);
 
 // ── BARANGAY CLEARANCE: REAL-TIME POUCHDB LISTENER ──
 useEffect(() => {
@@ -6109,6 +8030,69 @@ useEffect(() => {
   return () => clearInterval(interval);
 }, [role, db]);
 
+const handleGenerateCredentials = async (resident) => {
+  try {
+    // Auto-generate username (firstname + lastname + random numbers)
+    const firstName = resident.firstName || resident.name.split(',')[1]?.trim().split(' ')[0] || '';
+    const lastName = resident.lastName || resident.name.split(',')[0]?.trim() || '';
+    const username = `${firstName.toLowerCase()}.${lastName.toLowerCase()}${Math.floor(Math.random() * 999)}`;
+    
+    // Auto-generate temporary password (8 characters)
+    const tempPassword = `Bustrac${Math.random().toString(36).slice(-6).toUpperCase()}`;
+    
+    // Update resident record with credentials
+    const existingDoc = await db.get(resident.id);
+    const updatedDoc = {
+      ...existingDoc,
+      hasAccount: true,
+      username: username,
+      password: tempPassword, // In production, dapat hashed ito
+      accountCreatedAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+    
+    await db.put(updatedDoc);
+    
+    // Audit log
+    if (typeof createAuditLog === 'function') {
+      await createAuditLog({
+        action: 'GENERATE_RESIDENT_CREDENTIALS',
+        module: 'RESIDENTS',
+        recordId: resident.id,
+        details: `Generated credentials for ${resident.name} (Username: ${username})`,
+      });
+    }
+    
+    // Show credentials modal
+    setCredentialsModal({
+      show: true,
+      residentName: resident.name,
+      username: username,
+      password: tempPassword,
+    });
+    
+    // Refresh residents list
+    await loadData();
+    
+  } catch (err) {
+    console.error('Failed to generate credentials:', err);
+    showToast('Failed to generate credentials. Please try again.', 'error');
+  }
+};
+
+  const advisoryQuery = advisorySearch.trim().toLowerCase();
+  const filteredAdvisories = advisoriesList
+    .filter((advisory) => {
+      const searchableText = `${advisory.title || ''} ${advisory.description || advisory.content || advisory.body || ''}`.toLowerCase();
+      const matchesQuery = !advisoryQuery || searchableText.includes(advisoryQuery);
+      const matchesCategory = advisoryCategoryFilter === 'All' || (advisory.category || 'Relief') === advisoryCategoryFilter;
+      const matchesStatus = advisoryStatusFilter === 'All' || (advisory.status || 'Active') === advisoryStatusFilter;
+      const matchesPriority = advisoryPriorityFilter === 'All' || (advisory.priority || 'Medium') === advisoryPriorityFilter;
+      return matchesQuery && matchesCategory && matchesStatus && matchesPriority;
+    })
+    .slice()
+    .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
   // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
@@ -6120,46 +8104,36 @@ useEffect(() => {
           className={`sidebar ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`} 
           style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}
         >
-          {/* 1. SIDEBAR HEADER / LOGO */}
-          <div 
-            className="sb-logo" 
-            style={{ cursor: sidebarOpen ? 'default' : 'pointer', transition: 'cursor 0.2s ease', flexShrink: 0 }} 
+          <div
+            className="sb-logo"
+            style={{ cursor: sidebarOpen ? 'default' : 'pointer', transition: 'cursor 0.2s ease', flexShrink: 0 }}
             onClick={() => { if (!sidebarOpen) setSidebarOpen(true); }}
           >
-            {/* Close / Collapse Button */}
             <button 
               type="button" 
               className="sidebar-close-btn" 
-              onClick={(e) => { e.stopPropagation(); setSidebarOpen(false); }} 
-              aria-label="Collapse sidebar" 
-              title="Collapse sidebar"
+              onClick={(e) => { e.stopPropagation(); setSidebarOpen(!sidebarOpen); }} 
+              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"} 
+              title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
             >
               <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
                 <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
                 <line x1="9" y1="3" x2="9" y2="21" />
               </svg>
             </button>
-            
-            {/* Logo Image */}
             <img src={logo} alt="Barangay Bustrac Official Seal" className="sb-logo-img" />
-            
-            {/* Logo Text */}
             <div>
               <div className="sb-title">Bustrac Hub</div>
               <div className="sb-sub">{role === 'admin' ? 'Administrator Portal' : 'Staff Portal'}</div>
             </div>
           </div>
-
-          {/* 2. SCROLLABLE NAVIGATION AREA */}
-          <nav 
-            className="sb-nav" 
-            style={{ flex: 1, overflowY: sidebarOpen ? 'auto' : 'hidden', paddingBottom: '16px' }}
-          >
+          <nav className="sb-nav" style={{ flex: 1, overflowY: sidebarOpen ? 'auto' : 'hidden', paddingBottom: '16px' }}>
             {/* OVERVIEW */}
             <div className="sb-sec">Overview</div>
             <button 
               className={`nav-btn${screen === 'dashboard' ? ' active' : ''}`} 
               onClick={() => nav('dashboard')} 
+              title={!sidebarOpen ? "Dashboard" : ""}
               data-tooltip="Dashboard"
             >
               <span className="nav-ico">
@@ -6172,6 +8146,22 @@ useEffect(() => {
               </span>
               <span className="nav-label">Dashboard</span>
             </button>
+{/*             
+            <button 
+              className={`nav-btn${screen === 'barangay-map' ? ' active' : ''}`} 
+              onClick={() => nav('barangay-map')}
+              title={!sidebarOpen ? "Barangay Map" : ""}
+              data-tooltip="Barangay Map"
+            >
+              <span className="nav-ico">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polygon points="1 6 1 22 8 18 16 22 21 18 21 2 16 6 8 2 1 6" />
+                  <line x1="8" y1="2" x2="8" y2="18" />
+                  <line x1="16" y1="6" x2="16" y2="22" />
+                </svg>
+              </span>
+              <span className="nav-label">Barangay Map</span>
+            </button> */}
 
             {/* RESIDENTS MANAGEMENT */}
             <div className="sb-sec">Residents Management</div>
@@ -6179,15 +8169,17 @@ useEffect(() => {
               <button 
                 type="button" 
                 className={`nav-btn toggle-parent ${['residents', 'households', 'add-resident'].includes(screen) ? 'active-parent' : ''}`} 
-                onClick={() => { 
-                  if (!sidebarOpen) { 
-                    setSidebarOpen(true); 
-                    setIsResidentsOpen(true); 
-                  } else { 
-                    setIsResidentsOpen(!isResidentsOpen); 
-                  } 
+                onClick={() => {
+                  if (!sidebarOpen) {
+                    setSidebarOpen(true);
+                    setIsResidentsOpen(true);
+                  } else {
+                    setIsResidentsOpen(!isResidentsOpen);
+                  }
                 }} 
                 aria-expanded={isResidentsOpen}
+                title={!sidebarOpen ? "Residents Profile" : ""}
+                data-tooltip="Residents Profile"
               >
                 <span className="nav-ico">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -6197,7 +8189,7 @@ useEffect(() => {
                     <path d="M16 3.13a4 4 0 0 1 0 7.75" />
                   </svg>
                 </span>
-                <span className="nav-label" style={{ flex: 1, textAlign: 'left' }}>Residents Profile</span>
+                <span className="nav-label" style={{ flex: 1, textAlign: 'left' }}>Residents Management</span>
                 <span className="submenu-arrow" style={{ transform: isResidentsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
               </button>
 
@@ -6212,7 +8204,7 @@ useEffect(() => {
                         <path d="M9 15h6" />
                       </svg>
                     </span>
-                    <span className="nav-label">Manage Ledger</span>
+                   <span className="nav-label">Manage Residents</span>
                   </button>
                   
                   <button className={`nav-btn sub-btn${screen === 'households' ? ' active' : ''}`} onClick={() => nav('households')}>
@@ -6225,21 +8217,24 @@ useEffect(() => {
                     <span className="nav-label">Manage Households</span>
                   </button>
 
-                  <button className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`} onClick={() => nav('add-resident')}>
+                  {/* <button className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`} onClick={() => nav('add-resident')}>
                     <span className="nav-ico">
                       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                         <path d="M12 5v14M5 12h14" />
                       </svg>
                     </span>
                     <span className="nav-label">Add Resident</span>
-                  </button>
+                  </button> */}
                 </div>
               )}
             </div>
 
             {/* CERTIFICATES */}
             <div className="sb-sec">Certificates</div>
-            <button className={`nav-btn${screen === 'cert-req' ? ' active' : ''}`} onClick={() => nav('cert-req')}>
+            <button 
+              className={`nav-btn${['cert-req', 'brgy_clearance', 'business_clearance'].includes(screen) ? ' active' : ''}`} 
+              onClick={() => nav('cert-req')} 
+            >
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -6249,12 +8244,15 @@ useEffect(() => {
                 </svg>
               </span>
               <span className="nav-label">Request & Approval</span>
-              {pendingRequestsCount > 0 && (
-                <span className="nb nb-amber">{pendingRequestsCount}</span>
-              )}
+              {pendingRequestsCount > 0 && <span className="nb nb-amber">{pendingRequestsCount}</span>}
             </button>
 
-            <button className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`} onClick={() => nav('cert-print')}>
+            <button 
+              className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`} 
+              onClick={() => nav('cert-print')}
+              title={!sidebarOpen ? "Issuance & Print" : ""}
+              data-tooltip="Issuance & Print"
+            >
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
@@ -6267,43 +8265,23 @@ useEffect(() => {
               <span className="nav-label">Issuance & Print</span>
             </button>
 
-            <button className={`nav-btn${screen === 'brgy_clearance' ? ' active' : ''}`} onClick={() => nav('brgy_clearance')}>
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 2v6h6" />
-                  <path d="M12 18v-6" />
-                  <path d="M9 15h6" />
-                </svg>
-              </span>
-              <span className="nav-label">Barangay Clearance</span>
-            </button>
-
-            <button className={`nav-btn${screen === 'business_clearance' ? ' active' : ''}`} onClick={() => nav('business_clearance')}>
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                  <path d="M9 22V12h6v10" />
-                </svg>
-              </span>
-              <span className="nav-label">Business Clearance</span>
-            </button>
-
             {/* AID DISTRIBUTION */}
             <div className="sb-sec">Aid Distribution</div>
             <div className="sb-nav-group">
               <button 
                 type="button" 
                 className={`nav-btn toggle-parent ${['programs', 'aid-encode', 'aid-logs', 'add-beneficiary'].includes(screen) ? 'active-parent' : ''}`} 
-                onClick={() => { 
-                  if (!sidebarOpen) { 
-                    setSidebarOpen(true); 
-                    setIsAidOpen(true); 
-                  } else { 
-                    setIsAidOpen(!isAidOpen); 
-                  } 
+                onClick={() => {
+                  if (!sidebarOpen) {
+                    setSidebarOpen(true);
+                    setIsAidOpen(true);
+                  } else {
+                    setIsAidOpen(!isAidOpen);
+                  }
                 }} 
                 aria-expanded={isAidOpen}
+                title={!sidebarOpen ? "Aid Distribution" : ""}
+                data-tooltip="Aid Distribution"
               >
                 <span className="nav-ico">
                   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -6333,7 +8311,7 @@ useEffect(() => {
                         <path d="M12 5v14M5 12h14" />
                       </svg>
                     </span>
-                    <span className="nav-label">Encode Distribution</span>
+                    <span className="nav-label">Relief Distribution</span>
                   </button>
 
                   <button className={`nav-btn sub-btn${screen === 'aid-logs' ? ' active' : ''}`} onClick={() => nav('aid-logs')}>
@@ -6348,23 +8326,19 @@ useEffect(() => {
                     <span className="nav-label">Distribution Logs</span>
                   </button>
 
-                  {role === 'admin' && (
-                    <button className={`nav-btn sub-btn${screen === 'add-beneficiary' ? ' active' : ''}`} onClick={() => nav('add-beneficiary')}>
-                      <span className="nav-ico">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M12 5v14M5 12h14" />
-                        </svg>
-                      </span>
-                      <span className="nav-label">Add Beneficiary</span>
-                    </button>
-                  )}
+                  
                 </div>
               )}
             </div>
 
             {/* PEACE & ORDER / INCIDENTS */}
             <div className="sb-sec">Peace & Order</div>
-            <button className={`nav-btn${screen === 'blotter-new' ? ' active' : ''}`} onClick={() => nav('blotter-new')}>
+            <button 
+              className={`nav-btn${screen === 'blotter-new' ? ' active' : ''}`} 
+              onClick={() => nav('blotter-new')}
+              title={!sidebarOpen ? "File Incident / Complaint" : ""}
+              data-tooltip="File Incident"
+            >
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
@@ -6375,7 +8349,12 @@ useEffect(() => {
               <span className="nav-label">File Incident / Complaint</span>
             </button>
 
-            <button className={`nav-btn${screen === 'blotter-manage' ? ' active' : ''}`} onClick={() => nav('blotter-manage')}>
+            <button 
+              className={`nav-btn${screen === 'blotter-manage' ? ' active' : ''}`} 
+              onClick={() => nav('blotter-manage')}
+              title={!sidebarOpen ? "Manage Incident Cases" : ""}
+              data-tooltip="Manage Incidents"
+            >
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -6384,26 +8363,33 @@ useEffect(() => {
                   <path d="M9 15h6" />
                 </svg>
               </span>
-              <span className="nav-label">Manage Incident Cases</span>
-              {pendingBlotterCount > 0 && (
-                <span className="nb nb-red">{pendingBlotterCount}</span>
-              )}
+              <span className="nav-label">Manage Blotter Records</span>
+              {pendingBlotterCount > 0 && <span className="nb nb-red">{pendingBlotterCount}</span>}
             </button>
-
-            {role === 'staff' && (
-              <button className={`nav-btn${screen === 'blotter-detail' ? ' active' : ''}`} onClick={() => nav('blotter-detail')}>
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                  </svg>
-                </span>
-                <span className="nav-label">Summons & Hearings</span>
-              </button>
-            )}
+            
+            <button
+              className={`nav-btn${screen === 'blotter-detail' ? ' active' : ''}`}
+              onClick={() => nav('blotter-detail')}
+              title={!sidebarOpen ? "Summons & Hearings" : ""}
+              data-tooltip="Summons & Hearings"
+            >
+              <span className="nav-ico">
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+                              </svg>
+              </span>
+              <span className="nav-label">Summons & Hearings</span>
+            </button>
+            
 
             {/* COMMUNITY */}
             <div className="sb-sec">Community</div>
-            <button className={`nav-btn${screen === 'announcements' ? ' active' : ''}`} onClick={() => nav('announcements')}>
+            <button 
+              className={`nav-btn${screen === 'announcements' ? ' active' : ''}`} 
+              onClick={() => nav('announcements')}
+              title={!sidebarOpen ? "Announcements" : ""}
+              data-tooltip="Announcements"
+            >
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
@@ -6413,41 +8399,36 @@ useEffect(() => {
               <span className="nav-label">Announcements</span>
             </button>
 
-            <button className={`nav-btn${screen === 'feedback' ? ' active' : ''}`} onClick={() => nav('feedback')}>
+            <button 
+              className={`nav-btn${screen === 'feedback' ? ' active' : ''}`} 
+              onClick={() => nav('feedback')}
+              title={!sidebarOpen ? "Feedback" : ""}
+              data-tooltip="Feedback"
+            >
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
                 </svg>
               </span>
               <span className="nav-label">Feedback</span>
-              {activeFeedbackCount > 0 && (
-                <span className="nb nb-red">{activeFeedbackCount}</span>
-              )}
+              {activeFeedbackCount > 0 && <span className="nb nb-red">{activeFeedbackCount}</span>}
             </button>
 
-            <button className={`nav-btn${screen === 'activities-manage' ? ' active' : ''}`} onClick={() => nav('activities-manage')}>
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                </svg>
-              </span>
-              <span className="nav-label">Manage Activities</span>
-            </button>
-
-            <button className={`nav-btn${screen === 'aid-advisories' ? ' active' : ''}`} onClick={() => nav('aid-advisories')}>
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                </svg>
-              </span>
-              <span className="nav-label">Relief & Aid Advisories</span>
-            </button>
+            
 
             {/* ADMIN-ONLY SECTION */}
             {role === 'admin' && (
               <>
-                <div className="sb-sec">Admin Only</div>
-                <button className={`nav-btn${screen === 'conflicts' ? ' active' : ''}`} onClick={() => nav('conflicts')}>
+                <div className="sb-sec">Admin & Governance</div>
+                
+                
+
+                <button 
+                  className={`nav-btn${screen === 'conflicts' ? ' active' : ''}`} 
+                  onClick={() => nav('conflicts')}
+                  title={!sidebarOpen ? "Conflict Resolution" : ""}
+                  data-tooltip="Conflict Resolution"
+                >
                   <span className="nav-ico">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
@@ -6456,12 +8437,15 @@ useEffect(() => {
                     </svg>
                   </span>
                   <span className="nav-label">Conflict Resolution</span>
-                  {conflictsList?.length > 0 && (
-                    <span className="nb nb-red">{conflictsList.length}</span>
-                  )}
+                  {conflictsList?.length > 0 && <span className="nb nb-red">{conflictsList.length}</span>}
                 </button>
 
-                <button className={`nav-btn${screen === 'audit' ? ' active' : ''}`} onClick={() => nav('audit')}>
+                <button 
+                  className={`nav-btn${screen === 'audit' ? ' active' : ''}`} 
+                  onClick={() => nav('audit')}
+                  title={!sidebarOpen ? "Audit Log" : ""}
+                  data-tooltip="Audit Log"
+                >
                   <span className="nav-ico">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" />
@@ -6470,18 +8454,12 @@ useEffect(() => {
                   <span className="nav-label">Audit Log</span>
                 </button>
 
-                <button className={`nav-btn${screen === 'officials' ? ' active' : ''}`} onClick={() => nav('officials')}>
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M12 2L2 7l10 5 10-5-10-5z" />
-                      <path d="M2 17l10 5 10-5" />
-                      <path d="M2 12l10 5 10-5" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Barangay Officials</span>
-                </button>
-
-                <button className={`nav-btn${screen === 'users' ? ' active' : ''}`} onClick={() => nav('users')}>
+                <button 
+                  className={`nav-btn${screen === 'users' ? ' active' : ''}`} 
+                  onClick={() => nav('users')}
+                  title={!sidebarOpen ? "Manage Users" : ""}
+                  data-tooltip="Manage Users"
+                >
                   <span className="nav-ico">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                       <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
@@ -6489,13 +8467,19 @@ useEffect(() => {
                     </svg>
                   </span>
                   <span className="nav-label">Manage Users</span>
+                  {accountRequests.length > 0 && <span className="nb nb-amber">{accountRequests.length}</span>}
                 </button>
               </>
             )}
 
             {/* REPORTS */}
             <div className="sb-sec">Reports</div>
-            <button className={`nav-btn${screen === 'reports' ? ' active' : ''}`} onClick={() => nav('reports')}>
+            <button 
+              className={`nav-btn${screen === 'reports' ? ' active' : ''}`} 
+              onClick={() => nav('reports')}
+              title={!sidebarOpen ? "Generate Reports" : ""}
+              data-tooltip="Generate Reports"
+            >
               <span className="nav-ico">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                   <path d="M3 3h18v18H3z" />
@@ -6525,6 +8509,7 @@ useEffect(() => {
             }} 
             role="button" 
             tabIndex={0}
+            title={!sidebarOpen ? displayName : ""}
           >
             <div className="sb-ava">{initials}</div>
             <div className="sb-info" style={{ flex: 1, minWidth: 0 }}>
@@ -6538,15 +8523,13 @@ useEffect(() => {
             <div 
               className="online-dot" 
               title={
-                syncState === 'offline' 
-                  ? 'Offline — changes saved locally' 
-                  : syncState === 'syncing' 
-                    ? 'Connecting and syncing' 
-                    : 'Online — changes synced'
+                syncState === 'offline' ? 'Offline — changes saved locally' :
+                syncState === 'syncing' ? 'Connecting and syncing' : 
+                'Online — changes synced'
               } 
-              style={{
-                background: syncState === 'offline' ? 'var(--red)' : syncState === 'syncing' ? 'var(--amber)' : 'var(--green)',
-                boxShadow: syncState === 'offline' ? '0 0 0 2px var(--red-bg)' : syncState === 'syncing' ? '0 0 0 2px var(--amber-bg)' : '0 0 0 2px var(--green-bg)',
+              style={{ 
+                background: syncState === 'offline' ? 'var(--red)' : syncState === 'syncing' ? 'var(--amber)' : 'var(--green)', 
+                boxShadow: syncState === 'offline' ? '0 0 0 2px var(--red-bg)' : syncState === 'syncing' ? '0 0 0 2px var(--amber-bg)' : '0 0 0 2px var(--green-bg)' 
               }} 
             />
           </div>
@@ -6556,51 +8539,117 @@ useEffect(() => {
         <div className="main">
 
           {/* ── Topbar ── */}
-          <header className="topbar" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface)' }}>
-          <div style={{ flex: 1 }}>
-            <div className="tb-title" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>{getPageTitle()}</div>
-            <div className="tb-sub" style={{ fontSize: '12px', color: 'var(--muted)' }}>{getPageSubtitle()}</div>
-          </div>
-          
-          <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-            {role === 'admin' && (
-              <div className="role-admin" style={{ fontSize: '12px', fontWeight: 700, color: 'var(--amber)', background: 'rgba(245, 158, 11, 0.1)', padding: '4px 10px', borderRadius: '6px' }}>
-                🔑 Admin
+          <header 
+              className="topbar" 
+              style={{ 
+                display: 'flex', 
+                justify: 'space-between', 
+                alignItems: 'center', 
+                padding: '12px 24px', 
+                borderBottom: '1px solid var(--border)', 
+                background: 'var(--surface)' 
+              }}
+            >
+              <div style={{ flex: 1 }}>
+                <div className="tb-title" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
+                  {currentTitle}
+                </div>
+                <div className="tb-sub" style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                  {currentSubtitle}
+                </div>
               </div>
-            )}
-            
-            {/* ✅ SIGURADONG LALABAS ITO */}
-            <SyncStatusIndicator syncState={syncState || 'offline'} />
-            <ThemeToggle />
-            
-            <button className="btn btn-g btn-sm" onClick={logout} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
-              Sign Out
-            </button>
-          </div>
-        </header>
+
+              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+                {role === 'admin' && (
+                  <div 
+                    className="role-admin" 
+                    style={{ 
+                      fontSize: '12px', 
+                      fontWeight: 700, 
+                      color: 'var(--amber)', 
+                      background: 'rgba(245, 158, 11, 0.1)', 
+                      padding: '4px 10px', 
+                      borderRadius: '6px' 
+                    }}
+                  >
+                    🔑 Admin
+                  </div>
+                )}
+                <SyncStatusIndicator syncState={syncState || 'offline'} />
+                <ThemeToggle />
+                <button 
+                  className="btn btn-g btn-sm" 
+                  onClick={logout} 
+                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                >
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
+                    <polyline points="16 17 21 12 16 7"/>
+                    <line x1="21" y1="12" x2="9" y2="12"/>
+                  </svg> 
+                  Sign Out
+                </button>
+              </div>
+          </header>
 
           <div className="content">
-
             {/* ════════════════════════════════════════
                 SCREEN: DASHBOARD
                 ════════════════════════════════════════ */}
                 {screen === 'dashboard' && (
                   <div className="screen active" style={{ padding: '24px', width: '100%', boxSizing: 'border-box', maxWidth: '1600px', margin: '0 auto' }}> 
+                  {/* DASHBOARD SUMMARY HEADER (Consolidated view for quick decision-making) */}
+                    <div style={{ marginBottom: '16px' }}>
+                      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
+                        {role === 'admin' ? 'Barangay Overview — Full System View' : 'Operations Overview'}
+                      </div>
+                      <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
+                        Consolidated key metrics, trends &amp; indicators • As of {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                      </div>
+                    </div>
+                  {/* QUICK ACTIONS GRID (Para hindi puro numbers, may mga button na agad) */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
+                      {[
+                        { label: 'Add Resident', icon: '👤', color: 'var(--primary)', nav: 'add-resident' },
+                        { label: 'Issue Certificate', icon: '📄', color: 'var(--green)', nav: 'cert-req' },
+                        { label: 'Post Announcement', icon: '📢', color: 'var(--amber)', nav: 'announcements' },
+                        { label: 'View Reports', icon: '📊', color: 'var(--teal)', nav: 'reports' }
+                      ].map((action, i) => (
+                        <button 
+                          key={i} 
+                          onClick={() => nav(action.nav)}
+                          style={{ 
+                            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', 
+                            padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
+                            cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                          }}
+                          onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = action.color; }}
+                          onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
+                        >
+                          <span style={{ fontSize: '24px' }}>{action.icon}</span>
+                          <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>{action.label}</span>
+                        </button>
+                          ))}
+                    </div>
                     {/* 1. TOP METRICS GRID */}
                     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '14px', marginBottom: '20px' }}>
                       {[
-                        { label: 'Total Residents', value: totalResidents, sub: 'Registered', color: 'var(--text)' },
-                        { label: 'Households', value: totalHouseholds, sub: 'Family units', color: 'var(--green)' },
-                        { label: 'Reg. Voters', value: totalVoters, sub: `${totalResidents > 0 ? ((totalVoters / totalResidents) * 100).toFixed(0) : 0}% of total`, color: 'var(--amber)' },
-                        { label: 'Pending Certs', value: pendingRequestsCount, sub: 'Awaiting approval', color: 'var(--accent)' },
-                        { label: 'Open Blotter', value: typeof blotterList !== 'undefined' ? blotterList.filter(b => b.status === 'Open' || b.status === 'Under Mediation').length : 0, sub: 'Active cases', color: 'var(--red)' },
+                        { label: 'Total Residents', value: totalResidents, sub: 'Registered', color: 'var(--text)', trend: residentTrend, goodWhenUp: true },
+                        { label: 'Households', value: totalHouseholds, sub: 'Family units', color: 'var(--green)', trend: householdTrend, goodWhenUp: true },
+                        { label: 'Reg. Voters', value: totalVoters, sub: `${totalResidents > 0 ? ((totalVoters / totalResidents) * 100).toFixed(0) : 0}% of total`, color: 'var(--amber)', trend: voterTrend, goodWhenUp: true },
+                        { label: 'Pending Certs', value: pendingRequestsCount, sub: 'Awaiting approval', color: 'var(--accent)', trend: certTrend, goodWhenUp: false },
+                        { label: 'Open Blotter', value: typeof blotterList !== 'undefined' ? blotterList.filter(b => b.status === 'Open' || b.status === 'Under Mediation').length : 0, sub: 'Active cases', color: 'var(--red)', trend: blotterTrend, goodWhenUp: false },
                         ...(role === 'admin' ? [{ label: 'Sync Conflicts', value: conflictsList.length, sub: conflictsList.length > 0 ? 'Needs fix' : 'All synced', color: conflictsList.length > 0 ? 'var(--amber)' : 'var(--muted)' }] : []),
-                        { label: 'Feedback', value: activeFeedbackCount, sub: 'Submissions', color: 'var(--teal)' }
+                        { label: 'Feedback', value: activeFeedbackCount, sub: 'Submissions', color: 'var(--teal)', trend: feedbackTrend, goodWhenUp: null }
                       ].map((stat, i) => (
                         <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                           <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</span>
                           <span style={{ fontSize: '26px', fontWeight: 800, color: stat.color, lineHeight: 1.1 }}>{stat.value}</span>
+                          {stat.trend && (
+                            <span style={{ fontSize: '11px', fontWeight: 700, color: stat.trend.delta === 0 ? 'var(--muted)' : stat.goodWhenUp === null ? 'var(--teal-text)' : (stat.trend.delta > 0) === stat.goodWhenUp ? 'var(--green-text)' : 'var(--red-text)' }}>
+                              {stat.trend.delta > 0 ? '▲' : stat.trend.delta < 0 ? '▼' : '•'} {stat.trend.thisMonth} new this month (last mo: {stat.trend.lastMonth})
+                            </span>
+                          )}
                           <span style={{ fontSize: '11px', color: 'var(--hint)' }}>{stat.sub}</span>
                         </div>
                       ))}
@@ -6646,60 +8695,6 @@ useEffect(() => {
                             </div>
                           ))}
                         </div>
-                      </div>
-
-                      {/* Audit Trail */}
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-                          {role === 'admin' ? 'Recent Audit Trail' : 'Recent Activity'}
-                        </div>
-
-                        {recentLogs.length === 0 ? (
-                          <div style={{ textAlign: 'center', color: 'var(--hint)', padding: '30px', fontSize: '12px', background: 'var(--surface2)', border: '1px dashed var(--border)', borderRadius: '8px' }}>
-                            No recent activity recorded.
-                          </div>
-                        ) : (
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', flex: 1 }}>
-                            {recentLogs.map((log) => {
-                              // Fallback helper kung wala ang getActionMeta sa file
-                              const getMeta = typeof getActionMeta === 'function' 
-                                ? getActionMeta 
-                                : (act = '') => ({
-                                    bg: 'rgba(59, 130, 246, 0.15)',
-                                    ico: '📋'
-                                  });
-
-                              const meta = getMeta(log.action);
-                              const userText = log.user || log.actor?.username || 'System';
-
-                              return (
-                                <div key={log._id || log.id} style={{ display: 'flex', alignItems: 'center', gap: '12px', padding: '10px 12px', borderRadius: '8px', background: 'var(--surface2)', border: '1px solid var(--border)' }}>
-                                  <div style={{ width: '30px', height: '30px', borderRadius: '6px', background: meta.bg, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                                    {meta.ico}
-                                  </div>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '2px' }}>
-                                      <span style={{ fontWeight: 700, color: 'var(--text)', fontSize: '12px' }}>{log.action}</span>
-                                      {log.module && <span style={{ color: 'var(--muted)', fontSize: '11px' }}>• {log.module}</span>}
-                                    </div>
-                                    <div style={{ fontSize: '11px', color: 'var(--muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                                      {userText} {log.details ? `• ${log.details}` : ''}
-                                    </div>
-                                  </div>
-                                  <div style={{ fontSize: '10px', color: 'var(--hint)', flexShrink: 0, fontFamily: 'var(--mono)' }}>
-                                    {log.timestamp ? new Date(log.timestamp).toLocaleTimeString('en-PH', { hour: '2-digit', minute: '2-digit', hour12: true }) : ''}
-                                  </div>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        )}
-
-                        {role === 'admin' && (
-                          <button onClick={() => setScreen('audit')} style={{ width: '100%', padding: '8px', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', fontWeight: 700, fontSize: '12px', borderRadius: '6px', cursor: 'pointer' }}>
-                            View Full Audit Log
-                          </button>
-                        )}
                       </div>
                     </div>
                     
@@ -6844,886 +8839,804 @@ useEffect(() => {
                   </div>
                 )}
                 
-            {/* ════════════════════════════════════════
-                SCREEN: MANAGE RESIDENTS
-                ════════════════════════════════════════ */}
-                {screen === 'residents' && (
-                <div className="screen active">
-                  {/* Search & Filters Bar */}
-                  <div className="tw" style={{ marginBottom: '16px' }}>
-                    <div className="tb">
-                      <div className="sb-box">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="11" cy="11" r="8" />
-                          <path d="M21 21l-4.35-4.35" />
-                        </svg>
-                        <input
-                          placeholder="Search by name, purok, Resident ID, or RBI ID..."
-                          value={searchTerm}
-                          onChange={(e) => setSearchTerm(e.target.value)}
-                        />
-                      </div>
-                      <select className="fc" style={{ width: '130px' }} value={purokFilter} onChange={(e) => setPurokFilter(e.target.value)}>
-                        <option value="All Puroks">All Puroks</option>
-                        <option value="Purok 1">Purok 1</option>
-                        <option value="Purok 2">Purok 2</option>
-                        <option value="Purok 3">Purok 3</option>
-                        <option value="Purok 4">Purok 4</option>
-                        <option value="Purok 5">Purok 5</option>
-                        <option value="Purok 6">Purok 6</option>
-                      </select>
-                      <select className="fc" style={{ width: '110px' }} value={genderFilter} onChange={(e) => setGenderFilter(e.target.value)}>
-                        <option value="All Gender">All Gender</option>
-                        <option value="Male">Male</option>
-                        <option value="Female">Female</option>
-                      </select>
+                {screen === 'barangay-map' && (
+                  <div className="screen active certificate-lifecycle-screen" style={{ padding: '24px' }}>
+                    <div style={{ marginBottom: '20px' }}>
+                      <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>
+                        Barangay Map
+                      </h2>
+                      <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
+                        Interactive view of Barangay Bustrac zones, residents, and incident locations.
+                      </p>
+                    </div>
+                    <div className="cert-section-card" style={{ padding: '16px' }}>
+                      <BarangayMap
+                        residents={mapResidents}
+                        blotters={mapBlotters}
+                        assistance={mapAid}
+                        onZoneClick={handleZoneClick}
+                      />
                     </div>
                   </div>
+                )}
 
-                  {/* Selected Residents Bar */}
-                  {selectedResidents.length > 0 && (
-                    <div style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      justifyContent: 'space-between',
-                      background: 'var(--surface2)',
-                      border: '1px solid var(--border)',
-                      padding: '12px 16px',
-                      borderRadius: '8px',
-                      marginBottom: '16px',
-                      fontSize: '13px',
-                      position: 'relative',
-                      boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1)'
-                    }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                          <circle cx="9" cy="7" r="4" />
-                        </svg>
-                        <span>
-                          Selected: <strong style={{ color: 'var(--accent)' }}>{selectedResidents.length}</strong>
-                          {selectedResidents.length === 1 ? ' resident' : ' residents'}
+                {/* ════════════════════════════════════════ 
+                        SCREEN: MANAGE RESIDENTS 
+                    ════════════════════════════════════════ */}
+                    {screen === 'residents' && (
+  <div className="screen active">
+    {/* ── View Mode Tabs ── */}
+    <div className="res-view-tabs">
+      <button
+        className={`btn ${viewMode === 'active' ? 'btn-p' : 'btn-g'}`}
+        onClick={() => setViewMode('active')}
+      >
+        Active Residents
+      </button>
+      <button
+        className={`btn ${viewMode === 'archived' ? 'btn-p' : 'btn-g'}`}
+        onClick={() => setViewMode('archived')}
+      >
+        Archived
+      </button>
+    </div>
+
+    {/* ── Search & Filter Bar ── */}
+    <div className="res-filter-bar">
+      <div className="res-filter-group">
+        <div className="sb-box res-search-box">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <path d="M21 21l-4.35-4.35" />
+          </svg>
+          <input
+            placeholder="Search by name, purok, Resident ID, or RBI ID..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+        <select
+          className="fc res-filter-select"
+          value={purokFilter}
+          onChange={(e) => setPurokFilter(e.target.value)}
+        >
+          <option value="All Puroks">All Puroks</option>
+          <option value="Purok 1">Purok 1</option>
+          <option value="Purok 2">Purok 2</option>
+          <option value="Purok 3">Purok 3</option>
+          <option value="Purok 4">Purok 4</option>
+          <option value="Purok 5">Purok 5</option>
+        </select>
+        <select
+          className="fc res-filter-select"
+          value={genderFilter}
+          onChange={(e) => setGenderFilter(e.target.value)}
+        >
+          <option value="All Gender">All Gender</option>
+          <option value="Male">Male</option>
+          <option value="Female">Female</option>
+          <option value="LGBTQ+">LGBTQ+</option>
+          <option value="Non-binary">Non-binary</option>
+          <option value="Transgender">Transgender</option>
+          <option value="Prefer not to say">Prefer not to say</option>
+        </select>
+      </div>
+      <button
+        className="btn btn-p res-add-btn"
+        onClick={() => {
+          setEditingResidentId(null);
+          setResidentForm(EMPTY_RESIDENT);
+          setHouseholdAssignmentMode('existing');
+          setHouseholdForm(EMPTY_HOUSEHOLD);
+          setShowAddResidentModal(true);
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        Add New Resident
+      </button>
+    </div>
+
+    {/* ── Bulk Actions Bar ── */}
+    {selectedResidents.length > 0 && (
+      <div className="res-bulk-bar">
+        <div className="res-bulk-info">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+            <circle cx="9" cy="7" r="4" />
+          </svg>
+          <span>
+            Selected: <strong>{selectedResidents.length}</strong>
+            {selectedResidents.length === 1 ? ' resident' : ' residents'}
+          </span>
+        </div>
+        <div className="res-bulk-actions">
+          <button
+            className="btn btn-p btn-sm res-bulk-toggle"
+            onClick={() => setShowBulkDropdown(!showBulkDropdown)}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
+              <path d="M12 2v2" /><path d="M12 18v2" />
+              <path d="M4.93 4.93l2.83 2.83" /><path d="M16.24 16.24l2.83 2.83" />
+              <path d="M2 12h2" /><path d="M20 12h2" />
+              <path d="M4.93 19.07l2.83-2.83" /><path d="M16.24 7.76l2.83-2.83" />
+            </svg>
+            Bulk Actions
+            <span className="res-bulk-arrow">{showBulkDropdown ? '▲' : '▼'}</span>
+          </button>
+          <button
+            className="btn btn-g btn-sm"
+            onClick={() => { setSelectedResidents([]); setShowBulkDropdown(false); }}
+          >
+            Cancel
+          </button>
+
+          {showBulkDropdown && (
+            <div className="res-bulk-dropdown">
+              <button className="bulk-menu-item" onClick={() => { nav('aid-encode'); setShowBulkDropdown(false); }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                </svg>
+                Encode to Aid Program
+              </button>
+              <button className="bulk-menu-item" onClick={() => { nav('cert-print'); setShowBulkDropdown(false); }}>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <path d="M14 2v6h6" /><path d="M12 18v-6" /><path d="M9 15h6" />
+                </svg>
+                Prepare Bulk Certificates
+              </button>
+              <div className="section-divider" />
+              {/* ── CSV Export ── */}
+              <button
+                className="bulk-menu-item bulk-menu-export"
+                onClick={() => {
+                  const selectedData = residentsList.filter((r) => selectedResidents.includes(r.id));
+                  const csvHeaders = "Resident ID,RBI ID,Name,Purok,Age,Civil Status,Voter\n";
+                  const csvRows = selectedData.map((r) =>
+                    `"${r.id}","${r.rbiId || ''}","${r.name}","${r.purok}",${r.age},"${r.civilStatus}","${r.voter ? 'Yes' : 'No'}"`
+                  ).join("\n");
+                  const blob = new Blob([csvHeaders + csvRows], { type: 'text/csv;charset=utf-8;' });
+                  const url = URL.createObjectURL(blob);
+                  const link = document.createElement("a");
+                  link.href = url;
+                  link.download = `Bustrac_Selected_Residents_${new Date().toISOString().slice(0, 10)}.csv`;
+                  document.body.appendChild(link);
+                  link.click();
+                  document.body.removeChild(link);
+                  setShowBulkDropdown(false);
+                  setSelectedResidents([]);
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <path d="M7 10l5 5 5-5" /><path d="M12 15v-6" />
+                </svg>
+                Export to CSV
+              </button>
+              {/* ── EXCEL Export ── */}
+              <button
+                className="bulk-menu-item bulk-menu-excel"
+                onClick={() => {
+                  const selectedData = residentsList.filter((r) => selectedResidents.includes(r.id));
+                  const rows = selectedData.map((r) => ({
+                    'Resident ID': r.id,
+                    'RBI ID': r.rbiId || '',
+                    'Name': r.name,
+                    'Purok': r.purok,
+                    'Age': r.age,
+                    'Civil Status': r.civilStatus,
+                    'Voter': r.voter ? 'Yes' : 'No',
+                  }));
+                  exportToExcel(rows, `Bustrac_Residents_${new Date().toISOString().slice(0, 10)}`);
+                  setShowBulkDropdown(false);
+                  setSelectedResidents([]);
+                }}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <path d="M8 13h2v6H8z" /><path d="M12 15h2v4h-2z" /><path d="M16 11h2v8h-2z" />
+                </svg>
+                Export to Excel
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* ── Residents Table ── */}
+    <div className="tw res-table-wrap">
+      <table className="res-table">
+        <thead>
+          <tr>
+            <th className="res-th-checkbox">
+  <input 
+    type="checkbox" 
+    checked={
+      sortedFilteredResidents.length > 0 &&
+      sortedFilteredResidents.every((r) => selectedResidents.includes(r.id))
+    } 
+    onChange={(e) => {
+      if (e.target.checked) {
+        const allVisibleIds = sortedFilteredResidents.map((r) => r.id);
+        setSelectedResidents(allVisibleIds);
+        showToast(`Selected ${allVisibleIds.length} resident(s) on this page.`, 'success');
+      } else {
+        setSelectedResidents([]);
+        showToast('Selection cleared.', 'info'); // Note: gamitin ang 'info' o 'success' base sa showToast mo
+      }
+    }} 
+  />
+</th>
+            <th className="res-th-sortable" onClick={() => handleResidentSort('id')}>
+              Resident ID {residentSort.key === 'id' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+            </th>
+            <th className="res-th-sortable" onClick={() => handleResidentSort('rbiId')}>
+              RBI ID {residentSort.key === 'rbiId' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+            </th>
+            <th className="res-th-sortable" onClick={() => handleResidentSort('name')}>
+              Full Name {residentSort.key === 'name' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+            </th>
+            <th className="res-th-sortable" onClick={() => handleResidentSort('purok')}>
+              Purok {residentSort.key === 'purok' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+            </th>
+            <th className="res-th-sortable" onClick={() => handleResidentSort('age')}>
+              Age {residentSort.key === 'age' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+            </th>
+            <th className="res-th-sortable" onClick={() => handleResidentSort('civilStatus')}>
+              Civil Status {residentSort.key === 'civilStatus' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+            </th>
+            <th className="res-th-sortable" onClick={() => handleResidentSort('voter')}>
+              Voter {residentSort.key === 'voter' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
+            </th>
+            {role === 'admin' && <th>Household</th>}
+            <th className="res-th-actions">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+        {isResidentsLoading ? (
+          // ✅ Loading State: Maiiwasan ang "No residents found" flash
+          <tr>
+            <td colSpan={role === 'admin' ? 10 : 9} style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                <span className="spinner" style={{ width: '24px', height: '24px', borderWidth: '3px' }} />
+                <span>Loading resident records from local database...</span>
+              </div>
+            </td>
+          </tr>
+        ) : sortedFilteredResidents.length === 0 ? (
+          // ✅ True Empty State: Ipapakita lang kung talagang walang data
+          <tr>
+            <td colSpan={role === 'admin' ? 10 : 9} className="res-empty-cell">
+              <div className="res-empty-state">
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
+                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                  <circle cx="9" cy="7" r="4" />
+                </svg>
+                <span>No residents found matching your search.</span>
+              </div>
+            </td>
+          </tr>
+        ) : (
+          sortedFilteredResidents.map((res) => {
+            const isChecked = selectedResidents.includes(res.id);
+            const initials = res.name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase();
+            
+            return (
+              <tr key={res.id} className={isChecked ? 'row-selected' : ''}>
+                <td className="res-td-center">
+                  <input type="checkbox" checked={isChecked} onChange={(e) => {
+                    if (e.target.checked) setSelectedResidents([...selectedResidents, res.id]);
+                    else setSelectedResidents(selectedResidents.filter((id) => id !== res.id));
+                  }} />
+                </td>
+                
+                {/* ✅ FIX: Truncated IDs with Tooltip */}
+                <td className="res-td-mono res-td-muted" style={{ maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={res.id}>
+                  {res.id}
+                </td>
+                <td className="res-td-mono" style={{ maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={res.rbiId || 'N/A'}>
+                  {res.rbiId || '—'}
+                </td>
+                
+                <td>
+                  <div className="res-name-cell">
+                    <div className="res-avatar">
+                      <span>{initials}</span>
+                      {res.photoUrl && <img src={res.photoUrl} alt={res.name} onError={(e) => { e.target.style.visibility = 'hidden'; }} />}
+                    </div>
+                    <div className="res-name-info">
+                      <strong className="res-name-text">{res.name}</strong>
+                      {res.conflict && (
+                        <span className="badge r res-conflict-badge" title="Data conflict detected">
+                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M10.3 3.9 2.5 17a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+                            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+                          </svg> Conflict
                         </span>
-                      </div>
-                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center', position: 'relative' }}>
-                        <button className="btn btn-p btn-sm" onClick={() => setShowBulkDropdown(!showBulkDropdown)} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
-                            <path d="M12 2v2" />
-                            <path d="M12 18v2" />
-                            <path d="M4.93 4.93l2.83 2.83" />
-                            <path d="M16.24 16.24l2.83 2.83" />
-                            <path d="M2 12h2" />
-                            <path d="M20 12h2" />
-                            <path d="M4.93 19.07l2.83-2.83" />
-                            <path d="M16.24 7.76l2.83-2.83" />
-                          </svg>
-                          Bulk Actions <span style={{ fontSize: '10px' }}>{showBulkDropdown ? '▲' : '▼'}</span>
+                      )}
+                    </div>
+                  </div>
+                </td>
+                
+                <td><span className={`badge ${res.purokClass}`}>{res.purok || 'N/A'}</span></td>
+                
+                {/* ✅ FIX: Fallback for empty data */}
+                <td>{res.age || '—'}</td>
+                <td>{res.civilStatus || '—'}</td>
+                
+                <td>
+                  <span className={`badge ${res.voter ? 'g' : 'gr'}`}>{res.voter ? 'Yes' : 'No'}</span>
+                </td>
+                
+                {role === 'admin' && (
+                  <td className="res-td-mono">
+                    {res.household ? (
+                      <span className="badge res-household-badge" title={`View household ${res.household}`} onClick={() => { setSelectedHouseholdId(res.household); nav('view-household'); }} style={{ cursor: 'pointer' }}>
+                        {res.household}
+                      </span>
+                    ) : <span className="res-td-muted">—</span>}
+                  </td>
+                )}
+                
+                <td>
+                  <div className="res-actions">
+                    {viewMode === 'active' && (
+                      <>
+                        <button className="btn btn-sm action-btn-view" onClick={() => { setSelectedResidentId(res.id); nav('view-resident'); }} title="View Profile">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
                         </button>
-                        <button className="btn btn-g btn-sm" onClick={() => { setSelectedResidents([]); setShowBulkDropdown(false); }}>
-                          Cancel
+                        <button className="btn btn-sm action-btn-edit" onClick={() => { /* edit logic */ nav('edit-resident'); }} title="Edit Details">
+                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
                         </button>
-                        {showBulkDropdown && (
-                          <div style={{
-                            position: 'absolute',
-                            top: '40px',
-                            right: '0',
-                            background: 'var(--surface)',
-                            border: '1px solid var(--border)',
-                            borderRadius: '8px',
-                            boxShadow: '0 10px 15px -3px rgba(0, 0, 0, 0.5)',
-                            zIndex: 50,
-                            minWidth: '240px',
-                            overflow: 'hidden',
-                            animation: 'dp-fadeIn 0.2s ease-out'
-                          }}>
-                            <button className="bulk-menu-item" onClick={() => { nav('aid-encode'); setShowBulkDropdown(false); }}>
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                              </svg>
-                              Encode to Aid Program
-                            </button>
-                            <button className="bulk-menu-item" onClick={() => { nav('cert-print'); setShowBulkDropdown(false); }}>
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <path d="M14 2v6h6" />
-                                <path d="M12 18v-6" />
-                                <path d="M9 15h6" />
-                              </svg>
-                              Prepare Bulk Certificates
-                            </button>
-                            <div style={{ height: '1px', background: 'var(--border)', margin: '4px 0' }} />
-                            <button className="bulk-menu-item bulk-menu-export" onClick={() => {
-                              const selectedData = residentsList.filter(r => selectedResidents.includes(r.id));
-                              const csvHeaders = "Resident ID,RBI ID,Name,Purok,Age,Civil Status,Voter\n";
-                              const csvRows = selectedData
-                                .map((r) => `"${r.id}","${r.rbiId || ''}","${r.name}","${r.purok}",${r.age},"${r.civilStatus}","${r.voter ? 'Yes' : 'No'}"`)
-                                .join("\n");
-                              const blob = new Blob([csvHeaders + csvRows], { type: 'text/csv;charset=utf-8;' });
-                              const url = URL.createObjectURL(blob);
-                              const link = document.createElement("a");
-                              link.setAttribute("href", url);
-                              link.setAttribute("download", `Bustrac_Selected_Residents_${new Date().toISOString().slice(0, 10)}.csv`);
-                              document.body.appendChild(link);
-                              link.click();
-                              document.body.removeChild(link);
-                              setShowBulkDropdown(false);
-                              setSelectedResidents([]);
+                        
+                        {!res.hasAccount && (
+                          <button className="btn btn-sm res-btn-credentials" onClick={() => handleGenerateCredentials(res)} title="Generate Login Credentials">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
+                          </button>
+                        )}
+                        
+                        {role === 'admin' && (
+                          <button className="btn btn-sm action-btn-delete" onClick={() => handleArchiveResident(res.id, res.name)} title="Archive Resident">
+
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></svg>
+                          </button>
+                        )}
+                      </>
+                    )}
+                    
+                    {viewMode === 'archived' && role === 'admin' && (
+                      <button className="btn btn-sm res-btn-restore" onClick={async () => {
+                        const confirmRestore = window.confirm(`I-restore ba si ${res.name} sa Active Residents list?`);
+                        if (!confirmRestore) return;
+                        try {
+                          const existingDoc = await db.get(res.id);
+                          const restoredDoc = { ...existingDoc, isArchived: false, archivedAt: null, updatedAt: new Date().toISOString() };
+                          await db.put(restoredDoc);
+                          await createAuditLog({ action: 'RESTORE_RESIDENT', module: 'RESIDENTS', recordId: res.id, details: `Restored archived resident: ${res.name}` });
+                          showToast(`${res.name} has been restored successfully.`, 'success');
+                          fetchResidents();
+                        } catch (err) {
+                          console.error('Failed to restore:', err);
+                          showToast('Failed to restore resident.', 'error');
+                        }
+                      }} title="Restore Resident">
+                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg> Restore
+                      </button>
+                    )}
+                  </div>
+                </td>
+              </tr>
+            );
+          })
+        )}
+      </tbody>
+            </table>
+          </div>
+        </div>
+      )}
+
+                    {/* ════════════════════════════════════════
+                        SCREEN: EDIT RESIDENT
+                        ════════════════════════════════════════ */}
+                        {screen === 'edit-resident' && (
+                          <div className="screen active" style={{ padding: '0 0 24px 0' }}>
+                            {/* ✅ NEW: Top Header with Back Button para hindi na kailangang mag-scroll pababa */}
+                            <div style={{ 
+                              display: 'flex', 
+                              justifyContent: 'space-between', 
+                              alignItems: 'center', 
+                              marginBottom: '20px', 
+                              padding: '16px 24px', 
+                              background: 'var(--surface)', 
+                              borderBottom: '1px solid var(--border)',
+                              borderRadius: '8px',
+                              margin: '0 24px 20px 24px'
                             }}>
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                                <path d="M7 10l5 5 5-5" />
-                                <path d="M12 15v-6" />
-                              </svg>
-                              Export to CSV
-                            </button>
+                              <button 
+                                className="btn btn-g" 
+                                onClick={() => { 
+                                  setEditingResidentId(null); 
+                                  setResidentForm(EMPTY_RESIDENT); 
+                                  nav('residents'); 
+                                }} 
+                                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                              >
+                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                  <path d="M19 12H5" />
+                                  <path d="M12 19l-7-7 7-7" />
+                                </svg>
+                                Back to Residents
+                              </button>
+                              
+                              <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text)' }}>
+                                Edit Resident Profile
+                              </div>
+                              
+                              <div style={{ width: '120px' }}></div> {/* Spacer para centered ang title */}
+                            </div>
+
+                            <ResidentForm
+                              residentForm={residentForm}
+                              setResidentForm={setResidentForm}
+                              editingResidentId={editingResidentId}
+                              photoPreviewUrl={photoPreviewUrl}
+                              setPhotoPreviewUrl={setPhotoPreviewUrl}
+                              handlePhotoChange={handlePhotoChange}
+                              handleRemovePhoto={handleRemovePhoto}
+                              updateResidentField={updateResidentField}
+                              submitAddResident={submitAddResident}
+                              households={householdsList}
+                              householdAssignmentMode={householdAssignmentMode}
+                              setHouseholdAssignmentMode={setHouseholdAssignmentMode}
+                              householdForm={householdForm}
+                              setHouseholdForm={setHouseholdForm}
+                              canCreateHousehold={role === 'admin'}
+                              nav={nav}
+                              setEditingResidentId={setEditingResidentId}
+                              EMPTY_RESIDENT={EMPTY_RESIDENT}
+                              onCancel={handleCancelResidentForm}
+                            />
                           </div>
                         )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Residents Table */}
-                  <div className="tw" style={{ borderRadius: '8px' }}>
-                    <table>
-                      <thead>
-                        <tr>
-                          <th style={{ width: '40px', textAlign: 'center' }}>
-                            <input type="checkbox" style={{ cursor: 'pointer' }}
-                              checked={residentsList.length > 0 && selectedResidents.length === residentsList.length}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setSelectedResidents(residentsList.map(r => r.id));
-                                } else {
-                                  setSelectedResidents([]);
-                                }
-                              }}
-                            />
-                          </th>
-                          <th onClick={() => handleResidentSort('id')} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                            Resident ID{' '}{residentSort.key === 'id' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-                          </th>
-                          <th onClick={() => handleResidentSort('rbiId')} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                            RBI ID{' '}{residentSort.key === 'rbiId' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-                          </th>
-                          <th onClick={() => handleResidentSort('name')} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                            Full Name{' '}{residentSort.key === 'name' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-                          </th>
-                          <th onClick={() => handleResidentSort('purok')} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                            Purok{' '}{residentSort.key === 'purok' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-                          </th>
-                          <th onClick={() => handleResidentSort('age')} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                            Age{' '}{residentSort.key === 'age' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-                          </th>
-                          <th onClick={() => handleResidentSort('civilStatus')} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                            Civil Status{' '}{residentSort.key === 'civilStatus' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-                          </th>
-                          <th onClick={() => handleResidentSort('voter')} style={{ cursor: 'pointer', userSelect: 'none', whiteSpace: 'nowrap' }}>
-                            Voter{' '}{residentSort.key === 'voter' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-                          </th>
-                          {role === 'admin' && <th>Household</th>}
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {sortedFilteredResidents.map((res) => {
-                          const isChecked = selectedResidents.includes(res.id);
-                          return (
-                            <tr key={res.id} className={isChecked ? 'row-selected' : ''}>
-                              <td style={{ textAlign: 'center' }}>
-                                <input type="checkbox" checked={isChecked} onChange={(e) => {
-                                  if (e.target.checked) {
-                                    setSelectedResidents([...selectedResidents, res.id]);
-                                  } else {
-                                    setSelectedResidents(selectedResidents.filter(id => id !== res.id));
-                                  }
-                                }} />
-                              </td>
-                              <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{res.id}</td>
-                              <td style={{ fontFamily: 'var(--mono)' }}>{res.rbiId || '—'}</td>
-                              <td>
-                                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                  <strong>{res.name}</strong>
-                                  {res.conflict && (
-                                    <span className="badge r" style={{ fontSize: '9px' }}>
-                                      <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                                        <path d="M12 9v4" />
-                                        <path d="M12 17h.01" />
-                                      </svg>
-                                      Conflict
-                                    </span>
-                                  )}
-                                </div>
-                              </td>
-                              <td>
-                                <span className={`badge ${res.purokClass}`}>{res.purok}</span>
-                              </td>
-                              <td>{res.age}</td>
-                              <td>{res.civilStatus}</td>
-                              <td>
-                                <span className={`badge ${res.voter ? 'g' : 'gr'}`}>
-                                  {res.voter ? (
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                                      <path d="M22 4L12 14.01l-3-3" />
-                                    </svg>
-                                  ) : (
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <circle cx="12" cy="12" r="10" />
-                                      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-                                      <line x1="9" y1="9" x2="9.01" y2="9" />
-                                      <line x1="15" y1="9" x2="15.01" y2="9" />
-                                    </svg>
-                                  )}
-                                  {res.voter ? 'Yes' : 'No'}
-                                </span>
-                              </td>
-                              {role === 'admin' && <td style={{ fontFamily: 'var(--mono)' }}>{res.household}</td>}
-                              <td style={{ whiteSpace: 'nowrap' }}>
-                                <button className="btn btn-sm action-btn-view" onClick={() => { setSelectedResidentId(res.id); nav('view-resident'); }} title="View">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                    <path d="M14 2v6h6" />
-                                    <path d="M12 18v-6" />
-                                    <path d="M9 15h6" />
-                                  </svg>
-                                </button>
-                                <button className="btn btn-sm action-btn-edit" onClick={() => { setSelectedResidentId(res.id); nav('edit-resident'); }} title="Edit">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                    <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                    <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                  </svg>
-                                </button>
-                                {role === 'admin' && (
-                                  <button className="btn btn-sm action-btn-delete" onClick={() => handleDeleteResident(res.id, res.name)} title="Delete">
-                                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                      <path d="M3 6h18" />
-                                      <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                    </svg>
-                                  </button>
-                                )}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
 
             {/* ════════════════════════════════════════
                 SCREEN: ADD RESIDENT
                 ════════════════════════════════════════ */}
-                {screen === 'add-resident' && (
-                  <div className="screen active">
-                    <form onSubmit={submitAddResident}>
-                      <div
-                        className="fp"
-                        style={{
-                          ...formCardStyle,
-                          backdropFilter: 'blur(8px)',
-                          padding: '24px',
-                          borderRadius: '12px',
-                        }}
-                      >
-                        <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '24px' }}>
-
-                          {/* ── LEFT SIDEBAR: PHOTO & BARANGAY STATUS ── */}
-                          <div style={{ borderRight: '1px solid var(--border)', paddingRight: '20px' }}>
-                            
-                            {/* Photo Preview Box */}
-                            <div style={{ width: '100%', height: '180px', border: '2px dashed var(--700)', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '12px', backgroundColor: 'var(--surface2)', color: 'var(--text)', overflow: 'hidden', position: 'relative' }}>
-                              {residentForm.photoUrl || photoPreviewUrl ? (
-                                <img 
-                                  src={residentForm.photoUrl || photoPreviewUrl} 
-                                  alt="Resident Preview" 
-                                  style={{ width: '100%', height: '100%', objectFit: 'cover' }} 
-                                  onError={(e) => { console.error(' Image failed to load'); e.target.style.display = 'none'; }} 
-                                />
-                              ) : (
-                                <span style={{ color: 'var(--muted)', fontSize: '12px', textAlign: 'center', padding: '10px' }}>
-                                  Picture (.Jpg / .Png)<br/>(Max 500KB)
-                                </span>
-                              )}
-                            </div>
-
-                            <div style={{ marginBottom: '16px' }}>
-                              {/* Hidden File Input */}
-                              <input 
-                                type="file" 
-                                accept="image/*" 
-                                id="resident-photo-upload" 
-                                style={{ display: 'none' }} 
-                                onChange={handlePhotoChange} 
-                              />
-                              
-                              {/* Upload Button */}
-                              <label 
-                                htmlFor="resident-photo-upload" 
-                                className="btn btn-g" 
-                                style={{ width: '100%', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px' }}
-                              >
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                  <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z" />
-                                  <circle cx="12" cy="13" r="4" />
-                                </svg>
-                                {residentForm.photoUrl ? 'Change Photo' : 'Upload / Take Photo'}
-                              </label>
-
-                              {/* Remove Button */}
-                              {residentForm.photoUrl && (
-                                <button 
-                                  type="button" 
-                                  className="btn btn-g btn-sm" 
-                                  style={{ width: '100%', marginTop: '8px', color: 'var(--red, #ef4444)', borderColor: 'rgba(239, 68, 68, 0.3)', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }} 
-                                  onClick={handleRemovePhoto}
-                                >
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <polyline points="3 6 5 6 21 6" />
-                                    <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
-                                    <line x1="10" y1="11" x2="10" y2="17" />
-                                    <line x1="14" y1="11" x2="14" y2="17" />
-                                  </svg>
-                                  Remove Photo
-                                </button>
-                              )}
-                            </div>
-
-                            {/* Checkboxes */}
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)' }}>
-                                <input type="checkbox" checked={residentForm.isBarangayOfficial} onChange={(e) => updateResidentField('isBarangayOfficial', e.target.checked)} />
-                                Barangay Official
-                              </label>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--red)' }}>
-                                <input type="checkbox" checked={residentForm.isDeceased} onChange={(e) => updateResidentField('isDeceased', e.target.checked)} />
-                                Mark as Deceased
-                              </label>
-                            </div>
-                          </div>
-
-                          {/* ── MAIN FORM CONTENT ── */}
-                          <div>
-                            {/* Header / ID Info */}
-                            <div className="fg3" style={{ marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>RBI ID NO. *</label>
-                                <input
-                                  type="text"
-                                  className="fc"
-                                  required
-                                  placeholder="05-17-23-005-00000868"
-                                  style={formFieldStyle}
-                                  value={residentForm.rbiNo}
-                                  onChange={(e) => updateResidentField('rbiNo', e.target.value.toUpperCase())}
-                                />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>HOUSEHOLD NUMBER</label>
-                                <input
-                                  type="text"
-                                  className="fc"
-                                  placeholder="HH-2026-001"
-                                  style={formFieldStyle}
-                                  value={residentForm.householdNo}
-                                  onChange={(e) => updateResidentField('householdNo', e.target.value)}
-                                />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>FILE DATE UPDATED</label>
-                                <input
-                                  type="date"
-                                  className="fc"
-                                  style={formFieldStyle}
-                                  value={residentForm.fileDateUpdated}
-                                  onChange={(e) => updateResidentField('fileDateUpdated', e.target.value)}
-                                />
-                              </div>
-                            </div>
-
-                            {/* Full Name Fields */}
-                            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 120px 120px', gap: '10px', marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>LAST NAME *</label>
-                                <input type="text" className="fc" required style={formFieldStyle} value={residentForm.lastName} onChange={(e) => updateResidentField('lastName', e.target.value)} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>FIRST NAME *</label>
-                                <input type="text" className="fc" required style={formFieldStyle} value={residentForm.firstName} onChange={(e) => updateResidentField('firstName', e.target.value)} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>MIDDLE NAME</label>
-                                <input type="text" className="fc" style={formFieldStyle} value={residentForm.middleName} onChange={(e) => updateResidentField('middleName', e.target.value)} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>SUFFIX</label>
-                                <input type="text" className="fc" placeholder="Jr / Sr / III" style={formFieldStyle} value={residentForm.suffix} onChange={(e) => updateResidentField('suffix', e.target.value)} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>ALIAS</label>
-                                <input type="text" className="fc" style={formFieldStyle} value={residentForm.alias} onChange={(e) => updateResidentField('alias', e.target.value)} />
-                              </div>
-                            </div>
-
-                            {/* Birthdate, Age, Birth Place */}
-                            <div className="fg3" style={{ marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>BIRTHDATE *</label>
-                                <input
-                                  type="date"
-                                  className="fc"
-                                  required
-                                  style={formFieldStyle}
-                                  value={residentForm.birthdate}
-                                  onChange={(e) => {
-                                    const bdate = e.target.value;
-                                    const calculatedAge = bdate ? Math.floor((new Date() - new Date(bdate)) / 31557600000) : 0;
-                                    updateResidentField('birthdate', bdate);
-                                    updateResidentField('age', calculatedAge > 0 ? calculatedAge : 0);
-                                  }}
-                                />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>AGE</label>
-                                <input type="number" className="fc" readOnly style={formFieldStyle} value={residentForm.age} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>BIRTH PLACE</label>
-                                <input type="text" className="fc" style={formFieldStyle} value={residentForm.birthPlace} onChange={(e) => updateResidentField('birthPlace', e.target.value)} />
-                              </div>
-                            </div>
-
-                            {/* Sex / LGBTQIA+ */}
-                            <div className="fg2" style={{ marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>SEX *</label>
-                                <select className="fc" style={formFieldStyle} value={residentForm.sex} onChange={(e) => updateResidentField('sex', e.target.value)}>
-                                  <option value="Male">Male</option>
-                                  <option value="Female">Female</option>
-                                </select>
-                              </div>
-                              <div className="fg" style={{ display: 'flex', gap: '10px', alignItems: 'center', marginTop: '20px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '13px', cursor: 'pointer', color: 'var(--text)' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={residentForm.isLgbtqia}
-                                    onChange={(e) => updateResidentField('isLgbtqia', e.target.checked)}
-                                  />
-                                  LGBTQIA+
-                                </label>
-                                {residentForm.isLgbtqia && (
-                                  <input
-                                    type="text"
-                                    className="fc"
-                                    placeholder="If Yes, Pls. Specify..."
-                                    style={formFieldStyle}
-                                    value={residentForm.lgbtqiaSpecification}
-                                    onChange={(e) => updateResidentField('lgbtqiaSpecification', e.target.value)}
-                                  />
-                                )}
-                              </div>
-                            </div>
-
-                            {/* Civil Status, Citizenship */}
-                            <div className="fg2" style={{ marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>CIVIL STATUS *</label>
-                                <select className="fc" style={formFieldStyle} value={residentForm.civilStatus} onChange={(e) => updateResidentField('civilStatus', e.target.value)}>
-                                  <option value="Single">Single</option>
-                                  <option value="Married">Married</option>
-                                  <option value="Widowed">Widowed</option>
-                                  <option value="Separated">Separated</option>
-                                  <option value="Divorced">Divorced</option>
-                                </select>
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>CITIZENSHIP</label>
-                                <input type="text" className="fc" style={formFieldStyle} value={residentForm.citizenship} onChange={(e) => updateResidentField('citizenship', e.target.value)} />
-                              </div>
-                            </div>
-
-                            {/* Religion, Tribe */}
-                            <div className="fg2" style={{ marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>RELIGION</label>
-                                <input type="text" className="fc" style={formFieldStyle} value={residentForm.religion} onChange={(e) => updateResidentField('religion', e.target.value)} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>INDIGENOUS TRIBE</label>
-                                <input type="text" className="fc" style={formFieldStyle} value={residentForm.indigenousTribe} onChange={(e) => updateResidentField('indigenousTribe', e.target.value)} />
-                              </div>
-                            </div>
-
-                            {/* Physical Attributes */}
-                            <div className="fg3" style={{ marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>WEIGHT (kg)</label>
-                                <input type="number" step="0.1" className="fc" style={formFieldStyle} value={residentForm.weightKg} onChange={(e) => updateResidentField('weightKg', e.target.value)} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>HEIGHT (cm)</label>
-                                <input type="number" step="0.1" className="fc" style={formFieldStyle} value={residentForm.heightCm} onChange={(e) => updateResidentField('heightCm', e.target.value)} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>BLOOD TYPE</label>
-                                <select className="fc" style={formFieldStyle} value={residentForm.bloodType} onChange={(e) => updateResidentField('bloodType', e.target.value)}>
-                                  <option value="">-- Select --</option>
-                                  <option value="A+">A+</option>
-                                  <option value="A-">A-</option>
-                                  <option value="B+">B+</option>
-                                  <option value="B-">B-</option>
-                                  <option value="AB+">AB+</option>
-                                  <option value="AB-">AB-</option>
-                                  <option value="O+">O+</option>
-                                  <option value="O-">O-</option>
-                                </select>
-                              </div>
-                            </div>
-
-                            {/* Family Roles & Household Status */}
-                            <div style={{ display: 'flex', gap: '16px', flexWrap: 'wrap', backgroundColor: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', color: 'var(--text)' }}>
-                                <input type="checkbox" checked={residentForm.isHouseholdHead} onChange={(e) => updateResidentField('isHouseholdHead', e.target.checked)} />
-                                Head of Household
-                              </label>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', color: 'var(--text)' }}>
-                                <input type="checkbox" checked={residentForm.isFamilyHead} onChange={(e) => updateResidentField('isFamilyHead', e.target.checked)} />
-                                Head of Family
-                              </label>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', color: 'var(--text)' }}>
-                                <input type="checkbox" checked={residentForm.isSoloParent} onChange={(e) => updateResidentField('isSoloParent', e.target.checked)} />
-                                Solo Parent
-                              </label>
-                            </div>
-
-                            {/* Relationship to Household Head */}
-                            <div className="fg" style={{ marginBottom: '16px' }}>
-                              <label className="fl" style={formLabelStyle}>RELATIONSHIP TO HOUSEHOLD HEAD</label>
-                              <input
-                                type="text"
-                                className="fc"
-                                placeholder="e.g. Spouse, Son, Daughter, Self"
-                                style={formFieldStyle}
-                                value={residentForm.relationshipToHouseholdHead}
-                                onChange={(e) => updateResidentField('relationshipToHouseholdHead', e.target.value)}
-                              />
-                            </div>
-
-                            {/* Residency Information */}
-                            <div style={{ backgroundColor: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
-                              <div style={{ display: 'flex', gap: '16px', marginBottom: '10px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', color: 'var(--text)' }}>
-                                  <input
-                                    type="checkbox"
-                                    checked={residentForm.isBarangayResident}
-                                    onChange={(e) => updateResidentField('isBarangayResident', e.target.checked)}
-                                  />
-                                  Resident of Barangay?
-                                </label>
-                              </div>
-                              <div className="fg2">
-                                <div className="fg">
-                                  <label className="fl" style={formLabelStyle}>RESIDENT SINCE WHEN?</label>
-                                  <input
-                                    type="date"
-                                    className="fc"
-                                    style={formFieldStyle}
-                                    value={residentForm.residentSince}
-                                    onChange={(e) => updateResidentField('residentSince', e.target.value)}
-                                  />
-                                </div>
-                                <div className="fg">
-                                  <label className="fl" style={formLabelStyle}>STATUS OF RESIDENCY</label>
-                                  <select
-                                    className="fc"
-                                    style={formFieldStyle}
-                                    value={residentForm.residencyStatus}
-                                    onChange={(e) => updateResidentField('residencyStatus', e.target.value)}
-                                  >
-                                    <option value="Permanent">Permanent</option>
-                                    <option value="Temporary">Temporary</option>
-                                    <option value="Transient">Transient</option>
-                                  </select>
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Voter Registration Info */}
-                            <div style={{ backgroundColor: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)', padding: '12px', borderRadius: '8px', marginBottom: '16px' }}>
-                              <div style={{ display: 'flex', gap: '16px', marginBottom: '10px' }}>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', color: 'var(--text)' }}>
-                                  <input type="checkbox" checked={residentForm.isRegisteredVoter} onChange={(e) => updateResidentField('isRegisteredVoter', e.target.checked)} />
-                                  Registered Voter?
-                                </label>
-                                <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', cursor: 'pointer', color: 'var(--text)' }}>
-                                  <input type="checkbox" checked={residentForm.isVotingLocally} onChange={(e) => updateResidentField('isVotingLocally', e.target.checked)} />
-                                  Voting Here?
-                                </label>
-                              </div>
-                              <div className="fg2">
-                                <div className="fg">
-                                  <label className="fl" style={formLabelStyle}>PRECINCT NO.</label>
-                                  <input type="text" className="fc" style={formFieldStyle} value={residentForm.precinctNo} onChange={(e) => updateResidentField('precinctNo', e.target.value)} />
-                                </div>
-                                <div className="fg">
-                                  <label className="fl" style={formLabelStyle}>VOTING IN OTHER PLACE? (Indicate Place)</label>
-                                  <input type="text" className="fc" style={formFieldStyle} value={residentForm.votingOtherPlace} onChange={(e) => updateResidentField('votingOtherPlace', e.target.value)} />
-                                </div>
-                              </div>
-                            </div>
-
-                            {/* Address & Contact Info */}
-                            <div className="fg2" style={{ marginBottom: '16px' }}>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>CONTACT NOS.</label>
-                                <input type="text" className="fc" placeholder="09XX-XXX-XXXX" style={formFieldStyle} value={residentForm.contactNo} onChange={(e) => updateResidentField('contactNo', e.target.value)} />
-                              </div>
-                              <div className="fg">
-                                <label className="fl" style={formLabelStyle}>EMAIL ADD</label>
-                                <input type="email" className="fc" style={formFieldStyle} value={residentForm.email} onChange={(e) => updateResidentField('email', e.target.value)} />
-                              </div>
-                            </div>
-
-                            <div className="fg" style={{ marginBottom: '16px' }}>
-                              <label className="fl" style={formLabelStyle}>ST., LOT NO., SUBD., PUROK/ZONE</label>
-                              <input type="text" className="fc" placeholder="Purok 3, Zone 1" style={formFieldStyle} value={residentForm.purokZoneAddress} onChange={(e) => updateResidentField('purokZoneAddress', e.target.value)} />
-                            </div>
-
-                            <div className="fg" style={{ marginBottom: '20px' }}>
-                              <label className="fl" style={formLabelStyle}>ADDRESS OUTSIDE IN THIS BARANGAY</label>
-                              <input type="text" className="fc" style={formFieldStyle} value={residentForm.addressOutsideBarangay} onChange={(e) => updateResidentField('addressOutsideBarangay', e.target.value)} />
-                            </div>
-
-                            {/* Action Buttons */}
-                            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px' }}>
-                              <button type="button" className="btn btn-g" onClick={() => nav('residents')}>
-                                Cancel
-                              </button>
-                              <button type="submit" className="btn btn-p">
-                                Save Resident Record
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </form>
-                  </div>
-                )}
+                  {screen === 'add-resident' && (
+                    <ResidentForm 
+                      residentForm={residentForm}
+                      setResidentForm={setResidentForm}
+                      editingResidentId={editingResidentId}
+                      photoPreviewUrl={photoPreviewUrl}
+                      setPhotoPreviewUrl={setPhotoPreviewUrl}
+                      handlePhotoChange={handlePhotoChange}
+                      handleRemovePhoto={handleRemovePhoto}
+                      updateResidentField={updateResidentField}
+                      submitAddResident={submitAddResident}
+                      households={householdsList}
+                      householdAssignmentMode={householdAssignmentMode}
+                      setHouseholdAssignmentMode={setHouseholdAssignmentMode}
+                      householdForm={householdForm}
+                      setHouseholdForm={setHouseholdForm}
+                      canCreateHousehold={role === 'admin'}
+                      nav={nav}
+                      setEditingResidentId={setEditingResidentId}
+                      EMPTY_RESIDENT={EMPTY_RESIDENT}
+                      onCancel={handleCancelResidentForm}
+                    />
+                  )}
 
             {/* ════════════════════════════════════════
                 SCREEN: VIEW RESIDENT PROFILE
                 ════════════════════════════════════════ */}
             {screen === 'view-resident' && (() => {
               const res = residentsList.find(r => r.id === selectedResidentId);
-              const personalAidHistory = (typeof aidLogs !== 'undefined' ? aidLogs : [])
-                .filter(log => log.residentId === selectedResidentId);
 
               if (!res) {
                 return (
                   <div className="screen active">
                     <div className="ph">
                       <div className="pt">Resident Profile Not Found</div>
-                      <button className="btn btn-g" onClick={() => nav('residents')}>← Back</button>
+                      <button className="btn btn-g" onClick={() => nav('residents')}>
+                        ← Back to List
+                      </button>
                     </div>
-                    <div className="card">Mangyaring pumili ng valid na residente mula sa masterlist roster.</div>
                   </div>
                 );
               }
 
-              return (
-                <div className="screen active">
-                  
+              const resName = res.name || res.fullName || `${res.firstName || ''} ${res.lastName || ''}`.trim() || 'Resident Profile';
+              
+              const initials = resName
+                .split(' ')
+                .filter(Boolean)
+                .map(n => n[0])
+                .join('')
+                .substring(0, 2)
+                .toUpperCase() || 'RP';
 
-                  <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1.2fr 1.8fr', gap: '20px' }}>
-                    
-                    {/* KALIWANG BAHAGI: CORE DEMOGRAPHIC SHEET */}
-                    <div className="card">
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '16px', borderBottom: '1px solid #334155', paddingBottom: '12px' }}>
-                        <div style={{ width: '45px', height: '45px', borderRadius: '50%', background: '#3b82f6', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '20px', fontWeight: 'bold'}}>
-                          {res.name.charAt(0)}
-                        </div>
-                        <div>
-                          <div style={{ fontWeight: 'bold', fontSize: '16px', color: 'var(--text)' }}>{res.name}</div>
-                          <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>ID: {res.id}</div>
-                        </div>
+              const personalAidHistory = (typeof aidLogs !== 'undefined' ? aidLogs : [])
+                .filter(log => log.residentId === selectedResidentId || log.residentID === selectedResidentId);
+
+              // Demographics & Contact
+              const rawBirthdate = res.birthdate || res.dateOfBirth || res.dob || '';
+              const displayAge = res.age 
+                ? `${res.age} yrs old` 
+                : (rawBirthdate && typeof getAge === 'function' ? `${getAge(rawBirthdate)} yrs old` : '— yrs old');
+
+              const displayGender = res.gender || res.sex || 'N/A';
+              const displayContact = res.contact || res.contactNo || res.phone || res.mobile || 'N/A';
+              const displayEmail = res.email || res.emailAddress || 'N/A';
+              const displayBirthdate = rawBirthdate || 'N/A';
+              const displayPurok = res.purok || res.purokZoneAddress || res.zone || res.purokNumber || 'N/A';
+              const displayCivilStatus = res.civilStatus || res.maritalStatus || 'N/A';
+              const displayHousehold = res.household || res.householdId || res.householdNo || 'Unassigned';
+              const displayBirthPlace = res.birthPlace || res.placeOfBirth || 'N/A';
+              const displayResidentSince = res.residentSince || res.yearsOfResidency || res.residencyYear || 'N/A';
+
+              // Status Booleans
+              const isVoter = Boolean(res.voter || res.isVoter || res.voterStatus === 'Registered' || res.voterStatus === 'Yes');
+              const isSoloParent = Boolean(res.isSoloParent || res.soloParent || res.soloParentStatus === 'Yes');
+              const isBarangayOfficial = Boolean(res.isBarangayOfficial || res.barangayOfficial || res.isOfficial);
+
+              return (
+                <div className="screen active" style={{ padding: '0 0 24px 0' }}>
+                  {/* Header Controls */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px' }}>
+                    <button
+                      className="btn btn-g"
+                      onClick={() => nav('residents')}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M19 12H5" />
+                        <path d="M12 19l-7-7 7-7" />
+                      </svg>
+                      Back to Residents
+                    </button>
+                    <button
+                      className="btn btn-p"
+                      onClick={() => handleStartEditResident(res)}
+                      style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+                    >
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 20h9" />
+                        <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                      </svg>
+                      Edit Resident
+                    </button>
+                  </div>
+
+                  <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
+                    {/* Left Profile Card */}
+                    <div className="card" style={{ padding: '24px', textAlign: 'center' }}>
+                      <div
+                        style={{
+                          width: '100px',
+                          height: '100px',
+                          borderRadius: '50%',
+                          background: 'var(--surface2)',
+                          margin: '0 auto 16px',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '32px',
+                          fontWeight: 'bold',
+                          color: 'var(--primary)',
+                          border: '3px solid var(--border)',
+                          position: 'relative',
+                          overflow: 'hidden'
+                        }}
+                      >
+                        {res.photoUrl || res.avatar ? (
+                          <img
+                            src={res.photoUrl || res.avatar}
+                            alt={resName}
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        ) : (
+                          initials
+                        )}
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '13px' }}>
+                      <h2 style={{ fontSize: '20px', fontWeight: '800', color: 'var(--text)', marginBottom: '4px' }}>
+                        {resName}
+                      </h2>
+
+                      <div style={{ fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)', marginBottom: '16px' }}>
+                        ID: {res.id || 'N/A'} • RBI: {res.rbiId || res.rbi || 'N/A'}
+                      </div>
+
+                      <div
+                        style={{
+                          display: 'flex',
+                          flexDirection: 'column',
+                          gap: '12px',
+                          textAlign: 'left',
+                          marginTop: '24px',
+                          borderTop: '1px solid var(--border)',
+                          paddingTop: '24px'
+                        }}
+                      >
                         <div>
-                          <span style={{ color: 'var(--muted)', fontSize: '11px' }}>Age</span>
-                          <div style={{ fontWeight: 'bold', marginTop: '2px' }}>{res.age} yrs old</div>
+                          <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            Age & Gender
+                          </span>
+                          <div style={{ fontWeight: '600' }}>
+                            {displayAge} • {displayGender}
+                          </div>
                         </div>
+
                         <div>
-                          <span style={{ color: 'var(--muted)', fontSize: '11px' }}>Civil Status</span>
-                          <div style={{ fontWeight: 'bold', marginTop: '2px' }}>{res.civilStatus}</div>
+                          <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            Civil Status
+                          </span>
+                          <div style={{ fontWeight: '600' }}>{displayCivilStatus}</div>
                         </div>
+
                         <div>
-                          <span style={{ color: 'var(--muted)', fontSize: '11px' }}>Geographic Sector</span>
-                          <div style={{ marginTop: '4px' }}><span className={`badge ${res.purokClass}`}>{res.purok}</span></div>
+                          <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            Contact
+                          </span>
+                          <div style={{ fontWeight: '600' }}>{displayContact}</div>
                         </div>
+
                         <div>
-                          <span style={{ color: 'var(--muted)', fontSize: '11px' }}>Voter Authentication</span>
-                          <div style={{ marginTop: '4px' }}>
-                            <span className={`badge ${res.voter ? 'g' : 'gr'}`}>{res.voter ? '✓ Active Voter' : '✗ Non-Voter'}</span>
+                          <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            Email
+                          </span>
+                          <div style={{ fontWeight: '600' }}>{displayEmail}</div>
+                        </div>
+
+                        <div>
+                          <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            Address
+                          </span>
+                          <div style={{ fontWeight: '600' }}>
+                            {displayPurok}, Brgy. Bustrac
+                          </div>
+                        </div>
+
+                        <div>
+                          <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            Household
+                          </span>
+                          <div
+                            style={{ fontWeight: '600', color: 'var(--primary)', cursor: 'pointer' }}
+                            onClick={() => {
+                              if (displayHousehold !== 'Unassigned') {
+                                setSelectedHouseholdId(displayHousehold);
+                                nav('view-household');
+                              }
+                            }}
+                          >
+                            {displayHousehold}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Right Details Column */}
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+                      {/* Additional Demographics Card */}
+                      <div className="card" style={{ padding: '20px' }}>
+                        <h3
+                          style={{
+                            fontSize: '14px',
+                            fontWeight: '700',
+                            color: 'var(--text)',
+                            marginBottom: '16px',
+                            borderBottom: '1px solid var(--border)',
+                            paddingBottom: '8px'
+                          }}
+                        >
+                          Additional Demographics
+                        </h3>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', fontSize: '13px' }}>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Birthdate:</span>{' '}
+                            <strong>{displayBirthdate}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Birth Place:</span>{' '}
+                            <strong>{displayBirthPlace}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Voter Status:</span>{' '}
+                            <span className={`badge ${isVoter ? 'g' : 'gr'}`}>
+                              {isVoter ? 'Registered' : 'Non-Voter'}
+                            </span>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Resident Since:</span>{' '}
+                            <strong>{displayResidentSince}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Solo Parent:</span>{' '}
+                            <strong>{isSoloParent ? 'Yes' : 'No'}</strong>
+                          </div>
+                          <div>
+                            <span style={{ color: 'var(--muted)' }}>Barangay Official:</span>{' '}
+                            <strong>{isBarangayOfficial ? 'Yes' : 'No'}</strong>
                           </div>
                         </div>
                       </div>
 
-                      <div style={{ marginTop: '16px', borderTop: '1px solid #334155', paddingTop: '12px', fontSize: '13px' }}>
-                        <span style={{ color: 'var(--muted)', fontSize: '11px' }}>Linked Household Structure</span>
-                        <div 
-                          style={{ fontWeight: 'bold', color: '#3b82f6', marginTop: '4px', cursor: 'pointer', textDecoration: 'underline' }}
-                          onClick={() => {
-                            if (res.household) {
-                              setSelectedHouseholdId(res.household);
-                              nav('view-household');
-                            }
+                      {/* Relief & Assistance Ledger Card */}
+                      <div className="card" style={{ padding: '20px', flex: 1 }}>
+                        <h3
+                          style={{
+                            fontSize: '14px',
+                            fontWeight: '700',
+                            color: 'var(--text)',
+                            marginBottom: '16px',
+                            borderBottom: '1px solid var(--border)',
+                            paddingBottom: '8px'
                           }}
                         >
-                          🏢 {res.household || 'None (Unassigned)'}
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* KANANG BAHAGI: ASSISTANCE RECEIVED LOGS (CRUD AUDIT TRAIL) */}
-                    <div className="card">
-                      <div style={{ fontWeight: 'bold', marginBottom: '14px', color: '#3b82f6' }}>
-                        📦 Relief & Assistance Ledger ({personalAidHistory.length})
-                      </div>
-
-                      {personalAidHistory.length === 0 ? (
-                        <div style={{ padding: '30px', textAlign: 'center', color: 'var(--muted)', fontStyle: 'italic', fontSize: '13px', background: 'var(--surface2)', borderRadius: '6px' }}>
-                          Ang residenteng ito ay wala pang record ng anumang natatanggap na ayuda sa kasalukuyang mga programa.
-                        </div>
-                      ) : (
-                        <div className="tw">
-                          <table style={{ width: '100%' }}>
-                            <thead>
-                              <tr>
-                                <th>Log ID</th>
-                                <th>Aid Released</th>
-                                <th>Officer</th>
-                                <th>Time Stamp</th>
-                                <th>Status</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {personalAidHistory.map((log) => (
-                                <tr key={log.id}>
-                                  <td style={monoMuted}>{log.id.substring(0, 8)}</td>
-                                  <td><strong>{log.aid}</strong></td>
-                                  <td>{log.officer}</td>
-                                  <td style={monoMuted}>{log.time}</td>
-                                  <td>
-                                    <span className={`badge ${log.status === 'OK' ? 'g' : 't'}`}>
-                                      {log.status}
-                                    </span>
-                                  </td>
+                          Relief & Assistance Ledger ({personalAidHistory.length})
+                        </h3>
+                        {personalAidHistory.length === 0 ? (
+                          <div
+                            style={{
+                              padding: '20px',
+                              textAlign: 'center',
+                              color: 'var(--muted)',
+                              fontSize: '13px',
+                              background: 'var(--surface2)',
+                              borderRadius: '6px'
+                            }}
+                          >
+                            No aid distribution records found for this resident.
+                          </div>
+                        ) : (
+                          <div className="tw">
+                            <table style={{ width: '100%' }}>
+                              <thead>
+                                <tr>
+                                  <th>Log ID</th>
+                                  <th>Aid Released</th>
+                                  <th>Officer</th>
+                                  <th>Time</th>
+                                  <th>Status</th>
                                 </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
+                              </thead>
+                              <tbody>
+                                {personalAidHistory.map(log => (
+                                  <tr key={log.id || log._id}>
+                                    <td style={{ fontFamily: 'var(--mono)', fontSize: '11px' }}>
+                                      {(log.id || log._id || '').substring(0, 8)}
+                                    </td>
+                                    <td>
+                                      <strong>{log.aid || log.item || log.reliefType || '—'}</strong>
+                                    </td>
+                                    <td>{log.officer || log.releasedBy || '—'}</td>
+                                    <td style={{ fontFamily: 'var(--mono)', fontSize: '11px' }}>
+                                      {log.time || log.timestamp || log.date || '—'}
+                                    </td>
+                                    <td>
+                                      <span className={`badge ${log.status === 'OK' || log.status === 'Released' ? 'g' : 't'}`}>
+                                        {log.status || 'OK'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
                     </div>
-
                   </div>
                 </div>
               );
             })()}
-
-            {/* ════════════════════════════════════════
-                SCREEN: EDIT RESIDENT
-                ════════════════════════════════════════ */}
-                {screen === 'edit-resident' && (
-                  <div className="screen active">
-
-                    {/* RESIDENT DATA UPDATE FORM */}
-                    <form onSubmit={handleUpdateResidentChanges}>
-                      <div className="fp">
-                        <div className="fg2">
-                          <div className="fg">
-                            <label className="fl">First Name</label>
-                            <input 
-                              className="fc" 
-                              required 
-                              value={editForm.firstName} 
-                              onChange={(e) => setEditForm({ ...editForm, firstName: e.target.value })} 
-                            />
-                          </div>
-                          <div className="fg">
-                            <label className="fl">Last Name</label>
-                            <input 
-                              className="fc" 
-                              required 
-                              value={editForm.lastName} 
-                              onChange={(e) => setEditForm({ ...editForm, lastName: e.target.value })} 
-                            />
-                          </div>
-                        </div>
-
-                        <div className="fg2">
-                          <div className="fg">
-                            <label className="fl">Civil Status</label>
-                            <select 
-                              className="fc" 
-                              required 
-                              value={editForm.civilStatus} 
-                              onChange={(e) => setEditForm({ ...editForm, civilStatus: e.target.value })}
-                            >
-                              <option value="Single">Single</option>
-                              <option value="Married">Married</option>
-                              <option value="Widowed">Widowed</option>
-                              <option value="Separated">Separated</option>
-                            </select>
-                          </div>
-
-                          <div className="fg">
-                            <label className="fl">Purok / Zone</label>
-                            <select 
-                              className="fc" 
-                              required 
-                              value={editForm.purok} 
-                              onChange={(e) => setEditForm({ ...editForm, purok: e.target.value })}
-                            >
-                              <option value="Purok 1">Purok 1</option>
-                              <option value="Purok 2">Purok 2</option>
-                              <option value="Purok 3">Purok 3</option>
-                              <option value="Purok 4">Purok 4</option>
-                              <option value="Purok 5">Purok 5</option>
-                            </select>
-                          </div>
-                        </div>
-
-                        <div className="fg">
-                          <label className="fl">Household Assignment ID</label>
-                          <input 
-                            className="fc" 
-                            placeholder="e.g. HH-0004" 
-                            value={editForm.household} 
-                            onChange={(e) => setEditForm({ ...editForm, household: e.target.value })} 
-                          />
-                        </div>
-                      </div>
-
-                      <div className="fa" style={{ marginTop: '20px' }}>
-                        <button 
-                          type="button" 
-                          className="btn btn-g" 
-                          onClick={() => nav('residents')} 
-                          style={{ marginRight: '10px' }}
-                        >
-                          Cancel
-                        </button>
-                        <button type="submit" className="btn btn-p">
-                           Save Modifications
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
             
             {/* ════════════════════════════════════════
                 SCREEN: ADD HOUSEHOLD
@@ -7733,7 +9646,7 @@ useEffect(() => {
                 <div className="tw" style={{ padding: '24px', maxWidth: '600px', margin: '0 auto' }}>
                   <form onSubmit={role === 'admin' ? submitAddHousehold : (e) => e.preventDefault()}>
                     <div style={{ marginBottom: '16px' }}>
-                      <label style={{ display: 'block', color: '#94a3b8', marginBottom: '6px', fontSize: '13px' }}>Head of Family (Format: Lastname, Firstname M.)</label>
+                      <label style={{ display: 'block', color: 'var(--muted)', marginBottom: '6px', fontSize: '13px' }}>Head of Family (Format: Lastname, Firstname M.)</label>
                       <input 
                         className="fc" 
                         placeholder="e.g., Obrero, Jay N."
@@ -7744,7 +9657,7 @@ useEffect(() => {
                     </div>
 
                     <div style={{ marginBottom: '16px' }}>
-                      <label style={{ display: 'block', color: '#94a3b8', marginBottom: '6px', fontSize: '13px' }}>Complete Address</label>
+                      <label style={{ display: 'block', color: 'var(--muted)', marginBottom: '6px', fontSize: '13px' }}>Complete Address</label>
                       <input 
                         className="fc" 
                         placeholder="e.g., No. 7, Zone 1, Nabua"
@@ -7755,7 +9668,7 @@ useEffect(() => {
                     </div>
 
                     <div style={{ marginBottom: '24px' }}>
-                      <label style={{ display: 'block', color: '#94a3b8', marginBottom: '6px', fontSize: '13px' }}>Purok Assignment</label>
+                      <label style={{ display: 'block', color: 'var(--muted)', marginBottom: '6px', fontSize: '13px' }}>Purok Assignment</label>
                       <select 
                         className="fc"
                         value={householdForm.purok}
@@ -7784,370 +9697,340 @@ useEffect(() => {
                  SCREEN: EDIT HOUSEHOLD
                 ════════════════════════════════════════ */}
                 {screen === 'edit-household' && (
-                <div className="screen active">
-                  <div style={{ maxWidth: '640px', margin: '0 auto' }}>
-                    {/* Header with Back Button */}
-                    <div className="ph" style={{ marginBottom: '16px' }}>
-                      <button 
-                        className="btn btn-g" 
-                        onClick={() => {
-                          setHouseholdForm(EMPTY_HOUSEHOLD);
-                          setSelectedHouseholdId(null);
-                          nav('households');
-                        }}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M19 12H5" />
-                          <path d="M12 19l-7-7 7-7" />
-                        </svg>
-                        Back to Households
-                      </button>
-                    </div>
+  <div className="screen active" style={{ padding: '24px', maxWidth: '700px', margin: '0 auto' }}>
+    
+    {/* 1. Back Button */}
+    <div style={{ marginBottom: '16px' }}>
+      <button 
+        className="btn btn-g" 
+        onClick={() => {
+          setHouseholdForm(EMPTY_HOUSEHOLD);
+          setSelectedHouseholdId(null);
+          nav('households');
+        }}
+        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M19 12H5" />
+          <path d="M12 19l-7-7 7-7" />
+        </svg>
+        Back to Households
+      </button>
+    </div>
 
-                    <div className="fp" style={{ padding: '24px' }}>
-                      {/* Form Header */}
-                      <div style={{ 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        gap: '10px', 
-                        marginBottom: '24px',
-                        paddingBottom: '16px',
-                        borderBottom: '2px solid var(--border)'
-                      }}>
-                        <div>
-                          <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text)' }}>
-                            Edit Household
-                          </div>
-                          <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                            Update household information
-                          </div>
-                        </div>
-                      </div>
+    {/* 2. Main Form Card */}
+    <div className="card" style={{ padding: '24px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', boxShadow: '0 2px 8px rgba(0,0,0,0.05)' }}>
+      <form onSubmit={submitEditHousehold}>
+        
+        {/* Household ID - Read Only (Styled nicely) */}
+        <div className="fg" style={{ marginBottom: '16px' }}>
+          <label className="fl">Household ID</label>
+          <div style={{ 
+            padding: '10px 12px', 
+            background: 'var(--surface2)', 
+            border: '1px solid var(--border)', 
+            borderRadius: '8px', 
+            color: 'var(--muted)', 
+            fontFamily: 'var(--mono)',
+            fontSize: '13px',
+            letterSpacing: '0.5px'
+          }}>
+            {selectedHouseholdId || 'N/A'}
+          </div>
+        </div>
 
-                      <form onSubmit={submitEditHousehold}>
-                        {/* Household ID - Read Only */}
-                        <div className="fg" style={{ marginBottom: '16px' }}>
-                          <label className="fl" style={{ fontSize: '12px', fontWeight: '600', color: 'var(--muted)' }}>
-                            Household ID
-                          </label>
-                          <div style={{
-                            padding: '10px 12px',
-                            background: 'var(--surface2)',
-                            border: '1px solid var(--border)',
-                            borderRadius: '6px',
-                            fontFamily: 'var(--mono)',
-                            fontSize: '13px',
-                            color: 'var(--text)',
-                            opacity: 0.7
-                          }}>
-                            {selectedHouseholdId || 'N/A'}
-                          </div>
-                        </div>
+        {/* Head of Family */}
+        <div className="fg" style={{ marginBottom: '16px' }}>
+          <label className="fl">Head of Family <span style={{ color: 'var(--red)' }}>*</span></label>
+          <input 
+            className="fc" 
+            placeholder="e.g. SANTOS, Juan B." 
+            value={householdForm.head} 
+            onChange={(e) => setHouseholdForm({ ...householdForm, head: e.target.value.toUpperCase() })} 
+            required 
+            style={{ textTransform: 'uppercase' }}
+          />
+          <span style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px', display: 'block' }}>
+            Format: LASTNAME, Firstname Middle Initial
+          </span>
+        </div>
 
-                        {/* Head of Family */}
-                        <div className="fg" style={{ marginBottom: '16px' }}>
-                          <label className="fl" style={{ fontSize: '12px', fontWeight: '600' }}>
-                            Head of Family
-                            <span style={{ color: 'var(--red)', marginLeft: '4px' }}>*</span>
-                          </label>
-                          <input
-                            className="fc"
-                            placeholder="Lastname, Firstname Middle Initial"
-                            value={householdForm.head}
-                            onChange={(e) => setHouseholdForm({ ...householdForm, head: e.target.value })}
-                            required
-                            style={{ padding: '10px 12px' }}
-                          />
-                          <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>
-                            Format: Santos, Juan B.
-                          </div>
-                        </div>
+        {/* Complete Address */}
+        <div className="fg" style={{ marginBottom: '16px' }}>
+          <label className="fl">Complete Address <span style={{ color: 'var(--red)' }}>*</span></label>
+          <input 
+            className="fc" 
+            placeholder="e.g. No. 3, Mabini Avenue, Brgy. Bustrac" 
+            value={householdForm.address} 
+            onChange={(e) => setHouseholdForm({ ...householdForm, address: e.target.value })} 
+            required 
+          />
+        </div>
 
-                        {/* Complete Address */}
-                        <div className="fg" style={{ marginBottom: '16px' }}>
-                          <label className="fl" style={{ fontSize: '12px', fontWeight: '600' }}>
-                            Complete Address
-                            <span style={{ color: 'var(--red)', marginLeft: '4px' }}>*</span>
-                          </label>
-                          <input
-                            className="fc"
-                            placeholder="No. 3, Mabini Avenue"
-                            value={householdForm.address}
-                            onChange={(e) => setHouseholdForm({ ...householdForm, address: e.target.value })}
-                            required
-                            style={{ padding: '10px 12px' }}
-                          />
-                        </div>
+        {/* Purok Assignment */}
+        <div className="fg" style={{ marginBottom: '24px' }}>
+          <label className="fl">Purok Assignment <span style={{ color: 'var(--red)' }}>*</span></label>
+          <select 
+            className="fc" 
+            value={householdForm.purok} 
+            onChange={(e) => setHouseholdForm({ ...householdForm, purok: e.target.value })} 
+            required
+          >
+            <option value="">-- Select Purok --</option>
+            <option value="Purok 1">Purok 1</option>
+            <option value="Purok 2">Purok 2</option>
+            <option value="Purok 3">Purok 3</option>
+            <option value="Purok 4">Purok 4</option>
+            <option value="Purok 5">Purok 5</option>
+            <option value="Purok 6">Purok 6</option>
+          </select>
+        </div>
 
-                        {/* Purok Assignment */}
-                        <div className="fg" style={{ marginBottom: '24px' }}>
-                          <label className="fl" style={{ fontSize: '12px', fontWeight: '600' }}>
-                            Purok Assignment
-                            <span style={{ color: 'var(--red)', marginLeft: '4px' }}>*</span>
-                          </label>
-                          <select
-                            className="fc"
-                            value={householdForm.purok}
-                            onChange={(e) => setHouseholdForm({ ...householdForm, purok: e.target.value })}
-                            required
-                            style={{ padding: '10px 12px' }}
-                          >
-                            <option value="">-- Select Purok --</option>
-                            <option value="Purok 1">Purok 1</option>
-                            <option value="Purok 2">Purok 2</option>
-                            <option value="Purok 3">Purok 3</option>
-                            <option value="Purok 4">Purok 4</option>
-                            <option value="Purok 5">Purok 5</option>
-                            <option value="Purok 6">Purok 6</option>
-                          </select>
-                        </div>
+        {/* Action Buttons */}
+        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
+          <button 
+            type="button" 
+            className="btn btn-g" 
+            onClick={() => {
+              setHouseholdForm(EMPTY_HOUSEHOLD);
+              setSelectedHouseholdId(null);
+              nav('households');
+            }}
+          >
+            Cancel
+          </button>
+          <button 
+            type="submit" 
+            className="btn btn-p" 
+            disabled={saving}
+            style={{ 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '6px',
+              opacity: saving ? 0.7 : 1,
+              cursor: saving ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {saving ? (
+              <>
+                <span className="spinner" style={{ width: '14px', height: '14px', borderWidth: '2px' }} />
+                Saving...
+              </>
+            ) : (
+              <>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                  <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                  <polyline points="17 21 17 13 7 13 7 21" />
+                  <polyline points="7 3 7 8 12 8" />
+                </svg>
+                Save Changes
+              </>
+            )}
+          </button>
+        </div>
+      </form>
+    </div>
 
-                        {/* Action Buttons */}
-                        <div style={{ 
-                          display: 'flex', 
-                          gap: '12px', 
-                          justifyContent: 'flex-end',
-                          paddingTop: '16px',
-                          borderTop: '1px solid var(--border)'
-                        }}>
-                          <button
-                            type="button"
-                            className="btn btn-g"
-                            onClick={() => {
-                              setHouseholdForm(EMPTY_HOUSEHOLD);
-                              setSelectedHouseholdId(null);
-                              nav('households');
-                            }}
-                            style={{ padding: '10px 20px' }}
-                          >
-                            Cancel
-                          </button>
-                         <button 
-                          type="submit" 
-                          className="btn btn-p" 
-                          disabled={saving}
-                          style={{ 
-                            padding: '10px 24px', 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '8px',
-                            opacity: saving ? 0.7 : 1,
-                            cursor: saving ? 'wait' : 'pointer'
-                          }}
-                        >
-                          {saving ? (
-                            <>
-                              <span style={{ 
-                                display: 'inline-block', 
-                                width: '16px', 
-                                height: '16px', 
-                                border: '2px solid rgba(255,255,255,0.3)', 
-                                borderTopColor: '#fff', 
-                                borderRadius: '50%', 
-                                animation: 'spin 0.6s linear infinite' 
-                              }} />
-                              Saving...
-                            </>
-                          ) : (
-                            <>
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                                <polyline points="17 21 17 13 7 13 7 21" />
-                                <polyline points="7 3 7 8 12 8" />
-                              </svg>
-                              Save Changes
-                            </>
-                          )}
-                        </button>
-                        </div>
-                      </form>
-                    </div>
+    {/* 3. Quick Tips Card (Using existing .note-i class for consistency) */}
+    <div className="note note-i" style={{ marginTop: '16px', display: 'flex', gap: '10px', alignItems: 'flex-start', padding: '14px 16px' }}>
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ flexShrink: 0, marginTop: '2px', color: 'var(--accent)' }}>
+        <circle cx="12" cy="12" r="10" />
+        <line x1="12" y1="16" x2="12" y2="12" />
+        <line x1="12" y1="8" x2="12.01" y2="8" />
+      </svg>
+      <div style={{ fontSize: '12px', lineHeight: '1.5', color: 'var(--text)' }}>
+        <strong style={{ display: 'block', marginBottom: '4px', color: 'var(--accent)' }}>Quick Tips:</strong>
+        <ul style={{ margin: 0, paddingLeft: '16px', color: 'var(--muted)' }}>
+          <li>Make sure the Head of Family name matches the resident registry.</li>
+          <li>Purok assignment affects statistical reports and aid distribution.</li>
+          <li>Address should be complete for proper documentation.</li>
+        </ul>
+      </div>
+    </div>
 
-                    {/* Additional Info Card */}
-                    <div className="card" style={{ 
-                      marginTop: '16px', 
-                      padding: '16px',
-                      background: 'var(--surface2)'
-                    }}>
-                      <div style={{ fontSize: '12px', color: 'var(--muted)', lineHeight: '1.6' }}>
-                        <strong style={{ color: 'var(--text)', display: 'block', marginBottom: '6px' }}>
-                          Quick Tips:
-                        </strong>
-                        • Make sure the Head of Family name matches the resident registry<br/>
-                        • Purok assignment affects statistical reports and aid distribution<br/>
-                        • Address should be complete for proper documentation
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
+  </div>
+)}
 
             {/* ════════════════════════════════════════
                 SCREEN: MANAGE HOUSEHOLDS
                 ════════════════════════════════════════ */}
                 {screen === 'households' && (
-  <div className="screen active">
-    <div className="tw" style={{ borderRadius: '8px' }}>
-      <div className="tb">
-        <div className="sb-box">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="11" cy="11" r="7" />
-            <path d="m21 21-4.3-4.3" />
-          </svg>
-          <input
-            type="text"
-            className="fc"
-            placeholder="Search household..."
-            value={householdSearch}
-            onChange={(e) => setHouseholdSearch(e.target.value)}
-          />
-        </div>
-        <select
-          className="fc"
-          style={{ width: '130px' }}
-          value={householdPurokFilter}
-          onChange={(e) => setHouseholdPurokFilter(e.target.value)}
-        >
-          <option value="All Puroks">All Puroks</option>
-          {uniquePuroks.map((purok) => (
-            <option key={purok} value={purok}>{purok}</option>
-          ))}
-        </select>
-        <button
-          className="btn btn-p btn-sm"
-          onClick={() => {
-            setHouseholdForm(EMPTY_HOUSEHOLD);
-            setSelectedHouseholdId(null);
-            nav('add-household');
-          }}
-          style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M12 5v14M5 12h14" />
-          </svg>
-          Add Household
-        </button>
-      </div>
-      <table>
-        <thead>
-          <tr>
-            <th>ID</th>
-            <th>Head of Family</th>
-            <th
-              className="sortable"
-              onClick={() => {
-                if (addressSortOrder === 'none') setAddressSortOrder('asc');
-                else if (addressSortOrder === 'asc') setAddressSortOrder('desc');
-                else setAddressSortOrder('none');
-              }}
-            >
-              ADDRESS{' '}
-              {addressSortOrder === 'asc' ? '▲' : addressSortOrder === 'desc' ? '▼' : '↕'}
-            </th>
-            <th>Purok</th>
-            <th>Members</th>
-            <th style={{ textAlign: 'right' }}>Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          {filteredHouseholds.length === 0 ? (
-            <tr>
-              <td colSpan="6" style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>
-                No households found matching your search.
-              </td>
-            </tr>
-          ) : (
-            filteredHouseholds.map((h) => (
-              <tr key={h.id}>
-                <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>{h.id}</td>
-                <td style={{ fontWeight: 600 }}>{h.head}</td>
-                <td>{h.address}</td>
-                <td>
-                  <span className={`badge ${h.purokClass}`}>{h.purok}</span>
-                </td>
-                <td>{getHouseholdMembersCount(h.id)}</td>
-                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
-                  <button
-                    className="btn btn-g btn-sm"
-                    onClick={() => {
-                      setSelectedHouseholdId(h.id);
-                      nav('view-household');
-                    }}
-                    style={{ marginRight: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                      <circle cx="12" cy="12" r="3" />
-                    </svg>
-                    View
-                  </button>
-                  <button
-                    className="btn btn-a btn-sm"
-                    onClick={() => {
-                      setSelectedHouseholdId(h.id);
-                      nav('edit-household');
-                    }}
-                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                    </svg>
-                    Edit
-                  </button>
-                </td>
-              </tr>
-            ))
-          )}
-        </tbody>
-      </table>
-    </div>
-  </div>
-)}
+                    <div className="screen active">
+                      <div className="tw" style={{ borderRadius: '8px' }}>
+                        <div className="tb">
+                          <div className="sb-box">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <circle cx="11" cy="11" r="7" />
+                              <path d="m21 21-4.3-4.3" />
+                            </svg>
+                            <input
+                              type="text"
+                              className="fc"
+                              placeholder="Search household..."
+                              value={householdSearch}
+                              onChange={(e) => setHouseholdSearch(e.target.value)}
+                            />
+                          </div>
+                          <select
+                            className="fc"
+                            style={{ width: '130px' }}
+                            value={householdPurokFilter}
+                            onChange={(e) => setHouseholdPurokFilter(e.target.value)}
+                          >
+                            <option value="All Puroks">All Puroks</option>
+                            {uniquePuroks.map((purok) => (
+                              <option key={purok} value={purok}>{purok}</option>
+                            ))}
+                          </select>
+                          <button
+                            className="btn btn-p btn-sm"
+                            onClick={() => {
+                              setHouseholdForm(EMPTY_HOUSEHOLD);
+                              setSelectedHouseholdId(null);
+                              nav('add-household');
+                            }}
+                            style={{ marginLeft: 'auto', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M12 5v14M5 12h14" />
+                            </svg>
+                            Add Household
+                          </button>
+                        </div>
+                        <table>
+                          <thead>
+                            <tr>
+                              <th>ID</th>
+                              <th>Head of Family</th>
+                              <th
+                                className="sortable"
+                                onClick={() => {
+                                  if (addressSortOrder === 'none') setAddressSortOrder('asc');
+                                  else if (addressSortOrder === 'asc') setAddressSortOrder('desc');
+                                  else setAddressSortOrder('none');
+                                }}
+                              >
+                                ADDRESS{' '}
+                                {addressSortOrder === 'asc' ? '▲' : addressSortOrder === 'desc' ? '▼' : '↕'}
+                              </th>
+                              <th>Purok</th>
+                              <th>Members</th>
+                              <th style={{ textAlign: 'right' }}>Actions</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                          {isHouseholdsLoading ? (
+                            // ✅ Loading State: Maiiwasan ang "No households found" flash
+                            <tr>
+                              <td colSpan="6" style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
+                                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                  <span className="spinner" style={{ width: '24px', height: '24px', borderWidth: '3px' }} />
+                                  <span>Loading household records from local database...</span>
+                                </div>
+                              </td>
+                            </tr>
+                          ) : filteredHouseholds.length === 0 ? (
+                            // ✅ True Empty State: Ipapakita lang kung talagang walang data
+                            <tr>
+                              <td colSpan="6" style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>
+                                No households found matching your search.
+                              </td>
+                            </tr>
+                          ) : (
+                            // ✅ Normal Data Render
+                            filteredHouseholds.map((h) => (
+                              <tr key={h.id}>
+                                <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>{h.id}</td>
+                                <td style={{ fontWeight: 600 }}>{h.head}</td>
+                                <td>{h.address}</td>
+                                <td>
+                                  <span className={`badge ${h.purokClass}`}>{h.purok}</span>
+                                </td>
+                                <td>{getHouseholdMembersCount(h.id)}</td>
+                                <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
+                                  <button
+                                    className="btn btn-g btn-sm"
+                                    onClick={() => {
+                                      setSelectedHouseholdId(h.id);
+                                      navigate(`?page=view-household&id=${encodeURIComponent(h.id)}`);
+                                      nav('view-household');
+                                    }}
+                                    style={{ marginRight: '6px', display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                                      <circle cx="12" cy="12" r="3" />
+                                    </svg>
+                                    View
+                                  </button>
+                                  <button
+                                    className="btn btn-a btn-sm"
+                                    onClick={() => {
+                                      setSelectedHouseholdId(h.id);
+                                      nav('edit-household');    
+                                    }}
+                                    style={{ display: 'inline-flex', alignItems: 'center', gap: '4px' }}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                                    </svg>
+                                    Edit
+                                  </button>
+                                </td>
+                              </tr>
+                            ))
+                          )}
+                        </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
 
             {/* ════════════════════════════════════════
                 SCREEN: VIEW HOUSEHOLD PROFILE
                 ════════════════════════════════════════ */}
                 {screen === 'view-household' && (
                   <div className="screen active">
-                    {/* Header */}
+                    {/* Page Header */}
                     <div className="ph">
-                      <button
-                        className="btn btn-g"
-                        onClick={() => nav('households')}
-                        style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                      >
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M19 12H5" />
-                          <path d="M12 19l-7-7 7-7" />
-                        </svg>
-                        Back to Households
-                      </button>
+                      <div>
+                        <div className="ps">
+                          ID: <span className="mono" style={{ color: 'var(--accent)' }}>{selectedHouseholdId}</span> • {familyMembers.length} registered member{familyMembers.length !== 1 ? 's' : ''}
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '10px' }}>
+                        <button
+                          className="btn btn-g"
+                          onClick={() => {
+                            setSelectedHouseholdId(null);
+                            nav('households');
+                          }}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M19 12H5" />
+                            <path d="M12 19l-7-7 7-7" />
+                          </svg>
+                          Back to Households
+                        </button>
+                        <button
+                          className="btn btn-p"
+                          onClick={() => nav('edit-household')}
+                        >
+                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                          </svg>
+                          Edit Details
+                        </button>
+                      </div>
                     </div>
 
                     {/* Two-Column Layout */}
-                    <div className="tc" style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: '20px' }}>
+                    <div className="tc">
                       {/* Left Column: Household Metadata */}
-                      <div
-                        className="card"
-                        style={{
-                          padding: '16px',
-                          height: 'fit-content'
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontWeight: 'bold',
-                            marginBottom: '14px',
-                            color: 'var(--accent)',
-                            borderBottom: '1px solid var(--border)',
-                            paddingBottom: '6px',
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: '6px'
-                          }}
-                        >
+                      <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                        <div className="fp-t" style={{ color: 'var(--accent)', marginBottom: '8px' }}>
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
                             <path d="M14 2v6h6" />
@@ -8156,120 +10039,91 @@ useEffect(() => {
                           </svg>
                           Registration Specs
                         </div>
-
-                        <div style={{ marginBottom: '12px', fontSize: '13px' }}>
-                          <div style={{ color: 'var(--muted)', marginBottom: '2px' }}>Household Head:</div>
-                          <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text)' }}>{hh.head}</div>
+                        
+                        <div>
+                          <div className="fl">Household Head</div>
+                          <div style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text)' }}>{hh.head || 'N/A'}</div>
                         </div>
 
-                        <div style={{ marginBottom: '12px', fontSize: '13px' }}>
-                          <div style={{ color: 'var(--muted)', marginBottom: '2px' }}>Barangay Address:</div>
-                          <div style={{ fontWeight: 'bold', color: 'var(--text)' }}>{hh.address}</div>
+                        <div>
+                          <div className="fl">Barangay Address</div>
+                          <div style={{ fontSize: '14px', fontWeight: '600', color: 'var(--text)' }}>{hh.address || 'N/A'}</div>
                         </div>
 
-                        <div style={{ marginBottom: '12px', fontSize: '13px' }}>
-                          <div style={{ color: 'var(--muted)', marginBottom: '2px' }}>Jurisdiction Area:</div>
-                          <span className={`badge ${hh.purokClass}`}>{hh.purok}</span>
+                        <div>
+                          <div className="fl">Jurisdiction Area</div>
+                          <span className={`badge ${hh.purokClass || 'gr'}`}>{hh.purok || 'Unassigned'}</span>
                         </div>
 
-                        <div style={{ fontSize: '13px' }}>
-                          <div style={{ color: 'var(--muted)', marginBottom: '2px' }}>Declared Members Count:</div>
-                          <div style={{ fontWeight: 'bold', color: 'var(--amber)' }}>{hh.members} individuals</div>
+                        <div>
+                          <div className="fl">Registered Members</div>
+                          <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--amber)' }}>
+                            {getHouseholdMembersCount(selectedHouseholdId)} individual{getHouseholdMembersCount(selectedHouseholdId) !== 1 ? 's' : ''}
+                          </div>
                         </div>
                       </div>
 
                       {/* Right Column: Family Roster */}
-                      <div
-                        className="card"
-                        style={{ padding: '16px' }}
-                      >
-                        <div
-                          style={{
-                            fontWeight: 'bold',
-                            marginBottom: '12px',
-                            color: 'var(--green)',
-                            display: 'flex',
-                            justifyContent: 'space-between',
-                            alignItems: 'center'
-                          }}
-                        >
-                          <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                      <div className="card" style={{ padding: '0', overflow: 'hidden' }}>
+                        <div className="tb" style={{ borderBottom: '1px solid var(--border)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--green)' }}>
                             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                               <circle cx="9" cy="7" r="4" />
                             </svg>
-                            Dynamic Family Roster ({familyMembers.length})
-                          </span>
+                            <span style={{ fontSize: '13px', fontWeight: '700' }}>Dynamic Family Roster</span>
+                          </div>
                           <span style={{ fontSize: '11px', color: 'var(--muted)' }}>
                             Cross-referenced from Resident Registry
                           </span>
                         </div>
 
                         {familyMembers.length === 0 ? (
-                          <div
-                            style={{
-                              padding: '24px',
-                              textAlign: 'center',
-                              color: 'var(--muted)',
-                              display: 'flex',
-                              flexDirection: 'column',
-                              alignItems: 'center',
-                              gap: '12px'
-                            }}
-                          >
+                          <div className="empty-state" style={{ padding: '40px 20px' }}>
                             <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                               <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
                               <circle cx="9" cy="7" r="4" />
                             </svg>
                             <div>
-                              <div style={{ fontSize: '14px', fontWeight: 'bold', color: 'var(--text)' }}>
+                              <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)' }}>
                                 No Members Found
                               </div>
-                              <div style={{ fontSize: '12px' }}>
+                              <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
                                 No individuals are currently linked to this Household ID.
                               </div>
                             </div>
                           </div>
                         ) : (
-                          <div
-                            className="tw"
-                            style={{
-                              borderRadius: '6px',
-                              overflow: 'hidden',
-                              marginBottom: 0
-                            }}
-                          >
-                            <table style={{ width: '100%' }}>
+                          <div className="tw" style={{ maxHeight: '400px', overflowY: 'auto', margin: 0, border: 'none', borderRadius: 0, boxShadow: 'none' }}>
+                            <table>
                               <thead>
                                 <tr>
-                                  <th style={{ fontFamily: 'var(--mono)', fontSize: '11px', padding: '10px 12px', textAlign: 'left' }}>
-                                    ID
-                                  </th>
-                                  <th style={{ fontSize: '11px', padding: '10px 12px', textAlign: 'left' }}>Name</th>
-                                  <th style={{ fontSize: '11px', padding: '10px 12px', textAlign: 'left' }}>Age</th>
-                                  <th style={{ fontSize: '11px', padding: '10px 12px', textAlign: 'left' }}>Civil Status</th>
-                                  <th style={{ fontSize: '11px', padding: '10px 12px', textAlign: 'left' }}>Voter</th>
+                                  <th style={{ width: '120px' }}>Resident ID</th>
+                                  <th>Full Name</th>
+                                  <th style={{ width: '80px' }}>Age</th>
+                                  <th style={{ width: '120px' }}>Civil Status</th>
+                                  <th style={{ width: '110px' }}>Voter Status</th>
                                 </tr>
                               </thead>
                               <tbody>
                                 {familyMembers.map((member) => (
                                   <tr
                                     key={member.id}
-                                    style={{ cursor: 'pointer', borderBottom: '1px solid var(--border)' }}
+                                    style={{ cursor: 'pointer' }}
                                     onClick={() => {
                                       setSelectedResidentId(member.id);
                                       nav('view-resident');
                                     }}
                                   >
-                                    <td style={{ fontFamily: 'var(--mono)', color: 'var(--muted)', padding: '10px 12px' }}>
+                                    <td className="mono" style={{ color: 'var(--accent)', fontWeight: '600' }}>
                                       {member.id}
                                     </td>
-                                    <td style={{ padding: '10px 12px' }}>
-                                      <strong>{member.name}</strong>
+                                    <td style={{ fontWeight: '600', color: 'var(--text)' }}>
+                                      {member.name}
                                     </td>
-                                    <td style={{ padding: '10px 12px' }}>{member.age}</td>
-                                    <td style={{ padding: '10px 12px' }}>{member.civilStatus}</td>
-                                    <td style={{ padding: '10px 12px' }}>
+                                    <td>{member.age || '—'}</td>
+                                    <td>{member.civilStatus || '—'}</td>
+                                    <td>
                                       <span className={`badge ${member.voter ? 'g' : 'gr'}`} style={{ fontSize: '10px' }}>
                                         {member.voter ? (
                                           <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -8300,13 +10154,122 @@ useEffect(() => {
                 ════════════════════════════════════════ */}
                 {screen === 'cert-req' && (
                   <div className="screen active">
-                    <CertificateLifecycle />
+                    <CertificateLifecycle onOpenDispatcher={() => setShowCertDispatcher(true)} onOpenIssuance={openIssuanceWorkspace} />
                   </div>
                 )}
 
                 {screen === 'cert-approve' && (
                   <div className="screen active">
-                    <CertificateLifecycle />
+                    <CertificateLifecycle onOpenIssuance={openIssuanceWorkspace} />
+                  </div>
+                )}
+
+                {/* ════════════════════════════════════════
+                    SCREEN: NEW STANDARD CERTIFICATE REQUEST
+                    ════════════════════════════════════════ */}
+                {screen === 'cert-new' && (
+                  <div className="screen active" style={{ padding: '24px', maxWidth: '720px', margin: '0 auto' }}>
+                    
+                    {/* Header */}
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
+                      <button className="btn btn-g" onClick={() => nav('cert-req')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>
+                        </svg>
+                        Back
+                      </button>
+                      <div>
+                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>New Standard Certificate</h2>
+                        <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>Indigency, Residency, and other general certificates</p>
+                      </div>
+                    </div>
+
+                    {/* Form Card */}
+                    <div className="card" style={{ padding: '24px' }}>
+                      
+                      {/* Resident Select */}
+                      <div className="fg" style={{ marginBottom: '16px' }}>
+                        <label className="fl">Resident <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <ResidentCombobox
+                          residents={residentsList}
+                          value={standardCertForm.residentId}
+                          onChange={(selected) => setStandardCertForm(prev => ({
+                            ...prev,
+                            residentId: selected?.id || '',
+                            residentName: selected?.name || ''
+                          }))}
+                          placeholder="Search registered resident..."
+                        />
+                      </div>
+
+                      {/* Certificate Type */}
+                      <div className="fg" style={{ marginBottom: '16px' }}>
+                        <label className="fl">Certificate Type <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <select
+                          className="fc"
+                          value={standardCertForm.certificateType}
+                          onChange={(e) => setStandardCertForm(prev => ({ ...prev, certificateType: e.target.value }))}
+                        >
+                          <option value="indigency">Certificate of Indigency</option>
+                          <option value="residency">Certificate of Residency</option>
+                          <option value="barangay_clearance">Barangay Clearance (General)</option>
+                        </select>
+                      </div>
+
+                      {/* Purpose */}
+                      <div className="fg" style={{ marginBottom: '24px' }}>
+                        <label className="fl">Purpose <span style={{ color: 'var(--red)' }}>*</span></label>
+                        <input
+                          className="fc"
+                          placeholder="e.g. Scholarship application, employment requirement"
+                          value={standardCertForm.purpose}
+                          onChange={(e) => setStandardCertForm(prev => ({ ...prev, purpose: e.target.value }))}
+                        />
+                      </div>
+
+                      {/* Actions */}
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
+                        <button className="btn btn-g" onClick={() => nav('cert-req')}>Cancel</button>
+                        <button
+                          className="btn btn-p"
+                          onClick={async () => {
+                            if (!standardCertForm.residentId || !standardCertForm.purpose) {
+                              showToast('Please complete all required fields.', 'error');
+                              return;
+                            }
+                            const resident = residentsList.find(r => r.id === standardCertForm.residentId);
+                            const now = new Date().toISOString();
+                            
+                            const payload = {
+                              _id: `certificate_request_${Date.now()}`,
+                              type: 'certificate_request',
+                              firstName: resident?.firstName || resident?.name?.split(' ')[0] || '',
+                              lastName: resident?.lastName || resident?.name?.split(' ').slice(1).join(' ') || '',
+                              residentName: resident?.name || '',
+                              certificateType: formatCertType(standardCertForm.certificateType),
+                              certType: standardCertForm.certificateType,
+                              purpose: standardCertForm.purpose,
+                              purok: resident?.purok || 'Purok 1',
+                              status: 'Under Review',
+                              step: 1,
+                              createdAt: now,
+                              updatedAt: now,
+                            };
+
+                            try {
+                              await db.put(payload);
+                              showToast('Certificate request submitted successfully!', 'success');
+                              nav('cert-req');
+                            } catch (err) {
+                              console.error('Failed to save certificate request:', err);
+                              showToast('Failed to save request.', 'error');
+                            }
+                          }}
+                        >
+                          Submit Request
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
 
@@ -8314,26 +10277,20 @@ useEffect(() => {
                 SCREEN: ISSUANCE & PRINT
                 ════════════════════════════════════════ */}
                 {screen === 'cert-print' && (
-                  <CertPrintScreen 
+                  <CertPrintScreen
+                    issuedCertificates={uniqueIssuedCertificates}
                     approvedCertificates={approvedCertificates}
                     selectedCertificate={selectedCertificate}
                     setSelectedCertificate={setSelectedCertificate}
+                    clearSelectedCert={() => setSelectedCertificate(null)}
                     issuanceMeta={issuanceMeta}
                     setIssuanceMeta={setIssuanceMeta}
                     blotterVerifyQuery={blotterVerifyQuery}
                     setBlotterVerifyQuery={setBlotterVerifyQuery}
                     blotterMatches={blotterMatches}
-                    handlePrintFormat={handlePrintFormat}
-                    handleSaveOnly={handleSaveOnly}
-                    handlePrintDocument={handlePrintDocument}
-                    issuedCertificates={issuedCertificates}
-                    setIssuedCertificates={setIssuedCertificates}
-                    showPrintModal={showPrintModal}
-                    setShowPrintModal={setShowPrintModal}
-                    selectedPrintCert={selectedPrintCert}
-                    setSelectedPrintCert={setSelectedPrintCert}
                     printMode={printMode}
                     setPrintMode={setPrintMode}
+                    onOpenPrintPreview={onOpenPrintPreview}
                     showToast={showToast}
                   />
                 )}
@@ -8345,218 +10302,234 @@ useEffect(() => {
                   <div className="screen active">
                     {/* ── CLEARANCE DATA CAPTURE FORM ─ */}
                     <form onSubmit={handleSaveClearance}>
-                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
-                        
-                        {/* LEFT COLUMN: RESIDENT & BLOTTER VERIFICATION */}
-                        <div className="fp" style={{ margin: 0, padding: '24px' }}>
-                          <div className="fp-t" style={{ fontSize: '15px', fontWeight: 700, marginBottom: '20px', paddingBottom: '12px', borderBottom: '2px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
-                              <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                              <circle cx="12" cy="7" r="4" />
-                            </svg>
-                            APPLICANT & BLOTTER VERIFICATION
-                          </div>
-                          
-                          <div className="fg2" style={{ marginBottom: '16px' }}>
-                            <div className="fg" style={{ marginBottom: 0 }}>
-                              <label className="fl">CLEARANCE NO. *</label>
-                              <input type="text" className="fc" readOnly style={{ fontWeight: '700', background: 'var(--surface2)', fontFamily: 'var(--mono)', letterSpacing: '0.5px' }} value={clearanceForm.clearanceNo} />
-                            </div>
-                            <div className="fg" style={{ marginBottom: 0 }}>
-                              <label className="fl">DATE ISSUED</label>
-                              <input type="date" className="fc" value={clearanceForm.dateIssued} onChange={(e) => setClearanceForm({ ...clearanceForm, dateIssued: e.target.value })} />
-                            </div>
-                          </div>
+                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
 
-                          <div className="fg" style={{ marginBottom: '16px' }}>
-                            <label className="fl">RESIDENT FULL NAME (LAST NAME, FIRST NAME MIDDLE) *</label>
-                            <input type="text" className="fc" required placeholder="e.g. PANIZAL, JOAN REBUSQUILLO" value={clearanceForm.fullName} onChange={(e) => setClearanceForm({ ...clearanceForm, fullName: e.target.value })} style={{ textTransform: 'uppercase' }} />
-                          </div>
+                      {/* LEFT COLUMN: APPLICANT & BLOTTER VERIFICATION */}
+                      <div className="fp" style={{ margin: 0, padding: '24px' }}>
+                        <div className="fp-t" style={{ fontSize: '15px', fontWeight: 700, marginBottom: '20px', paddingBottom: '12px', borderBottom: '2px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
+                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                            <circle cx="12" cy="7" r="4" />
+                          </svg>
+                          APPLICANT & BLOTTER VERIFICATION
+                        </div>
 
-                          <div className="fg" style={{ marginBottom: '16px' }}>
-                            <label className="fl">PURPOSE OF CLEARANCE *</label>
-                            <input type="text" className="fc" required placeholder="e.g. Employment Requirement" value={clearanceForm.purpose} onChange={(e) => setClearanceForm({ ...clearanceForm, purpose: e.target.value.toUpperCase() })} />
+                        {/* Clearance No & Date Issued */}
+                        <div className="fg2" style={{ marginBottom: '16px' }}>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">CLEARANCE NO.</label>
+                            <input type="text" className="fc" readOnly style={{ fontWeight: '700', background: 'var(--surface2)', fontFamily: 'var(--mono)', letterSpacing: '0.5px' }} value={clearanceForm.clearanceNo} />
                           </div>
-
-                          <div className="fg2" style={{ marginBottom: '20px' }}>
-                            <div className="fg" style={{ marginBottom: 0 }}>
-                              <label className="fl">REMARKS</label>
-                              <input type="text" className="fc" value={clearanceForm.remarks} onChange={(e) => setClearanceForm({ ...clearanceForm, remarks: e.target.value })} />
-                            </div>
-                            <div className="fg" style={{ marginBottom: 0 }}>
-                              <label className="fl">VALIDITY</label>
-                              <input type="text" className="fc" value={clearanceForm.validity} onChange={(e) => setClearanceForm({ ...clearanceForm, validity: e.target.value })} />
-                            </div>
-                          </div>
-
-                          {/* BLOTTER RECORD STATUS CARD */}
-                          <div style={{ padding: '16px', borderRadius: '10px', background: clearanceForm.hasBlotterRecord ? 'rgba(248, 113, 113, 0.08)' : 'rgba(52, 211, 153, 0.08)', border: `1.5px solid ${clearanceForm.hasBlotterRecord ? 'rgba(248, 113, 113, 0.3)' : 'rgba(52, 211, 153, 0.3)'}`, transition: 'all 0.3s ease' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '12px' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                {clearanceForm.hasBlotterRecord ? (
-                                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(248, 113, 113, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5">
-                                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
-                                      <line x1="12" y1="9" x2="12" y2="13"/>
-                                      <line x1="12" y1="17" x2="12.01" y2="17"/>
-                                    </svg>
-                                  </div>
-                                ) : (
-                                  <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(52, 211, 153, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5">
-                                      <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
-                                      <polyline points="22 4 12 14.01 9 11.01"/>
-                                    </svg>
-                                  </div>
-                                )}
-                                <span style={{ fontSize: '13px', fontWeight: 700, color: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399' }}>
-                                  Blotter Record Status
-                                </span>
-                              </div>
-                              <label style={{ fontSize: '12px', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600, userSelect: 'none', padding: '6px 12px', borderRadius: '6px', background: 'var(--surface2)' }}>
-                                <input type="checkbox" checked={clearanceForm.hasBlotterRecord} onChange={(e) => setClearanceForm({ ...clearanceForm, hasBlotterRecord: e.target.checked, remarks: e.target.checked ? 'With Active Blotter Case' : 'No Derogatory Record' })} />
-                                <span>With Blotter</span>
-                              </label>
-                            </div>
-                            <div style={{ fontSize: '12px', color: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399', paddingLeft: '42px', lineHeight: '1.6', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399', display: 'inline-block' }} />
-                              {clearanceForm.hasBlotterRecord ? 'Warning: Applicant has pending blotter entries' : 'Verified: Clean record on local blotter masterlist'}
-                            </div>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">DATE ISSUED</label>
+                            <input type="text" className="fc" readOnly style={{ fontWeight: '700', background: 'var(--surface2)', opacity: 0.8 }} value={clearanceForm.dateIssued} />
                           </div>
                         </div>
 
-                        {/* RIGHT COLUMN: RECEIPT, CTC & SIGNATORIES */}
-                        <div className="fp" style={{ margin: 0, padding: '24px' }}>
-                          <div className="fp-t" style={{ fontSize: '15px', fontWeight: 700, marginBottom: '20px', paddingBottom: '12px', borderBottom: '2px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
-                              <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                              <polyline points="14 2 14 8 20 8" />
-                              <line x1="16" y1="13" x2="8" y2="13" />
-                              <line x1="16" y1="17" x2="8" y2="17" />
-                            </svg>
-                            RECEIPT, CTC & SIGNATORIES
-                          </div>
+                        {/* Resident Search */}
+                        <div className="fg" style={{ marginBottom: '16px' }}>
+                          <label className="fl">RESIDENT <span style={{ color: 'var(--red)' }}>*</span></label>
+                          <ResidentCombobox
+                            residents={residentsList}
+                            value={clearanceForm.selectedResidentId}
+                            placeholder="Search registered resident..."
+                            onChange={(selected) => {
+                              if (!selected) {
+                                setClearanceForm(prev => ({
+                                  ...prev,
+                                  selectedResidentId: '',
+                                  fullName: '',
+                                  residentId: '',
+                                  rbiId: '',
+                                  purok: '',
+                                  address: '',
+                                  hasBlotterRecord: false,
+                                }));
+                                return;
+                              }
 
-                          {/* O.R. DETAILS */}
-                          <div className="fg2" style={{ marginBottom: '20px' }}>
+                              const resName = (selected.name || `${selected.firstName || ''} ${selected.lastName || ''}`).trim().toLowerCase();
+                              const activeCases = blotterList.filter(b => {
+                                const isClosed = ['Settled / Resolved', 'Resolved', 'Settled', 'Dismissed', 'Referred to PNP (CFA Issued)'].includes(b.status);
+                                if (isClosed) return false;
+                                const comp = (b.complainant || '').toLowerCase();
+                                const resp = (b.respondent || '').toLowerCase();
+                                const matchesName = comp.includes(resName) || resp.includes(resName) || resName.includes(comp) || resName.includes(resp);
+                                const matchesId = b.complainantId === selected.id || b.respondentId === selected.id;
+                                return matchesName || matchesId;
+                              });
+
+                              setClearanceForm(prev => ({
+                                ...prev,
+                                selectedResidentId: selected.id,
+                                fullName: selected.name || `${selected.firstName || ''} ${selected.lastName || ''}`.trim(),
+                                residentId: selected.id,
+                                rbiId: selected.rbiId || selected.rbiNo || '—',
+                                purok: selected.purok || '—',
+                                address: selected.purokZoneAddress || selected.purok || '—',
+                                hasBlotterRecord: activeCases.length > 0,
+                                ctcName: selected.name || `${selected.firstName || ''} ${selected.lastName || ''}`.trim(),
+                              }));
+                            }}
+                          />
+                        </div>
+
+                        {/* Auto-populated Resident Details */}
+                        {clearanceForm.selectedResidentId && (
+                          <div className="fg3" style={{ marginBottom: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
                             <div className="fg" style={{ marginBottom: 0 }}>
-                              <label className="fl">O.R. NUMBER</label>
-                              <input type="text" className="fc" placeholder="e.g. 1234567" value={clearanceForm.orNo} onChange={(e) => setClearanceForm({ ...clearanceForm, orNo: e.target.value })} style={{ fontFamily: 'var(--mono)' }} />
+                              <label className="fl">RESIDENT ID</label>
+                              <input type="text" className="fc" readOnly style={{ background: 'var(--surface2)', opacity: 0.8 }} value={clearanceForm.residentId} />
                             </div>
                             <div className="fg" style={{ marginBottom: 0 }}>
-                              <label className="fl">CLEARANCE FEE (₱)</label>
-                              <input type="number" className="fc" value={clearanceForm.amtPaid} onChange={(e) => setClearanceForm({ ...clearanceForm, amtPaid: e.target.value })} />
+                              <label className="fl">RBI ID</label>
+                              <input type="text" className="fc" readOnly style={{ background: 'var(--surface2)', opacity: 0.8 }} value={clearanceForm.rbiId} />
+                            </div>
+                            <div className="fg" style={{ marginBottom: 0 }}>
+                              <label className="fl">PUROK</label>
+                              <input type="text" className="fc" readOnly style={{ background: 'var(--surface2)', opacity: 0.8 }} value={clearanceForm.purok} />
                             </div>
                           </div>
+                        )}
 
-                          {/* CTC DETAILS SECTION */}
-                          <div style={{ border: '2px dashed var(--border)', padding: '18px', borderRadius: '10px', background: 'var(--surface2)', marginBottom: '20px' }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '14px', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
-                              <span style={{ fontSize: '13px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
-                                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                  <polyline points="14 2 14 8 20 8" />
-                                </svg>
-                                COMMUNITY TAX CERTIFICATE (CTC)
-                              </span>
-                              <button type="button" className="btn btn-p" style={{ padding: '6px 12px', fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => setShowCtcModal(true)}>
-                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                  <line x1="12" y1="5" x2="12" y2="19" />
-                                  <line x1="5" y1="12" x2="19" y2="12" />
-                                </svg>
+                        {/* Purpose */}
+                        <div className="fg" style={{ marginBottom: '16px' }}>
+                          <label className="fl">PURPOSE OF CLEARANCE <span style={{ color: 'var(--red)' }}>*</span></label>
+                          <input type="text" className="fc" required placeholder="e.g. Employment Requirement" value={clearanceForm.purpose} onChange={(e) => setClearanceForm({ ...clearanceForm, purpose: e.target.value.toUpperCase() })} />
+                        </div>
+
+                        {/* Remarks - Independent */}
+                        <div className="fg" style={{ marginBottom: '20px' }}>
+                          <label className="fl">REMARKS (Optional)</label>
+                          <input type="text" className="fc" placeholder="e.g. For employment purposes only" value={clearanceForm.remarks} onChange={(e) => setClearanceForm({ ...clearanceForm, remarks: e.target.value })} />
+                        </div>
+
+                        {/* BLOTTER VERIFICATION PANEL - Read Only */}
+                        <div style={{ padding: '16px', borderRadius: '10px', background: clearanceForm.hasBlotterRecord ? 'rgba(248, 113, 113, 0.08)' : 'rgba(52, 211, 153, 0.08)', border: `1.5px solid ${clearanceForm.hasBlotterRecord ? 'rgba(248, 113, 113, 0.3)' : 'rgba(52, 211, 153, 0.3)'}`, transition: 'all 0.3s ease' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: clearanceForm.selectedResidentId ? '8px' : '0' }}>
+                            {clearanceForm.hasBlotterRecord ? (
+                              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(248, 113, 113, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
+                              </div>
+                            ) : (
+                              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(52, 211, 153, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+                              </div>
+                            )}
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399' }}>
+                              Blotter Verification
+                            </span>
+                          </div>
+                          <div style={{ fontSize: '12px', color: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399', paddingLeft: clearanceForm.selectedResidentId ? '42px' : '0', lineHeight: '1.6', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                            {!clearanceForm.selectedResidentId ? (
+                              'Select a resident to verify blotter status.'
+                            ) : (
+                              <>
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399', display: 'inline-block' }} />
+                                {clearanceForm.hasBlotterRecord
+                                  ? 'Warning: Active blotter case(s) found for this resident.'
+                                  : 'Verified: No active blotter case found on local masterlist.'}
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* RIGHT COLUMN: RECEIPT, CTC & SIGNATORIES */}
+                      <div className="fp" style={{ margin: 0, padding: '24px' }}>
+                        <div className="fp-t" style={{ fontSize: '15px', fontWeight: 700, marginBottom: '20px', paddingBottom: '12px', borderBottom: '2px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                          RECEIPT, CTC & SIGNATORIES
+                        </div>
+
+                        {/* O.R. DETAILS */}
+                        <div className="fg2" style={{ marginBottom: '20px' }}>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">O.R. NUMBER <span style={{ color: 'var(--red)' }}>*</span></label>
+                            <input type="text" className="fc" required placeholder="e.g. 1234567" value={clearanceForm.orNo} onChange={(e) => setClearanceForm({ ...clearanceForm, orNo: e.target.value })} style={{ fontFamily: 'var(--mono)' }} />
+                          </div>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">CLEARANCE FEE (₱) <span style={{ color: 'var(--red)' }}>*</span></label>
+                            <input type="number" className="fc" required placeholder="0.00" value={clearanceForm.amtPaid} onChange={(e) => setClearanceForm({ ...clearanceForm, amtPaid: e.target.value })} />
+                          </div>
+                        </div>
+
+                        {/* CTC DETAILS SECTION - Optional */}
+                        <div style={{ border: '2px dashed var(--border)', padding: '18px', borderRadius: '10px', background: 'var(--surface2)', marginBottom: '20px' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: clearanceForm.includeCtc ? '14px' : '0', paddingBottom: clearanceForm.includeCtc ? '12px' : '0', borderBottom: clearanceForm.includeCtc ? '1px solid var(--border)' : 'none' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                              </svg>
+                              COMMUNITY TAX CERTIFICATE (CTC)
+                            </span>
+                            {!clearanceForm.includeCtc ? (
+                              <button type="button" className="btn btn-p" style={{ padding: '6px 12px', fontSize: '11px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }} onClick={() => setClearanceForm(prev => ({ ...prev, includeCtc: true }))}>
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
                                 Add CTC
                               </button>
-                            </div>
-                            <div className="fg2" style={{ marginBottom: '12px' }}>
-                              <div className="fg" style={{ marginBottom: 0 }}>
-                                <label className="fl">CTC NO.</label>
-                                <input type="text" className="fc" placeholder="e.g. CTC-00981" value={clearanceForm.ctcNo} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcNo: e.target.value })} style={{ fontFamily: 'var(--mono)' }} />
-                              </div>
-                              <div className="fg" style={{ marginBottom: 0 }}>
-                                <label className="fl">CTC AMT. PAID (₱)</label>
-                                <input type="number" className="fc" value={clearanceForm.ctcAmtPaid} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcAmtPaid: e.target.value })} />
-                              </div>
-                            </div>
-                            <div className="fg2" style={{ marginBottom: 0 }}>
-                              <div className="fg" style={{ marginBottom: 0 }}>
-                                <label className="fl">CTC DATE ISSUED</label>
-                                <input type="date" className="fc" value={clearanceForm.ctcDateIssued} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcDateIssued: e.target.value })} />
-                              </div>
-                              <div className="fg" style={{ marginBottom: 0 }}>
-                                <label className="fl">PLACE ISSUED</label>
-                                <input type="text" className="fc" value={clearanceForm.ctcPlaceIssued} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcPlaceIssued: e.target.value })} />
-                              </div>
-                            </div>
+                            ) : (
+                              <button type="button" className="btn btn-g btn-sm" onClick={() => setClearanceForm(prev => ({ ...prev, includeCtc: false, ctcNo: '', ctcAmtPaid: '0.00', ctcDateIssued: toPHDateString(), ctcPlaceIssued: 'Nabua, Camarines Sur' }))}>
+                                Remove CTC
+                              </button>
+                            )}
                           </div>
 
-                          {/* SIGNATORIES */}
-                          <div className="fg2" style={{ marginBottom: 0 }}>
-                            <div className="fg" style={{ marginBottom: 0 }}>
-                              <label className="fl">BARANGAY SECRETARY</label>
-                              <input type="text" className="fc" value={clearanceForm.secretary} onChange={(e) => setClearanceForm({ ...clearanceForm, secretary: e.target.value })} />
-                            </div>
-                            <div className="fg" style={{ marginBottom: 0 }}>
-                              <label className="fl">PUNONG BARANGAY</label>
-                              <input type="text" className="fc" value={clearanceForm.captain} onChange={(e) => setClearanceForm({ ...clearanceForm, captain: e.target.value })} />
-                            </div>
+                          {clearanceForm.includeCtc && (
+                            <>
+                              <div className="fg2" style={{ marginBottom: '12px' }}>
+                                <div className="fg" style={{ marginBottom: 0 }}>
+                                  <label className="fl">CTC NO. <span style={{ color: 'var(--red)' }}>*</span></label>
+                                  <input type="text" className="fc" required={clearanceForm.includeCtc} placeholder="e.g. CTC-00981" value={clearanceForm.ctcNo} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcNo: e.target.value })} style={{ fontFamily: 'var(--mono)' }} />
+                                </div>
+                                <div className="fg" style={{ marginBottom: 0 }}>
+                                  <label className="fl">CTC AMT. PAID (₱) <span style={{ color: 'var(--red)' }}>*</span></label>
+                                  <input type="number" className="fc" required={clearanceForm.includeCtc} placeholder="0.00" value={clearanceForm.ctcAmtPaid} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcAmtPaid: e.target.value })} />
+                                </div>
+                              </div>
+                              <div className="fg2" style={{ marginBottom: 0 }}>
+                                <div className="fg" style={{ marginBottom: 0 }}>
+                                  <label className="fl">CTC DATE ISSUED</label>
+                                  <input type="date" className="fc" value={clearanceForm.ctcDateIssued} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcDateIssued: e.target.value })} />
+                                </div>
+                                <div className="fg" style={{ marginBottom: 0 }}>
+                                  <label className="fl">PLACE ISSUED</label>
+                                  <input type="text" className="fc" value={clearanceForm.ctcPlaceIssued} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcPlaceIssued: e.target.value })} />
+                                </div>
+                              </div>
+                            </>
+                          )}
+                        </div>
+
+                        {/* SIGNATORIES - Read Only from Settings */}
+                        <div className="fg2" style={{ marginBottom: 0 }}>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">BARANGAY SECRETARY</label>
+                            <input type="text" className="fc" readOnly style={{ background: 'var(--surface2)', opacity: 0.8 }} value={settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO'} />
+                          </div>
+                          <div className="fg" style={{ marginBottom: 0 }}>
+                            <label className="fl">PUNONG BARANGAY</label>
+                            <input type="text" className="fc" readOnly style={{ background: 'var(--surface2)', opacity: 0.8 }} value={settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL'} />
                           </div>
                         </div>
                       </div>
+                    </div>
 
-                      {/* FORM ACTION BUTTONS */}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginBottom: '32px', padding: '20px', background: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)' }}>
-                        
-                        {/* Clear Form Button */}
-                        <button 
-                          type="button" 
-                          className="btn btn-g" 
-                          onClick={resetClearanceForm} 
-                          disabled={isSavingClearance}
-                          style={{ padding: '12px 24px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', opacity: isSavingClearance ? 0.6 : 1 }}
-                        >
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <polyline points="1 4 1 10 7 10" />
-                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
-                          </svg>
-                          Clear Form
-                        </button>
-
-                        <button 
-                          type="submit" 
-                          className="btn btn-p" 
-                          disabled={isSavingClearance}
-                          style={{ 
-                            padding: '12px 28px', 
-                            fontWeight: 700, 
-                            display: 'flex', 
-                            alignItems: 'center', 
-                            gap: '10px', 
-                            boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)',
-                            opacity: isSavingClearance ? 0.7 : 1,
-                            cursor: isSavingClearance ? 'not-allowed' : 'pointer',
-                            transition: 'all 0.2s ease'
-                          }}
-                        >
-                          {isSavingClearance ? (
-                            <>
-                              {/* Loading Spinner */}
-                              <span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
-                              Saving...
-                            </>
-                          ) : (
-                            <>
-                              {/* Normal Icon */}
-                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
-                                <polyline points="17 21 17 13 7 13 7 21" />
-                                <polyline points="7 3 7 8 15 8" />
-                              </svg>
-                              Save & Issue Clearance
-                            </>
-                          )}
-                        </button>
-                      </div>
-                    </form>
+                    {/* FORM ACTION BUTTONS */}
+                    <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginBottom: '32px', padding: '20px', background: 'var(--surface)', borderRadius: '10px', border: '1px solid var(--border)' }}>
+                      <button type="button" className="btn btn-g" onClick={resetClearanceForm} disabled={isSavingClearance} style={{ padding: '12px 24px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', opacity: isSavingClearance ? 0.6 : 1 }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" /></svg>
+                        Clear Form
+                      </button>
+                      <button type="submit" className="btn btn-p" disabled={isSavingClearance} style={{ padding: '12px 28px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '10px', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)', opacity: isSavingClearance ? 0.7 : 1, cursor: isSavingClearance ? 'not-allowed' : 'pointer', transition: 'all 0.2s ease' }}>
+                        {isSavingClearance ? (
+                          <><span style={{ display: 'inline-block', width: '16px', height: '16px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />Saving...</>
+                        ) : (
+                          <><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>Save & Issue Clearance</>
+                        )}
+                      </button>
+                    </div>
+                  </form>
 
                     {/* ─ REGISTERED BARANGAY CLEARANCES MASTERLIST TABLE ── */}
                     <div className="tw" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', marginTop: '20px' }}>
@@ -8703,7 +10676,7 @@ useEffect(() => {
                 ════════════════════════════════════════ */}
                 {screen === 'business_clearance' && (
                   <div className="screen active">
-
+                    
                     {/* ── TAB BUTTONS (PAGE 1 / PAGE 2) ── */}
                     <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', borderBottom: '2px solid var(--border)', paddingBottom: '2px' }}>
                       <button 
@@ -8725,7 +10698,7 @@ useEffect(() => {
                     </div>
 
                     {/* SINGLE FORM WRAPPER FOR BOTH TABS */}
-                    <form onSubmit={handleSaveBusinessClearance} noValidate>
+                    <form ref={businessFormRef} onSubmit={handleSaveBusinessClearance} noValidate>
                       
                       {/* ── PAGE 1 CONTENT ── */}
                       <div style={{ display: businessTab === 'page1' ? 'block' : 'none' }}>
@@ -8924,14 +10897,12 @@ useEffect(() => {
 
                         {/* ACTION BUTTONS (PAGE 1) */}
                         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
-                          <button 
-                            type="button" 
-                            className="btn btn-g" 
-                            onClick={() => showToast('Draft saving feature is coming soon!', 'info')}
-                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}
-                          > 
-                            Save as Draft 
-                          </button>
+
+                          {!businessForm._id && (
+                            <button type="button" className="btn btn-g" onClick={() => showToast('Draft saving feature is coming soon!', 'info')} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                              Save as Draft
+                            </button>
+                          )}
 
                           <button 
                             type="button" 
@@ -8950,7 +10921,6 @@ useEffect(() => {
                             Cancel
                           </button>
 
-                          {/* NEXT BUTTON (Auto-disabled kung kulang ang required fields) */}
                           <button 
                             type="button" 
                             className="btn btn-p" 
@@ -9037,7 +11007,7 @@ useEffect(() => {
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
                                 <label className="fl">PERMIT VALIDITY / EXPIRATION</label>
-                                <input type="text" className="fc" readOnly value= {`Valid until December 31, ${new Date().getFullYear()}`} />
+                                <input type="text" className="fc" readOnly value={`Valid until December 31, ${new Date().getFullYear()}`} />
                               </div>
                             </div>
                           </div>
@@ -9123,7 +11093,7 @@ useEffect(() => {
                         <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700 }}>
                           Registered Business Clearances ({businessMasterlist.length})
                         </h4>
-                         <button type="button" className="btn btn-g" onClick={() => handleGenerateExcelReport('business_clearances')} style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '36px', fontSize: '12px' }}>
+                        <button type="button" className="btn btn-g" onClick={() => handleGenerateExcelReport('business_clearances')} style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '36px', fontSize: '12px' }}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
                             <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
                             <path d="M7 10l5 5 5-5" />
@@ -9232,15 +11202,15 @@ useEffect(() => {
                         </div>
                         <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-end' }}>
                           <div style={{ flex: 2, minWidth: '200px' }}>
-                            <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Program Title</label>
+                            <label style={{ fontSize: '11px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Program Title</label>
                             <input className="fc" required placeholder="e.g., Senior Citizen Cash Subsidy" value={newProgramTitle} onChange={(e) => setNewProgramTitle(e.target.value)} />
                           </div>
                           <div style={{ flex: 1, minWidth: '100px' }}>
-                            <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Target Beneficiaries</label>
+                            <label style={{ fontSize: '11px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Target Beneficiaries</label>
                             <input className="fc" type="number" required min="1" value={newProgramTarget} onChange={(e) => setNewProgramTarget(e.target.value)} />
                           </div>
                           <div style={{ flex: 1, minWidth: '120px' }}>
-                            <label style={{ fontSize: '11px', color: '#cbd5e1', display: 'block', marginBottom: '4px' }}>Initial Status</label>
+                            <label style={{ fontSize: '11px', color: 'var(--muted)', display: 'block', marginBottom: '4px' }}>Initial Status</label>
                             <select className="fc" value={newProgramStatus} onChange={(e) => setNewProgramStatus(e.target.value)}>
                               <option value="Active">Active</option>
                               <option value="Upcoming">Upcoming</option>
@@ -9250,7 +11220,7 @@ useEffect(() => {
                             <button type="submit" className="btn btn-p" style={{ height: '38px' }}>Save Program</button>
                           </div>
                         </div>
-                      </form>
+                      </form> 
                     )}
 
                     {/* TOOLBAR: Search, Filter, Sort + Register Trigger */}
@@ -9294,7 +11264,7 @@ useEffect(() => {
 
                     {/* GRID DISPLAY */}
                     {processedPrograms.length === 0 ? (
-                      <div style={{ textAlign: 'center', padding: '40px',  background: 'var(--surface)', borderRadius: '8px', color: '#94a3b8', border: '1px dashed rgba(79, 142, 247, 0.2)' }}>
+                      <div style={{ textAlign: 'center', padding: '40px',  background: 'var(--surface)', borderRadius: '8px', color: 'var(--muted)', border: '1px dashed rgba(79, 142, 247, 0.2)' }}>
                         Walang nakitang distribution programs na tumutugma sa iyong query o filter settings.
                       </div>
                     ) : (
@@ -9328,7 +11298,7 @@ useEffect(() => {
                                     <span className="badge gr">{prog.dateLabel || 'Campaign'}</span>
                                   </div>
                                   <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>{prog.title}</div>
-                                  <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: '#94a3b8', marginBottom: '10px' }}>{prog.id}</div>
+                                  <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)', marginBottom: '10px' }}>{prog.id}</div>
 
                                   {/* NEW: Ready-to-complete hint */}
                                   {readyToComplete && (
@@ -9338,10 +11308,10 @@ useEffect(() => {
                                   )}
 
                                   {/* Progress Bar */}
-                                  <div style={{ margin: '10px 0', background: '#334155', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-                                    <div style={{ width: `${percent}%`, height: '100%', background: readyToComplete ? '#10b981' : prog.status === 'Completed' ? '#10b981' : prog.status === 'Upcoming' ? '#64748b' : '#3b82f6' }} />
+                                  <div style={{ margin: '10px 0', background: 'var(--border2)', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
+                                    <div style={{ width: `${percent}%`, height: '100%', background: readyToComplete ? 'var(--green)' : prog.status === 'Completed' ? 'var(--green)' : prog.status === 'Upcoming' ? 'var(--hint)' : '#3b82f6' }} />
                                   </div>
-                                  <div style={{ fontSize: '11px', color: '#94a3b8', display: 'flex', justifyContent: 'space-between' }}>
+                                  <div style={{ fontSize: '11px', color: 'var(--muted)', display: 'flex', justifyContent: 'space-between' }}>
                                     <span>{prog.current} / {prog.target} targets</span>
                                     <strong>{percent}%</strong>
                                   </div>
@@ -9351,7 +11321,7 @@ useEffect(() => {
                                 <div style={{ display: 'flex', gap: '6px', marginTop: '16px', borderTop: '1px solid rgba(79, 142, 247, 0.2)', paddingTop: '12px', alignItems: 'center' }}>
                                   {prog.status === 'Active' && (
                                   <>
-                                    <button className="btn btn-p btn-sm" onClick={() => nav('aid-encode')}>Encode</button>
+                                    <button className="btn btn-p btn-sm" onClick={() => { setSelectedProgramId(prog.id); nav('aid-encode'); }} > Encode </button>
                                     <button className="btn btn-g btn-sm" onClick={() => nav('aid-logs')}>Logs</button>
 
                                     {readyToComplete && (
@@ -9380,7 +11350,7 @@ useEffect(() => {
                                         <button 
                                           data-kebab-btn 
                                           className="btn btn-sm" 
-                                          style={{ background: '#475569', color: '#cbd5e1', padding: '6px 10px', display: 'flex', alignItems: 'center', zIndex: 101 }} 
+                                          style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '6px 10px', display: 'flex', alignItems: 'center', zIndex: 101 }} 
                                           onClick={() => setOpenActionMenu(openActionMenu === prog.id ? null : prog.id)}
                                         >
                                           <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
@@ -9417,7 +11387,7 @@ useEffect(() => {
                                             padding: '8px 12px', 
                                             background: 'transparent', 
                                             border: 'none', 
-                                            color: '#f1f5f9', 
+                                            color: 'var(--text)', 
                                             cursor: 'pointer', 
                                             display: 'flex', 
                                             alignItems: 'center', 
@@ -9448,7 +11418,7 @@ useEffect(() => {
                                               padding: '8px 12px', 
                                               background: 'transparent', 
                                               border: 'none', 
-                                              color: '#f1f5f9', 
+                                              color: 'var(--text)', 
                                               cursor: 'pointer', 
                                               display: 'flex', 
                                               alignItems: 'center', 
@@ -9603,274 +11573,202 @@ useEffect(() => {
             {/* ════════════════════════════════════════
                 SCREEN: ENCODE DISTRIBUTION
                 ════════════════════════════════════════ */}
-            {screen === 'aid-encode' && (
-              <div className="screen active">
-                {/* Page Header */}
+              {screen === 'aid-encode' && (
+  <div className="screen active" style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
+    
+    {/* ── 1. GLOBAL ALERTS (Success & Batch Mode) ── */}
+    {successMessage && (
+      <div className="note note-s" style={{ marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><polyline points="20 6 9 17 4 12" /></svg>
+        {successMessage}
+      </div>
+    )}
 
-                {/* Success Message Banner */}
-                {successMessage && (
-                  <div className="note note-s" style={{ marginBottom: '16px' }}>
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                      <polyline points="20 6 9 17 4 12" />
-                    </svg>
-                    {successMessage}
-                  </div>
-                )}
+    {selectedResidents.length > 0 && (
+      <div className="note note-i" style={{ marginBottom: '20px', padding: '16px', borderRadius: '10px', border: '1px solid rgba(59, 130, 246, 0.3)', background: 'rgba(59, 130, 246, 0.05)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: 'var(--primary)' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>
+            <strong>Batch Mode Active:</strong> {selectedResidents.length} residents queued.
+          </div>
+          <button className="btn btn-g btn-sm" onClick={() => setSelectedResidents([])} style={{ color: 'var(--red)', borderColor: 'rgba(239, 68, 68, 0.3)' }}>
+            Cancel Batch
+          </button>
+        </div>
+        <div style={{ fontSize: '11px', color: 'var(--muted)', padding: '8px 12px', background: 'var(--surface)', borderRadius: '6px', fontFamily: 'var(--mono)', maxHeight: '50px', overflowY: 'auto' }}>
+          {residentsList.filter(r => selectedResidents.includes(r.id)).map(r => r.name).join(' • ')}
+        </div>
+      </div>
+    )}
 
-                {/* Batch Mode Indicator */}
-                {selectedResidents.length > 0 && (
-                  <div className="note note-i" style={{ marginBottom: '16px', flexDirection: 'column', alignItems: 'flex-start' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px', width: '100%' }}>
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                      </svg>
-                      <strong>Batch Mode Active:</strong> {selectedResidents.length} residents queued.
-                      <button 
-                        className="btn btn-g btn-sm" 
-                        onClick={() => setSelectedResidents([])} 
-                        style={{ marginLeft: 'auto', color: 'var(--red)', borderColor: 'rgba(248, 113, 113, 0.3)' }}
-                      >
-                        Cancel Batch
-                      </button>
-                    </div>
-                    <div style={{ width: '100%', maxHeight: '60px', overflowY: 'auto', fontSize: '11px', color: 'var(--muted)', padding: '8px', background: 'var(--surface2)', borderRadius: '6px', fontFamily: 'var(--mono)' }}>
-                      {residentsList.filter(r => selectedResidents.includes(r.id)).map(r => r.name).join(', ')}
-                    </div>
-                  </div>
-                )}
+    {/* ── 2. CONTEXT HEADER (Currently Encoding For) ── */}
+    {(() => {
+      const currentProg = programsList.find(p => p.id === selectedProgramId);
+      return currentProg ? (
+        <div style={{ 
+          background: 'var(--surface2)', 
+          border: '1px solid var(--border)', 
+          borderRadius: '8px', 
+          padding: '16px', 
+          marginBottom: '20px',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <div>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 700 }}>Currently Encoding For</div>
+            <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text)' }}>{currentProg.title}</div>
+          </div>
+          <div style={{ textAlign: 'right' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Progress</div>
+            <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--primary)' }}>
+              {currentProg.current} / {currentProg.target}
+            </div>
+          </div>
+        </div>
+      ) : null;
+    })()}
 
-                <div className="tc">
-                  {/* FORM PANEL */}
-                  <div className="fp">
-                    <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                      Distribution Entry Form
-                    </div>
+    {/* ── 3. MAIN GRID LAYOUT (Form Left, Logs Right) ── */}
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '24px', alignItems: 'start' }}>
+      
+      {/* LEFT PANEL: Distribution Entry Form */}
+      <div className="card" style={{ padding: '24px', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px' }}>
+        <form onSubmit={(e) => { e.preventDefault(); handleEncodeSubmit(); }}>
+          {/* Relief Program */}
+          <div className="fg" style={{ marginBottom: '16px' }}>
+            <label className="fl">Relief Program <span style={{ color: 'var(--red)' }}>*</span></label>
+            <select 
+              className="fc" 
+              value={selectedProgramId} 
+              style={{ border: (formAttempted && !selectedProgramId) ? '1px solid var(--red)' : undefined, height: '42px' }}
+              onChange={(e) => {
+                const progId = e.target.value;
+                setSelectedProgramId(progId);
+                const foundProg = programsList.find((p) => p.id === progId);
+                if (foundProg) setAidType(foundProg.title.includes('Rice') ? 'Rice — 5kg Pack' : 'Financial / Cash Aid');
+              }}
+            >
+              <option value="" disabled hidden>Select active relief program...</option>
+              {programsList.filter((prog) => prog.status === 'Active').map((prog) => {
+                const isFull = (prog.current || 0) >= (prog.target || 1);
+                return (
+                  <option key={prog.id} value={prog.id} disabled={isFull}>
+                    {prog.title} ({prog.id}) — {prog.current}/{prog.target} {isFull ? '• FULL' : ''}
+                  </option>
+                );
+              })}
+            </select>
+            {formAttempted && !selectedProgramId && <div style={{ fontSize: '11px', color: 'var(--red)', marginTop: '4px' }}>Please select a relief program.</div>}
+          </div>
 
-                    {/* Relief Program Field */}
-                    <div className="fg">
-                      <label className="fl">
-                        Relief Program <span style={{ color: 'var(--red)' }}>*</span>
-                      </label>
-                      <select
-                        className="fc"
-                        value={selectedProgramId}
-                        style={{
-                          border: (formAttempted && !selectedProgramId)
-                            ? '1px solid var(--red)'
-                            : undefined
-                        }}
-                        onChange={(e) => {
-                          const progId = e.target.value;
-                          setSelectedProgramId(progId);
-                          const foundProg = programsList.find((p) => p.id === progId);
-                          if (foundProg) {
-                            setAidType(
-                              foundProg.title.includes('Rice')
-                                ? 'Rice — 5kg Pack'
-                                : 'Financial / Cash Aid'
-                            );
-                          }
-                        }}
-                      >
-                        <option value="" disabled hidden>
-                          Select active relief program...
-                        </option>
-                        {programsList
-                          .filter((prog) => prog.status === 'Active')
-                          .map((prog) => {
-                            const isFull = (prog.current || 0) >= (prog.target || 1);
-                            return (
-                              <option key={prog.id} value={prog.id} disabled={isFull}>
-                                {prog.title} ({prog.id}) — {prog.current}/{prog.target}{' '}
-                                {isFull ? '• FULL' : ''}
-                              </option>
-                            );
-                          })}
-                      </select>
-                      
-                      {/* Error message only shows after submit attempt */}
-                      {formAttempted && !selectedProgramId && (
-                        <div style={{ fontSize: '11px', color: 'var(--red)', marginTop: '4px' }}>
-                          Please select a relief program to continue.
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Beneficiary Resident Selector */}
-                    <div className="fg">
-                      <label className="fl">
-                        Beneficiary Resident <span style={{ color: 'var(--red)' }}>*</span>
-                      </label>
-                      <ResidentCombobox
-                        residents={residentsList}
-                        value={selectedResidentId}
-                        onChange={(res) => setSelectedResidentId(res ? res.id : '')}
-                        placeholder="Search by name, resident ID, or purok..."
-                      />
-                    </div>
-
-                    {/* Aid Type & Quantity Grid */}
-                    <div className="fg2">
-                      <div className="fg">
-                        <label className="fl">Aid Type <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <input
-                          type="text"
-                          className="fc"
-                          value={aidType}
-                          onChange={(e) => setAidType(e.target.value)}
-                          placeholder="e.g., Rice — 5kg"
-                        />
-                      </div>
-
-                      {/* Quantity Field */}
-                      <div className="fg">
-                        <label className="fl">Quantity <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <div style={{ display: 'flex', alignItems: 'stretch', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', overflow: 'hidden', background: 'var(--surface2)', height: '38px' }}>
-                          <button
-                            type="button"
-                            onClick={() => setQuantity(prev => Math.max(1, (Number(prev) || 1) - 1))}
-                            className="btn btn-g"
-                            style={{ borderRadius: 0, border: 'none', borderRight: '1px solid var(--border)', padding: '0 12px', height: '100%' }}
-                          >
-                            −
-                          </button>
-                          <input
-                            type="number"
-                            min="1"
-                            value={quantity}
-                            onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))}
-                            className="fc"
-                            style={{ textAlign: 'center', border: 'none', background: 'transparent', boxShadow: 'none', height: '100%', padding: 0, MozAppearance: 'textfield' }}
-                          />
-                          <button
-                            type="button"
-                            onClick={() => setQuantity(prev => (Number(prev) || 0) + 1)}
-                            className="btn btn-g"
-                            style={{ borderRadius: 0, border: 'none', borderLeft: '1px solid var(--border)', padding: '0 12px', height: '100%' }}
-                          >
-                            +
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Remarks */}
-                    <div className="fg">
-                      <label className="fl">Remarks</label>
-                      <textarea
-                        className="fc"
-                        placeholder="Optional notes..."
-                        value={remarks}
-                        onChange={(e) => setRemarks(e.target.value)}
-                        rows={3}
-                      />
-                    </div>
-
-                    {/* Duplicate Validation Status */}
-                    {!duplicateAlert && selectedResidentId && (
-                      <div className="note note-s" style={{ marginTop: '12px' }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                          <path d="M22 4L12 14.01l-3-3" />
-                        </svg>
-                        No duplicate — resident not yet recorded under this program.
-                      </div>
-                    )}
-
-                    {/* Submit Button */}
-                    <div className="fa" style={{ marginTop: '16px' }}>
-                      <button
-                        type="button"
-                        className="btn btn-p"
-                        onClick={handleEncodeSubmit}
-                        disabled={!selectedProgramId || !selectedResidentId}
-                        style={{ width: '100%', justifyContent: 'center', opacity: (!selectedProgramId || !selectedResidentId) ? 0.5 : 1 }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <line x1="12" y1="5" x2="12" y2="19" />
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                        Add Entry
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* AID LOGS TABLE */}
-                  <div>
-                    <div className="fp-t" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '12px' }}>
-                      Recent Session Activity
-                    </div>
-
-                    {duplicateAlert && (
-                      <div className="note note-e" style={{ marginBottom: '14px' }}>
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                          <path d="M12 9v4" />
-                          <path d="M12 17h.01" />
-                        </svg>
-                        <strong>{duplicateAlert}</strong>
-                      </div>
-                    )}
-
-
-                    <div className="tw">
-                      <table>
-                        <thead>
-                          <tr>
-                            <th>Resident</th>
-                            <th>Aid</th>
-                            <th>By</th>
-                            <th>Time</th>
-                            <th>Status</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {aidLogs.length === 0 ? (
-                            <tr>
-                              <td colSpan="5" style={{ textAlign: 'center', padding: '32px', color: 'var(--muted)' }}>
-                                No logs recorded yet for this session.
-                              </td>
-                            </tr>
-                          ) : (
-                            aidLogs.map((log) => (
-                              <tr key={log.id}>
-                                <td style={{ fontWeight: 600 }}>{log.residentName}</td>
-                                <td>{log.aid}</td>
-                                <td>{log.officer}</td>
-                                <td style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>{log.time}</td>
-                                <td>
-                                  <span className={`badge ${log.status === 'OK' ? 'g' : log.status === 'Synced' ? 't' : 'r'}`}>
-                                    {log.status === 'OK' && (
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                                        <path d="M22 4L12 14.01l-3-3" />
-                                      </svg>
-                                    )}
-                                    {log.status === 'Synced' && (
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
-                                      </svg>
-                                    )}
-                                    {log.status === 'Error' && (
-                                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                                        <path d="M12 9v4" />
-                                        <path d="M12 17h.01" />
-                                      </svg>
-                                    )}
-                                    {' '}{log.status}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))
-                          )}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
-                </div>
+          {/* Beneficiary Resident */}
+          <div className="fg" style={{ marginBottom: '16px' }}>
+            <label className="fl">Beneficiary Resident <span style={{ color: 'var(--red)' }}>*</span></label>
+            <ResidentCombobox 
+              residents={residentsList} 
+              value={selectedResidentId} 
+              onChange={(res) => setSelectedResidentId(res ? res.id : '')} 
+              placeholder="Search by name, ID, or purok..." 
+            />
+            {/* ✅ FIX: Duplicate Alert moved here for immediate feedback! */}
+            {selectedResidentId && duplicateAlert && (
+              <div className="note note-e" style={{ marginTop: '8px', padding: '8px 12px', fontSize: '12px' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>
+                {duplicateAlert}
               </div>
             )}
+            {selectedResidentId && !duplicateAlert && (
+              <div className="note note-s" style={{ marginTop: '8px', padding: '8px 12px', fontSize: '12px' }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+                Valid: Resident not yet recorded under this program.
+              </div>
+            )}
+          </div>
+
+          {/* Aid Type & Quantity Grid */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '12px', marginBottom: '16px' }}>
+            <div className="fg">
+              <label className="fl">Aid Type <span style={{ color: 'var(--red)' }}>*</span></label>
+              <input type="text" className="fc" value={aidType} onChange={(e) => setAidType(e.target.value)} placeholder="e.g., Rice — 5kg" style={{ height: '42px' }} />
+            </div>
+            <div className="fg">
+              <label className="fl">Qty <span style={{ color: 'var(--red)' }}>*</span></label>
+              <div style={{ display: 'flex', alignItems: 'stretch', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden', background: 'var(--surface2)', height: '42px' }}>
+                <button type="button" onClick={() => setQuantity(prev => Math.max(1, (Number(prev) || 1) - 1))} className="btn btn-g" style={{ borderRadius: 0, border: 'none', borderRight: '1px solid var(--border)', padding: '0 12px' }}>−</button>
+                <input type="number" min="1" value={quantity} onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} className="fc" style={{ textAlign: 'center', border: 'none', background: 'transparent', boxShadow: 'none', padding: 0, MozAppearance: 'textfield' }} />
+                <button type="button" onClick={() => setQuantity(prev => (Number(prev) || 0) + 1)} className="btn btn-g" style={{ borderRadius: 0, border: 'none', borderLeft: '1px solid var(--border)', padding: '0 12px' }}>+</button>
+              </div>
+            </div>
+          </div>
+
+          {/* Remarks */}
+          <div className="fg" style={{ marginBottom: '20px' }}>
+            <label className="fl">Remarks (Optional)</label>
+            <textarea className="fc" placeholder="Any special notes..." value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} style={{ resize: 'none' }} />
+          </div>
+
+          {/* Submit Button */}
+          <button type="submit" className="btn btn-p" disabled={!selectedProgramId || !selectedResidentId} style={{ width: '100%', height: '44px', justifyContent: 'center', fontWeight: 700, fontSize: '14px', opacity: (!selectedProgramId || !selectedResidentId) ? 0.6 : 1, cursor: (!selectedProgramId || !selectedResidentId) ? 'not-allowed' : 'pointer' }}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '8px' }}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
+            Add Entry to Log
+          </button>
+        </form>
+      </div>
+
+      {/* RIGHT PANEL: Recent Session Activity */}
+      <div className="card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 140px)' }}>
+        <div style={{ padding: '16px 20px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          <div>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Recent Session Activity</div>
+            <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Real-time encoding logs</div>
+          </div>
+        </div>
+        
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+            <thead style={{ position: 'sticky', top: 0, background: 'var(--surface)', zIndex: 10 }}>
+              <tr>
+                <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--muted)', borderBottom: '1px solid var(--border)' }}>Resident</th>
+                <th style={{ padding: '12px 16px', textAlign: 'left', fontWeight: 600, color: 'var(--muted)', borderBottom: '1px solid var(--border)' }}>Aid</th>
+                <th style={{ padding: '12px 16px', textAlign: 'center', fontWeight: 600, color: 'var(--muted)', borderBottom: '1px solid var(--border)' }}>Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {aidLogs.length === 0 ? (
+                <tr>
+                  <td colSpan="3" style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--muted)' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                      <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.4 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+                      <span>No logs recorded yet for this session.</span>
+                    </div>
+                  </td>
+                </tr>
+              ) : (
+                aidLogs.map((log) => (
+                  <tr key={log.id} style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.2s' }} onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface2)'} onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}>
+                    <td style={{ padding: '12px 16px', fontWeight: 600, color: 'var(--text)' }}>{log.residentName}</td>
+                    <td style={{ padding: '12px 16px', color: 'var(--muted)' }}>{log.aid}</td>
+                    <td style={{ padding: '12px 16px', textAlign: 'center' }}>
+                      <span className={`badge ${log.status === 'OK' ? 'g' : log.status === 'Synced' ? 't' : 'r'}`} style={{ fontSize: '11px', padding: '4px 8px' }}>
+                        {log.status === 'OK' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>}
+                        {log.status === 'Synced' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>}
+                        {log.status === 'Error' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>}
+                        {log.status}
+                      </span>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+  </div>
+)}
 
             {/* ════════════════════════════════════════
                 SCREEN: DISTRIBUTION LOGS
@@ -9899,7 +11797,6 @@ useEffect(() => {
                         
                       </select>
                       
-                      {/* 🔄 GUMAGANANG STATUS FILTER DROPDOWN */}
                       <select 
                         className="fc" 
                         style={{ width: '130px' }}
@@ -9928,7 +11825,7 @@ useEffect(() => {
                       <tbody>
                         {filteredLogs.length === 0 ? (
                           <tr>
-                            <td colSpan="7" style={{ textAlign: 'center', color: '#94a3b8', padding: '20px' }}>
+                            <td colSpan="7" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
                               Walang nahanap na tugmang transaksyon sa talaan.
                             </td>
                           </tr>
@@ -9954,142 +11851,6 @@ useEffect(() => {
                   </div>
                 </div>
               )}
-
-            {/* ════════════════════════════════════════
-                SCREEN: ADD BENEFICIARY (Admin only)
-                ════════════════════════════════════════ */}
-            {role === 'admin' && screen === 'add-beneficiary' && (
-              <div className="screen active">
-                <div className="fp">
-                  <div className="fg2">
-                    <div className="fg">
-                      <label className="fl">
-                        Resident <span style={{ color: 'var(--red)' }}>*</span>
-                      </label>
-                      <ResidentCombobox
-                        residents={residentsList}
-                        value={beneficiaryDraft.residentId}
-                        onChange={(res) => setBeneficiaryDraft((prev) => ({
-                          ...prev,
-                          residentId: res ? res.id : '',
-                          name: res ? res.name : '',
-                        }))}
-                      />
-                    </div>
-
-                    <div className="fg">
-                      <label className="fl">Aid Type <span style={{ color: 'var(--red)' }}>*</span></label>
-                      <input
-                        className="fc"
-                        value={beneficiaryDraft.aidType}
-                        onChange={(e) => setBeneficiaryDraft((prev) => ({ ...prev, aidType: e.target.value }))}
-                      />
-                    </div>
-                  </div>
-     
-                  <div className="fg2" style={{ marginBottom: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                    
-                    {/* Quantity Field */}
-                    <div className="fg">
-                      <label className="fl">Quantity <span style={{ color: 'var(--red)' }}>*</span></label>
-                      <div style={{ display: 'flex', alignItems: 'stretch', border: '1px solid var(--border)', borderRadius: 'var(--r-sm)', overflow: 'hidden', background: 'var(--surface2)', height: '38px' }}>
-                        <button
-                          type="button"
-                          onClick={() => setBeneficiaryDraft(prev => ({ 
-                            ...prev, 
-                            qty: Math.max(1, (Number(prev.qty) || 1) - 1) 
-                          }))}
-                          className="btn btn-g"
-                          style={{ borderRadius: 0, border: 'none', borderRight: '1px solid var(--border)', padding: '0 12px', height: '100%' }}
-                        >
-                          −
-                        </button>
-                        <input
-                          type="number"
-                          min="1"
-                          value={beneficiaryDraft.qty}
-                          onChange={(e) => setBeneficiaryDraft(prev => ({ 
-                            ...prev, 
-                            qty: Math.max(1, parseInt(e.target.value) || 1) 
-                          }))}
-                          className="fc"
-                          style={{ textAlign: 'center', border: 'none', background: 'transparent', boxShadow: 'none', height: '100%', padding: 0, MozAppearance: 'textfield' }}
-                        />
-                        <button
-                          type="button"
-                          onClick={() => setBeneficiaryDraft(prev => ({ 
-                            ...prev, 
-                            qty: (Number(prev.qty) || 0) + 1 
-                          }))}
-                          className="btn btn-g"
-                          style={{ borderRadius: 0, border: 'none', borderLeft: '1px solid var(--border)', padding: '0 12px', height: '100%' }}
-                        >
-                          +
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Integrated Add Button */}
-                    <div className="fg" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'flex-end' }}>
-                      <button
-                        className="btn btn-p"
-                        type="button"
-                        onClick={addToList}
-                        style={{
-                          height: '38px',
-                          display: 'flex',
-                          alignItems: 'center',
-                          justifyContent: 'center',
-                          gap: '6px'
-                        }}
-                      >
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                          <line x1="12" y1="5" x2="12" y2="19" />
-                          <line x1="5" y1="12" x2="19" y2="12" />
-                        </svg>
-                        Add Entry
-                      </button>
-                    </div>
-                  </div>
-                </div>
-                <div className="tw">
-                  <div className="tb"><strong> Beneficiary List</strong></div>
-                  <table>
-                    <thead>
-                      <tr><th>Name</th><th>Aid</th><th>Qty</th><th>Action</th></tr>
-                    </thead>
-                    <tbody>
-                      {beneficiaryList.length === 0 ? (
-                        <tr>
-                          <td colSpan={4} style={{ textAlign: 'center', color: 'var(--muted)' }}>
-                            No beneficiaries added yet.
-                          </td>
-                        </tr>
-                      ) : (
-                        beneficiaryList.map((b, i) => (
-                          <tr key={i}>
-                            <td>{b.name}</td><td>{b.aidType}</td><td>{b.qty}</td>
-                            <td>
-                              <button className="btn btn-d btn-sm" onClick={() => removeFromList(i)}>Remove</button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
-                <div className="fa">
-                  <button
-                    className="btn btn-p"
-                    onClick={saveAll}
-                    disabled={beneficiaryList.length === 0}
-                    style={{ opacity: beneficiaryList.length === 0 ? 0.5 : 1, cursor: beneficiaryList.length === 0 ? 'not-allowed' : 'pointer' }}
-                  >
-                    Save All Beneficiaries
-                  </button>
-                </div>
-              </div>
-            )}
 
             {/* ════════════════════════════════════════
                 SCREEN: FILE BLOTTER ENTRY
@@ -10137,20 +11898,25 @@ useEffect(() => {
                               className="fc" 
                               type="date" 
                               required 
+                              max={new Date().toISOString().split('T')[0]} 
                               value={blotterForm.date} 
                               onChange={(e) => setBlotterForm({ ...blotterForm, date: e.target.value })} 
                             />
                           </div>
                           <div className="fg">
-                            <label className="fl">Time Matrix <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <input 
-                              className="fc" 
-                              type="time" 
-                              required 
-                              value={blotterForm.time} 
-                              onChange={(e) => setBlotterForm({ ...blotterForm, time: e.target.value })} 
-                            />
-                          </div>
+                          <label className="fl">
+                            Time of Incident <span style={{ color: 'var(--red)' }}>*</span>
+                          </label>
+                          <input 
+                            className="fc" 
+                            type="time" 
+                            step="60" 
+                            required 
+                            value={blotterForm.time} 
+                            onChange={(e) => setBlotterForm({ ...blotterForm, time: e.target.value })}
+                            title="Click the dropdown or use Up/Down arrow keys to set time"
+                          />
+                        </div>
                         </div>
 
                         <div className="fg2" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginTop: '12px' }}>
@@ -10359,11 +12125,17 @@ useEffect(() => {
                           {(blotterForm.status === 'Open' || blotterForm.status === 'Under Mediation') && (
                             <div className="fg" style={{ marginTop: '12px' }}>
                               <label className="fl">Next Mediation Hearing Date</label>
-                              <input 
-                                className="fc" 
-                                type="date" 
-                                value={blotterForm.nextHearingDate} 
-                                onChange={(e) => setBlotterForm({ ...blotterForm, nextHearingDate: e.target.value })} 
+                              <input
+                                className="fc"
+                                type="date"
+                                min={new Date().toISOString().split('T')[0]}
+                                value={blotterForm.nextHearingDate}
+                                onChange={(e) =>
+                                  setBlotterForm({
+                                    ...blotterForm,
+                                    nextHearingDate: e.target.value
+                                  })
+                                }
                               />
                             </div>
                           )}
@@ -10423,7 +12195,7 @@ useEffect(() => {
                         </div>
 
                         {/* Integrated Action Buttons */}
-                        <div className="fa" style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid #334155', paddingTop: '16px' }}>
+                        <div className="fa" style={{ display: 'flex', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border2)', paddingTop: '16px' }}>
                           <button 
                             type="button" 
                             className="btn btn-p" 
@@ -10432,7 +12204,7 @@ useEffect(() => {
                           >
                             Save Blotter Case Record
                           </button>
-                          <button type="button" className="btn" onClick={handleClearBlotterForm} style={{ flex: 1, background: 'rgba(71, 85, 105, 0.6)', color: '#e2e8f0', borderRadius: '6px' }}>
+                          <button type="button" className="btn" onClick={handleClearBlotterForm} style={{ flex: 1, background: 'var(--surface2)', color: 'var(--text)', borderRadius: '6px' }}>
                             Clear
                           </button>
                           <button type="button" className="btn btn-g" style={{ flex: 1 }} onClick={() => nav('blotter-manage')}>
@@ -10450,247 +12222,330 @@ useEffect(() => {
                 SCREEN: MANAGE BLOTTER
                 ════════════════════════════════════════ */}
                 {screen === 'blotter-manage' && (
-                <div className="screen active">
-                  <div className="tw">
-                    {/* ── SEARCH, FILTERS & ACTIONS ROW ── */}
-                    <div className="tb" style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                      {/* Search Bar */}
-                      <div className="sb-box" style={{ flex: '1 1 220px' }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <circle cx="11" cy="11" r="8" />
-                          <path d="M21 21l-4.35-4.35" />
-                        </svg>
-                        <input 
-                          placeholder="Search case #, complainant, respondent..." 
-                          value={blotterSearch} 
-                          onChange={(e) => setBlotterSearch(e.target.value)} 
-                        />
+                  <div className="screen active">
+
+                    <div className="tw">
+                      <div className="filter-bar">
+                        <div className="filter-bar__filters">
+                          <div className="filter-bar__search">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="11" cy="11" r="8" />
+                              <path d="M21 21l-4.35-4.35" />
+                            </svg>
+                            <input
+                              type="text"
+                              placeholder="Search case #, complainant, respondent…"
+                              value={blotterSearch}
+                              onChange={(e) => setBlotterSearch(e.target.value)}
+                            />
+                          </div>
+
+                          <select
+                            className="filter-select"
+                            value={filterType}
+                            onChange={(e) => setFilterType(e.target.value)}
+                          >
+                            <option value="All Types">All Types</option>
+                            <option value="Noise Complaint">Noise Complaint</option>
+                            <option value="Physical Altercation">Physical Altercation</option>
+                            <option value="Property Dispute">Property Dispute</option>
+                            <option value="Domestic Concern">Domestic Concern</option>
+                            <option value="Theft">Theft</option>
+                            <option value="Other">Other</option>
+                          </select>
+
+                          <select
+                            className="filter-select"
+                            value={filterStatus}
+                            onChange={(e) => setFilterStatus(e.target.value)}
+                          >
+                            <option value="All Status">All Status</option>
+                            <option value="Pending">Pending</option>
+                            <option value="Open">Open</option>
+                            <option value="Under Mediation">Under Mediation / Summons</option>
+                            <option value="Resolved">Resolved / Settled</option>
+                            <option value="Referred to Higher Authority">Referred / CFA</option>
+                          </select>
+
+                          <div className="filter-bar__dates">
+                            <label>From</label>
+                            <input
+                              type="date"
+                              value={dateFrom}
+                              onChange={(e) => setDateFrom(e.target.value)}
+                              title="From Date"
+                            />
+                            <label>To</label>
+                            <input
+                              type="date"
+                              value={dateTo}
+                              onChange={(e) => setDateTo(e.target.value)}
+                              title="To Date"
+                            />
+                          </div>
+
+                          <label className={`filter-bar__chip ${filterVawc ? 'is-active' : ''}`}>
+                            <input
+                              type="checkbox"
+                              checked={filterVawc}
+                              onChange={(e) => setFilterVawc(e.target.checked)}
+                            />
+                            <span>VAWC Only</span>
+                          </label>
+
+                          {(blotterSearch || filterType !== 'All Types' || filterStatus !== 'All Status' || dateFrom || dateTo || filterVawc) && (
+                            <button
+                              type="button"
+                              className="filter-bar__reset"
+                              onClick={() => {
+                                setBlotterSearch('');
+                                setFilterType('All Types');
+                                setFilterStatus('All Status');
+                                setDateFrom('');
+                                setDateTo('');
+                                setFilterVawc(false);
+                              }}
+                              title="Clear all filters"
+                            >
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none"
+                                  stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                              Clear
+                            </button>
+                          )}
+                        </div>
+
+                        <div className="filter-bar__actions">
+                          <button type="button" className="btn btn-g" onClick={handleExportBlotterToExcel} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M6 9V2h12v7" />
+                              <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                              <path d="M6 14h12v8H6z" />
+                            </svg>
+                            Print
+                          </button>
+
+                          <button
+                            type="button"
+                            className="btn btn-p"
+                            onClick={() => nav('blotter-new')}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
+                                stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                              <line x1="12" y1="5" x2="12" y2="19" />
+                              <line x1="5" y1="12" x2="19" y2="12" />
+                            </svg>
+                            File New Entry
+                          </button>
+                        </div>
                       </div>
 
-                      {/* Type Filter */}
-                      <select className="fc" style={{ width: '150px' }} value={filterType} onChange={(e) => setFilterType(e.target.value)}>
-                        <option value="All Types">All Types</option>
-                        <option value="Noise Complaint">Noise Complaint</option>
-                        <option value="Physical Altercation">Physical Altercation</option>
-                        <option value="Property Dispute">Property Dispute</option>
-                        <option value="Domestic Concern">Domestic Concern</option>
-                        <option value="Theft">Theft</option>
-                        <option value="Other">Other</option>
-                      </select>
-
-                      {/* Status Filter */}
-                      <select className="fc" style={{ width: '165px' }} value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)}>
-                        <option value="All Status">All Status</option>
-                        <option value="Pending">Pending</option>
-                        <option value="Open">Open</option>
-                        <option value="Under Mediation">Under Mediation / Summons</option>
-                        <option value="Resolved">Resolved / Settled</option>
-                        <option value="Referred to Higher Authority">Referred / CFA</option>
-                      </select>
-
-                      {/* Date Filters */}
-                      <input type="date" className="fc" style={{ width: '135px' }} value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} title="From Date" />
-                      <input type="date" className="fc" style={{ width: '135px' }} value={dateTo} onChange={(e) => setDateTo(e.target.value)} title="To Date" />
-
-                      {/* VAWC Filter */}
-                      <label style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 700, cursor: 'pointer', background: 'var(--surface2)', padding: '6px 10px', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                        <input type="checkbox" checked={filterVawc} onChange={(e) => setFilterVawc(e.target.checked)} />
-                        <span>VAWC Only</span>
-                      </label>
-
-                      {/* Spacer */}
-                      <div style={{ flex: '1 1 auto' }} />
-
-                      {/* Action Buttons */}
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                        <button className="btn btn-g" onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M6 9V2h12v7" />
-                            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-                            <path d="M6 14h12v8H6z" />
-                          </svg>
-                          Export / Print Log
-                        </button>
-                        <button className="btn btn-p" onClick={() => nav('blotter-new')} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', fontWeight: 600 }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
-                            <line x1="12" y1="5" x2="12" y2="19" />
-                            <line x1="5" y1="12" x2="19" y2="12" />
-                          </svg>
-                          File New Entry
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* ── MAIN LEDGER TABLE ── */}
-                    <table>
-                      <thead>
-                        <tr>
-                          <th>Case #</th>
-                          <th>Type</th>
-                          <th>Complainant</th>
-                          <th>Respondent</th>
-                          <th>Location</th>
-                          <th>Date</th>
-                          <th>Status</th>
-                          <th>Actions</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredBlotters.length === 0 ? (
+                      <table>
+                        <thead>
                           <tr>
-                            <td colSpan="8" style={{ textAlign: 'center', color: 'var(--muted)', padding: '20px' }}>
-                              Walang nahanap na tugmang record sa blotter log data storage.
-                            </td>
+                            <th>Case #</th>
+                            <th>Type</th>
+                            <th>Complainant</th>
+                            <th>Respondent</th>
+                            <th>Location</th>
+                            <th>Date</th>
+                            <th>Status</th>
+                            <th>Actions</th>
                           </tr>
-                        ) : (
-                          filteredBlotters.map((b) => {
-                          let currentSummon = Number(b.summonCount || 0);
-                          
-                          if (currentSummon === 0 && b.status) {
-                            const statusLower = b.status.toLowerCase();
-                            if (statusLower.includes('1st summon')) currentSummon = 1;
-                            else if (statusLower.includes('2nd summon')) currentSummon = 2;
-                            else if (statusLower.includes('3rd summon')) currentSummon = 3;
-                          }
+                        </thead>
+                        <tbody>
+                            {isBlottersLoading ? (
+                              <tr>
+                                <td colSpan="8" style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
+                                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
+                                    <span className="spinner" style={{ width: '24px', height: '24px', borderWidth: '3px' }} />
+                                    <span>Loading blotter records from local database...</span>
+                                  </div>
+                                </td>
+                              </tr>
+                            ) : filteredBlotters.length === 0 ? (
+                              <tr>
+                                <td colSpan="8" style={{ textAlign: 'center', padding: '24px', color: 'var(--muted)' }}>
+                                  Walang nahanap na tugmang record sa blotter log data storage.
+                                </td>
+                              </tr>
+                            ) : (
+                            filteredBlotters.map((b) => {
+                              let currentSummon = Number(b.summonCount || 0);
 
-                          const isSettled = b.status === 'Settled / Resolved' || b.status === 'Resolved' || b.status === 'Settled';
-                          const isCfaIssued = b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)' || b.status === 'Referred to Higher Authority';
-                          const isVawc = b.isVawc || b.type === 'VAWC' || b.incidentType?.includes('VAWC') || b.isVAWC === true;
+                              if (currentSummon === 0 && b.status) {
+                                const statusLower = b.status.toLowerCase();
+                                if (statusLower.includes('1st summon')) currentSummon = 1;
+                                else if (statusLower.includes('2nd summon')) currentSummon = 2;
+                                else if (statusLower.includes('3rd summon')) currentSummon = 3;
+                              }
 
-                          return (
-                            <tr key={b._id || b.id}>
-                              <td style={mono10}>{b.id || b.trackingNo || b.refNumber || b._id}</td>
-                              <td>{b.type || b.incidentType ? (b.type || b.incidentType).replace('_', ' ') : 'N/A'}</td>
-                              <td><strong>{b.complainant || b.complainantName || 'N/A'}</strong></td>
-                              <td>{b.respondent || b.respondentName || 'Under Investigation'}</td>
-                              <td><strong>{b.location || b.purok || 'Brgy. Bustrac'}</strong></td>
-                              <td style={{ fontSize: '11px' }}>{b.date || b.incidentDate || 'N/A'}</td>
-                              <td>
-                                <span className={`badge ${isSettled ? 'g' : isCfaIssued ? 'r' : 'a'}`}>
-                                  {b.status}
-                                </span>
-                              </td>
-                              <td>
-                                <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
-                                  <button 
-                                    className="btn btn-g btn-sm" 
-                                    onClick={() => {
-                                      const caseId = b._id || b.id;
-                                      setSelectedBlotterId(caseId);
-                                      if (typeof setSelectedBlotter === 'function') setSelectedBlotter(b);
-                                      if (typeof handleViewBlotter === 'function') handleViewBlotter(b);
-                                      else nav('blotter-detail');
-                                    }}
-                                  >
-                                    View
-                                  </button>
+                              const isSettled = b.status === 'Settled / Resolved' || b.status === 'Resolved' || b.status === 'Settled';
+                              const isCfaIssued = b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)' || b.status === 'Referred to Higher Authority';
+                              const isVawc = b.isVawc || b.type === 'VAWC' || b.incidentType?.includes('VAWC') || b.isVAWC === true;
 
-                                    {!isSettled && !isCfaIssued && (
-                                      <>
-                                        {!isVawc && (
-                                          <>
-                                            {currentSummon === 0 && (
-                                              <button className="btn btn-primary btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}>
-                                                1st Summon
+                              return (
+                                <tr key={b._id || b.id}>
+                                  <td style={mono10}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                      {b.id || b.trackingNo || b.refNumber || b._id}
+                                      {b.attachments && b.attachments.length > 0 && (
+                                        <span
+                                          title={`${b.attachments.length} attachment(s) attached`}
+                                          style={{
+                                            background: 'var(--amber-bg)',
+                                            color: 'var(--amber)',
+                                            borderRadius: '4px',
+                                            padding: '2px 4px',
+                                            fontSize: '10px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '2px'
+                                          }}
+                                        >
+                                          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+                                          </svg>
+                                          {b.attachments.length}
+                                        </span>
+                                      )}
+                                    </div>
+                                  </td>
+                                  <td>{b.type || b.incidentType ? (b.type || b.incidentType).replace('_', ' ') : 'N/A'}</td>
+                                  <td><strong>{b.complainant || b.complainantName || 'N/A'}</strong></td>
+                                  <td>{b.respondent || b.respondentName || 'Under Investigation'}</td>
+                                  <td><strong>{b.location || b.purok || 'Brgy. Bustrac'}</strong></td>
+                                  <td style={{ fontSize: '11px' }}>{b.date || b.incidentDate || 'N/A'}</td>
+                                  <td>
+                                    <span className={`badge ${isSettled ? 'g' : isCfaIssued ? 'r' : 'a'}`}>
+                                      {b.status}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                      <button
+                                        className="btn btn-g btn-sm"
+                                        onClick={() => {
+                                          const caseId = b._id || b.id;
+                                          setSelectedBlotterId(caseId);
+                                          if (typeof setSelectedBlotter === 'function') setSelectedBlotter(b);
+                                          if (typeof handleViewBlotter === 'function') handleViewBlotter(b);
+                                          else nav('blotter-detail');
+                                        }}
+                                      >
+                                        View
+                                      </button>
+
+                                      {!isSettled && !isCfaIssued && (
+                                        <>
+                                          {!isVawc && (
+                                            <>
+                                              {currentSummon === 0 && (
+                                                <button className="btn btn-primary btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '1st_summon')}>
+                                                  1st Summon
+                                                </button>
+                                              )}
+                                              {currentSummon === 1 && (
+                                                <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}>
+                                                  2nd Summon
+                                                </button>
+                                              )}
+                                              {currentSummon === 2 && (
+                                                <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}>
+                                                  3rd Summon
+                                                </button>
+                                              )}
+                                              <button className="btn btn-success btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'settled')}>
+                                                Settled
                                               </button>
-                                            )}
-                                            {currentSummon === 1 && (
-                                              <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '2nd_summon')}>
-                                                2nd Summon
-                                              </button>
-                                            )}
-                                            {currentSummon === 2 && (
-                                              <button className="btn btn-warning btn-sm" onClick={() => handleBlotterAction(b._id || b.id, '3rd_summon')}>
-                                                3rd Summon
-                                              </button>
-                                            )}
-                                            <button className="btn btn-success btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'settled')}>
-                                              Settled
-                                            </button>
-                                            {currentSummon >= 3 && (
-                                              <button className="btn btn-danger btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}>
-                                                Escalate / Issue CFA
-                                              </button>
-                                            )}
-                                          </>
-                                        )}
+                                              {currentSummon >= 3 && (
+                                                <button className="btn btn-danger btn-sm" onClick={() => handleBlotterAction(b._id || b.id, 'escalate_cfa')}>
+                                                  Escalate / Issue CFA
+                                                </button>
+                                              )}
+                                            </>
+                                          )}
 
-                                        {isVawc && (
-                                          <>
-                                            <button 
-                                              className="btn btn-danger btn-sm" 
-                                              style={{ backgroundColor: '#7c3aed', borderColor: '#7c3aed' }}
-                                              onClick={() => handleBlotterAction(b._id || b.id, 'issue_bpo')}
-                                            >
-                                              Issue BPO
-                                            </button>
-                                            <button 
-                                              className="btn btn-danger btn-sm" 
-                                              onClick={() => handleBlotterAction(b._id || b.id, 'refer_pnp')}
-                                            >
-                                              Refer to PNP
-                                            </button>
-                                          </>
-                                        )}
-                                      </>
-                                    )}
+                                          {isVawc && (
+                                            <>
+                                              <button
+                                                className="btn btn-danger btn-sm"
+                                                style={{ backgroundColor: '#7c3aed', borderColor: '#7c3aed' }}
+                                                onClick={() => handleBlotterAction(b._id || b.id, 'issue_bpo')}
+                                              >
+                                                Issue BPO
+                                              </button>
+                                              <button
+                                                className="btn btn-danger btn-sm"
+                                                onClick={() => handleBlotterAction(b._id || b.id, 'refer_pnp')}
+                                              >
+                                                Refer to PNP
+                                              </button>
+                                            </>
+                                          )}
+                                        </>
+                                      )}
 
-                                  {(isSettled || isCfaIssued) && (
-                                    <button 
-                                      className="btn btn-sm" 
-                                      style={{ 
-                                        backgroundColor: isCfaIssued ? '#7f1d1d' : '#047857', 
-                                        color: '#ffffff', 
-                                        fontWeight: 600, 
-                                        display: 'inline-flex', 
-                                        alignItems: 'center', 
-                                        gap: '5px' 
-                                      }} 
-                                      onClick={() => handleOpenPrint(b)}
-                                    >
-                                      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                        <path d="M6 9V2h12v7" />
-                                        <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
-                                        <path d="M6 14h12v8H6z" />
-                                      </svg>
-                                      {isCfaIssued ? 'Print CFA' : 'Print Certificate'}
-                                    </button>
-                                  )}
-                                </div>
-                              </td>
-                            </tr>
-                          );
-                        })
+                                      {(isSettled || isCfaIssued) && (
+                                        <button
+                                          className="btn btn-sm"
+                                          style={{
+                                            backgroundColor: isCfaIssued ? '#7f1d1d' : '#047857',
+                                            color: '#ffffff',
+                                            fontWeight: 600,
+                                            display: 'inline-flex',
+                                            alignItems: 'center',
+                                            gap: '5px'
+                                          }}
+                                          onClick={() => handleOpenPrint(b)}
+                                        >
+                                          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                            <path d="M6 9V2h12v7" />
+                                            <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                                            <path d="M6 14h12v8H6z" />
+                                          </svg>
+                                          {isCfaIssued ? 'Print CFA' : 'Print Certificate'}
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', padding: '0 4px' }}>
+                        <span style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 500 }}>
+                          Showing <strong style={{ color: 'var(--text)' }}>{filteredBlotters.length}</strong> of <strong style={{ color: 'var(--text)' }}>{blotterList.length}</strong> records
+                          {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && ' (filtered)'}
+                        </span>
+                        {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && (
+                          <button
+                            className="btn btn-sm btn-g"
+                            onClick={() => {
+                              setBlotterSearch('');
+                              setFilterType('All Types');
+                              setFilterStatus('All Status');
+                              setDateFrom('');
+                              setDateTo('');
+                              setFilterVawc(false);
+                            }}
+                            style={{ fontSize: '12px', padding: '4px 10px' }}
+                          >
+                            Clear Filters
+                          </button>
                         )}
-                      </tbody>
-                    </table>
-
-                    {/* ── RECORD COUNT & FILTER RESET ── */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', padding: '0 4px' }}>
-                      <span style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 500 }}>
-                        Showing <strong style={{ color: 'var(--text)' }}>{filteredBlotters.length}</strong> of <strong style={{ color: 'var(--text)' }}>{blotterList.length}</strong> records
-                        {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && ' (filtered)'}
-                      </span>
-                      {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && (
-                        <button 
-                          className="btn btn-sm btn-g" 
-                          onClick={() => {
-                            setBlotterSearch('');
-                            setFilterType('All Types');
-                            setFilterStatus('All Status');
-                            setDateFrom('');
-                            setDateTo('');
-                            setFilterVawc(false);
-                          }} 
-                          style={{ fontSize: '12px', padding: '4px 10px' }}
-                        >
-                          Clear Filters
-                        </button>
-                      )}
+                      </div>
                     </div>
+
                   </div>
-                </div>
-              )}
+                )}
 
             {/* ════════════════════════════════════════
                 SCREEN: BLOTTER DETAIL (DYNAMIC LOGIC ROUTE)
@@ -10843,6 +12698,107 @@ useEffect(() => {
           {caseNarrative}
         </div>
       </div>
+      
+      {/* ═══ EVIDENCE & ATTACHMENTS ═══ */}
+      {currentCase.attachments && currentCase.attachments.length > 0 && (
+        <div className="fp" style={{ padding: '20px' }}>
+          <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)' }}>
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
+            </svg>
+            Submitted Evidence & Attachments ({currentCase.attachments.length})
+          </div>
+          
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px' }}>
+            {currentCase.attachments.map((att) => {
+              const isImage = att.type?.startsWith('image/');
+              const isVideo = att.type?.startsWith('video/');
+              const isPdf = att.type === 'application/pdf';
+
+              return (
+                <div key={att.id} style={{ background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
+                  
+                  {/* Preview Area */}
+                  <div style={{ height: '140px', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
+                    {isImage && att.data ? (
+                      <img src={att.data} alt={att.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                    ) : isVideo ? (
+                      <div style={{ color: 'var(--muted)', textAlign: 'center' }}>
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                        <div style={{ fontSize: '10px', marginTop: '4px' }}>Video File</div>
+                      </div>
+                    ) : isPdf ? (
+                      <div style={{ color: '#ef4444', textAlign: 'center' }}>
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
+                        <div style={{ fontSize: '10px', marginTop: '4px' }}>PDF Document</div>
+      </div>
+                    ) : (
+                      <div style={{ color: 'var(--muted)', textAlign: 'center' }}>
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
+                      </div>
+                    )}
+                  </div>
+                  
+                  {/* File Info & Action Area */}
+                  <div style={{ padding: '12px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                    <div>
+                      <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text)', marginBottom: '4px', wordBreak: 'break-word' }}>
+                        {att.name}
+                      </div>
+                      <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
+                        Size: {att.size}
+                      </div>
+                    </div>
+                    
+                    {/* Download / View Button */}
+                    <button 
+                      onClick={() => {
+                        // 1. Convert Base64 to Blob
+                        const fetchImage = async () => {
+                          const res = await fetch(att.data);
+                          const blob = await res.blob();
+                          const blobUrl = URL.createObjectURL(blob);
+                          
+                          // 2. Open in new tab using the safe Blob URL
+                          window.open(blobUrl, '_blank');
+                          
+                          // 3. Clean up memory after a short delay
+                          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
+                        };
+                        fetchImage();
+                      }} 
+                      style={{ 
+                        marginTop: '10px', 
+                        display: 'flex', 
+                        alignItems: 'center', 
+                        justifyContent: 'center', 
+                        gap: '6px', 
+                        padding: '8px', 
+                        background: 'var(--primary)', 
+                        color: '#fff', 
+                        borderRadius: '6px', 
+                        fontSize: '12px', 
+                        fontWeight: 600, 
+                        border: 'none', 
+                        cursor: 'pointer', 
+                        transition: 'opacity 0.2s' 
+                      }} 
+                      onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'} 
+                      onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                        <circle cx="12" cy="12" r="3" />
+                      </svg>
+                      View Full Size
+                    </button>
+                  </div>
+                  </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* ═══ CASE ACTION PANEL ═══ */}
       <div className="fp" style={{ padding: '20px', background: 'linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%)', border: '2px solid var(--border)' }}>
@@ -10859,7 +12815,11 @@ useEffect(() => {
         </div>
         
         {/* Summons & Hearing Panel */}
-        <SummonsPanel currentCase={currentCase} db={db} setBlotterList={setBlotterList} bustracLogo={bustracLogo}/>
+        <SummonsPanel
+          currentCase={currentCase}
+          db={db}
+          setBlotterList={setBlotterList}
+        />
         
         {/* Status Actions */}
         <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
@@ -10924,261 +12884,420 @@ useEffect(() => {
                 ════════════════════════════════════════ */}
                 {screen === 'announcements' && (
                   <div className="screen active">
-                    {/* LIST VIEW */}
                     {announcementSubScreen === 'list' && (
                       <div>
-                        {/* Header with Add Button - INALIS NA ANG HEADER TEXT DITO */}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center', marginBottom: '16px' }}>
-                          <button 
-                            type="button" 
-                            className="btn btn-p" 
-                            onClick={() => {
-                              if (typeof handleOpenNewAnnouncement === 'function') {
-                                handleOpenNewAnnouncement();
-                              } else {
-                                setAnnouncementForm({ title: '', category: 'General', content: '', pinned: false });
-                                setAnnouncementSubScreen('new');
-                              }
-                            }}
-                          >
-                            + New Announcement
-                          </button>
-                        </div>
-
-                        {/* Filters */}
-                        <div className="fp" style={{ marginBottom: '20px', padding: '12px 16px' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr 1fr', gap: '12px' }}>
-                            <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl">Search</label>
-                              <input
-                                className="fc"
-                                placeholder="Search by title or content..."
-                                value={searchAnnQuery}
-                                onChange={(e) => setSearchAnnQuery(e.target.value)}
-                              />
-                            </div>
-                            <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl">Category</label>
-                              <select className="fc" value={filterAnnCategory} onChange={(e) => setFilterAnnCategory(e.target.value)}>
-                                <option value="All">All Categories</option>
-                                <option value="General">General</option>
-                                <option value="Health">Health</option>
-                                <option value="Security">Security</option>
-                                <option value="Events">Events</option>
-                                <option value="Governance">Governance</option>
-                              </select>
-                            </div>
-                            <div className="fg" style={{ margin: 0 }}>
-                              <label className="fl">Status</label>
-                              <select className="fc" value={filterAnnStatus} onChange={(e) => setFilterAnnStatus(e.target.value)}>
-                                <option value="All">All Statuses</option>
-                                <option value="Published">Published</option>
-                                <option value="Draft">Drafts</option>
-                              </select>
-                            </div>
+                        <div className="ann-toolbar">
+                          <div className="ann-toolbar__stats">
+                            <span className="ann-stat-chip">
+                              <span className="ann-stat-chip__value">{(announcementsList || []).length}</span>
+                              <span className="ann-stat-chip__label">Total</span>
+                            </span>
+                            <span className="ann-stat-chip ann-stat-chip--green">
+                              <span className="ann-stat-chip__value">
+                                {(announcementsList || []).filter((a) => (a.status || 'Draft') === 'Published').length}
+                              </span>
+                              <span className="ann-stat-chip__label">Published</span>
+                            </span>
+                            <span className="ann-stat-chip ann-stat-chip--amber">
+                              <span className="ann-stat-chip__value">
+                                {(announcementsList || []).filter((a) => (a.status || 'Draft') === 'Draft').length}
+                              </span>
+                              <span className="ann-stat-chip__label">Drafts</span>
+                            </span>
+                            {(announcementsList || []).filter((a) => a.pinned).length > 0 && (
+                              <span className="ann-stat-chip ann-stat-chip--accent">
+                                <span className="ann-stat-chip__value">
+                                  {(announcementsList || []).filter((a) => a.pinned).length}
+                                </span>
+                                <span className="ann-stat-chip__label">Pinned</span>
+                              </span>
+                            )}
+                          </div>
+                          <div className="ann-toolbar__actions">
+                            <button
+                              type="button"
+                              className="btn btn-p"
+                              onClick={handleOpenNewAnnouncement}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <line x1="12" y1="5" x2="12" y2="19" />
+                                <line x1="5" y1="12" x2="19" y2="12" />
+                              </svg>
+                              New Announcement
+                            </button>
                           </div>
                         </div>
 
-                        {/* Announcement Cards List */}
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                          {announcementsList
-                            .slice()
-                            .sort((a, b) => (b.pinned ? 1 : 0) - (a.pinned ? 1 : 0))
-                            .filter((ann) => {
-                              const title = String(ann.title || '').toLowerCase();
-                              const content = String(ann.content || '').toLowerCase();
-                              const q = searchAnnQuery.toLowerCase();
-                              return (
-                                (title.includes(q) || content.includes(q)) &&
-                                (filterAnnCategory === 'All' || ann.category === filterAnnCategory) &&
-                                (filterAnnStatus === 'All' || ann.status === filterAnnStatus)
-                              );
-                            })
-                            .map((ann) => (
-                              <div
-                                key={ann.id || ann._id}
-                                className="fp"
-                                style={{
-                                  margin: 0,
-                                  background: ann.pinned ? 'rgba(79, 142, 247, 0.04)' : undefined,
-                                  border: ann.pinned ? '1px solid rgba(79, 142, 247, 0.12)' : undefined,
-                                }}
-                              >
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '16px' }}>
-                                  <div style={{ flex: 1, minWidth: 0 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
-                                      {ann.pinned && (
-                                        <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--accent)' }}>
-                                           Pinned
-                                        </span>
-                                      )}
-                                      <span style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                                        {ann.category}
-                                      </span>
-                                      <span
-                                        className={`badge ${ann.status === 'Published' ? 'g' : ''}`}
-                                        style={{ fontSize: '10px' }}
-                                      >
-                                        {ann.status || 'Draft'}
-                                      </span>
-                                    </div>
-                                    <div style={{ fontWeight: 600, fontSize: '15px', marginBottom: '6px', lineHeight: 1.4 }}>
-                                      {ann.title}
-                                    </div>
-                                    <div style={{ fontSize: '13px', color: 'var(--text)', lineHeight: 1.6, marginBottom: '10px', whiteSpace: 'pre-wrap' }}>
-                                      {ann.content || ann.body}
-                                    </div>
-                                    <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
-                                      Posted by {ann.author || 'Administrator'}{ann.date ? ` · ${ann.date}` : ''}
-                                    </div>
-                                  </div>
-                                  <div style={{ display: 'flex', gap: '6px', flexShrink: 0, paddingTop: '2px' }}>
-                                    <button className="btn btn-g btn-sm" onClick={() => handleTogglePinAnnouncement(ann.id || ann._id)}>
-                                      {ann.pinned ? 'Unpin' : 'Pin'}
-                                    </button>
-                                    <button className="btn btn-g btn-sm" onClick={() => handleOpenEditAnnouncement(ann)}>
-                                      Edit
-                                    </button>
-                                    <button className="btn btn-d btn-sm" onClick={() => handleTriggerDeleteAnnouncement(ann.id || ann._id)}>
-                                      Delete
-                                    </button>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
+                        {/* ── 2️⃣ FILTER BAR: Search + Category + Status + Clear ── */}
+                        <div className="ann-filter-bar">
+                          <div className="ann-filter-bar__search">
+                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="11" cy="11" r="8" />
+                              <path d="M21 21l-4.35-4.35" />
+                            </svg>
+                            <input
+                              type="text"
+                              placeholder="Search by title or content…"
+                              value={searchAnnQuery}
+                              onChange={(e) => setSearchAnnQuery(e.target.value)}
+                            />
+                          </div>
+                          <select className="filter-select" value={filterAnnCategory} onChange={(e) => setFilterAnnCategory(e.target.value)}>
+                            <option value="All">All Categories</option>
+                            <option value="General">General</option>
+                            <option value="Health">Health</option>
+                            <option value="Security">Security</option>
+                            <option value="Relief & Aid">Relief & Aid</option>
+                            <option value="Disaster Response">Disaster Response</option>
+                            <option value="Events">Events</option>
+                            <option value="Activities">Activities</option>
+                            <option value="Governance">Governance</option>
+                          </select>
+                          <select className="filter-select" value={filterAnnStatus} onChange={(e) => setFilterAnnStatus(e.target.value)}>
+                            <option value="All">All Statuses</option>
+                            <option value="Published">Published</option>
+                            <option value="Draft">Drafts</option>
+                          </select>
+                          {(searchAnnQuery || filterAnnCategory !== 'All' || filterAnnStatus !== 'All') && (
+                            <button
+                              type="button"
+                              className="filter-bar__reset"
+                              onClick={() => {
+                                setSearchAnnQuery('');
+                                setFilterAnnCategory('All');
+                                setFilterAnnStatus('All');
+                              }}
+                            >
+                              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
+                                <line x1="18" y1="6" x2="6" y2="18" />
+                                <line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                              Clear
+                            </button>
+                          )}
+                        </div>
 
-                          {/* Empty State */}
-                          {announcementsList.filter((ann) => {
-                            const title = String(ann.title || '').toLowerCase();
-                            const content = String(ann.content || '').toLowerCase();
-                            const q = searchAnnQuery.toLowerCase();
-                            return (
-                              (title.includes(q) || content.includes(q)) &&
-                              (filterAnnCategory === 'All' || ann.category === filterAnnCategory) &&
-                              (filterAnnStatus === 'All' || ann.status === filterAnnStatus)
-                            );
-                          }).length === 0 && (
-                            <div className="fp" style={{ textAlign: 'center', padding: '48px 20px', color: 'var(--muted)' }}>
-                              <div style={{ fontWeight: 600, marginBottom: '4px' }}>No announcements found</div>
-                              <div style={{ fontSize: '12px' }}>Click "+ New Announcement" above to publish your first notice.</div>
+                        {/* ── 3️⃣ ANNOUNCEMENT CARDS LIST ── */}
+                        <div className="ann-list">
+                          {filteredAnnouncements.length === 0 ? (
+                            <div className="ann-empty">
+                              <svg width="56" height="56" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M3 11l19-9-9 19-2-8-8-2z" />
+                              </svg>
+                              <div className="ann-empty__title">
+                                {hasNoAnnouncementsAtAll ? 'No announcements yet' : 'No announcements match your filters'}
+                              </div>
+                              <div className="ann-empty__hint">
+                                {hasNoAnnouncementsAtAll ? (
+                                  <>Click <strong>New Announcement</strong> to publish your first notice.</>
+                                ) : (
+                                  <>Try adjusting your search or filters to find what you are looking for.</>
+                                )}
+                              </div>
                             </div>
+                          ) : (
+                            filteredAnnouncements.map((ann) => (
+                              <article key={ann._id || ann.id} className={`ann-card ${ann.pinned ? 'ann-card--pinned' : ''}`}>
+                                <div className="ann-card__body">
+                                  <header className="ann-card__meta">
+                                    {ann.pinned && (
+                                      <span className="ann-card__pin">
+                                        <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+                                          <path d="M16 12V4h1V2H7v2h1v8l-2 2v2h5.2v6h1.6v-6H18v-2l-2-2z" />
+                                        </svg>
+                                        Pinned
+                                      </span>
+                                    )}
+                                    <span className="ann-card__category">{ann.category}</span>
+                                    <span className={`badge ${ann.status === 'Published' ? 'g' : 'a'}`}>
+                                      {ann.status || 'Draft'}
+                                    </span>
+                                  </header>
+                                  <h3 className="ann-card__title">{ann.title}</h3>
+                                  <p className="ann-card__content">{ann.content || ann.body}</p>
+                                  <footer className="ann-card__footer">
+                                    <span className="ann-card__author">
+                                      <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <circle cx="12" cy="8" r="4" />
+                                        <path d="M4 21v-2a4 4 0 0 1 4-4h8a4 4 0 0 1 4 4v2" />
+                                      </svg>
+                                      {ann.author || 'Administrator'}
+                                      {ann.date && <span className="ann-card__dot">·</span>}
+                                      {ann.date && <span>{ann.date}</span>}
+                                    </span>
+                                  </footer>
+                                </div>
+                                <div className="ann-card__actions">
+                                  <button
+                                    type="button"
+                                    className="btn btn-g btn-sm"
+                                    onClick={() => handleTogglePinAnnouncement(ann._id || ann.id)}
+                                    title={ann.pinned ? 'Unpin announcement' : 'Pin to top'}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M12 17v5" />
+                                      <path d="M9 10.76a2 2 0 0 1-1.11 1.79l-1.78.9A2 2 0 0 0 5 15.24V17h14v-1.76a2 2 0 0 0-1.11-1.79l-1.78-.9A2 2 0 0 1 15 10.76V7a1 1 0 0 1 1-1 2 2 0 0 0 0-4H8a2 2 0 0 0 0 4 1 1 0 0 1 1 1z" />
+                                    </svg>
+                                    {ann.pinned ? 'Unpin' : 'Pin'}
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-g btn-sm"
+                                    onClick={() => handleOpenEditAnnouncement(ann)}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <path d="M12 20h9" />
+                                      <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z" />
+                                    </svg>
+                                    Edit
+                                  </button>
+                                  <button
+                                    type="button"
+                                    className="btn btn-d btn-sm"
+                                    onClick={() => handleTriggerDeleteAnnouncement(ann._id || ann.id, ann.title)}
+                                  >
+                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                      <polyline points="3 6 5 6 21 6" />
+                                      <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6" />
+                                      <path d="M10 11v6M14 11v6" />
+                                    </svg>
+                                    Delete
+                                  </button>
+                                </div>
+                              </article>
+                            ))
                           )}
                         </div>
                       </div>
                     )}
 
-                    {/* CREATE / EDIT FORM */}
+                    {/* ═══════════════════════════════════════════════════════════ CREATE / EDIT FORM ═══════════════════════════════════════════════════════════ */}
                     {(announcementSubScreen === 'new' || announcementSubScreen === 'edit') && (
-                      <div className="fp" style={{ maxWidth: '720px', margin: '0 auto' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', paddingBottom: '12px', borderBottom: '1px solid var(--border)' }}>
-                          <h3 style={{ margin: 0, fontSize: '18px' }}>
+                  <div
+                    className="ann-form-wrap"
+                    key={announcementForm?._id || announcementForm?.id || 'new-announcement'}
+                  >
+                    {/* ── Form Header ── */}
+                    <div className="ann-form-header">
+                      <div className="ann-form-header__left">
+                        <div className="ann-form-icon">
+                          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M3 11l19-9-9 19-2-8-8-2z" />
+                          </svg>
+                        </div>
+                        <div className="ann-form-titles">
+                          <h2 className="ann-form-title">
                             {announcementSubScreen === 'new' ? 'Create Announcement' : 'Edit Announcement'}
-                          </h3>
-                          <button type="button" className="btn btn-g" onClick={() => setAnnouncementSubScreen('list')}>
-                            Back to List
+                          </h2>
+                          <p className="ann-form-subtitle">
+                            {announcementSubScreen === 'new'
+                              ? 'I-publish ang bagong notice sa barangay bulletin.'
+                              : 'I-update ang nilalaman ng existing announcement.'}
+                          </p>
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className="btn btn-g btn-sm"
+                        onClick={handleCancelOrBackAnnouncement}
+                      >
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <polyline points="15 18 9 12 15 6" />
+                        </svg>
+                        Back
+                      </button>
+                    </div>
+
+                    {/* ── Form Body ── */}
+                    <form
+                      onSubmit={(e) => handleSaveAnnouncement(e, 'Published')}
+                      className="ann-form"
+                    >
+                      {/* Hidden fields for edit mode tracking */}
+                      {(announcementForm._id || announcementForm.id) && (
+                        <input type="hidden" value={announcementForm._id || announcementForm.id} readOnly />
+                      )}
+
+                      {/* Section: Content */}
+                      <div className="ann-form-section">
+                        <div className="ann-form-section__label">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M4 7h16M4 12h16M4 17h10" />
+                          </svg>
+                          Content
+                        </div>
+
+                        {/* Title */}
+                        <div className="ann-form-field">
+                          <div className="ann-form-field__header">
+                            <label className="ann-form-label" htmlFor="ann-title">
+                              Title <span className="ann-form-req">*</span>
+                            </label>
+                            <span className={`ann-form-counter ${(announcementForm.title || '').length >= 110 ? 'is-near-limit' : ''}`}>
+                              {(announcementForm.title || '').length}/120
+                            </span>
+                          </div>
+                          <input
+                            id="ann-title"
+                            name="title"
+                            className="fc"
+                            required
+                            autoFocus
+                            maxLength={120}
+                            placeholder="e.g. Barangay Assembly sa Oktubre 15"
+                            value={announcementForm.title || ''}
+                            onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })}
+                          />
+                        </div>
+
+                        {/* Content */}
+                        <div className="ann-form-field">
+                          <div className="ann-form-field__header">
+                            <label className="ann-form-label" htmlFor="ann-content">
+                              Content <span className="ann-form-req">*</span>
+                            </label>
+                            <span className={`ann-form-counter ${(announcementForm.content || announcementForm.body || '').length >= 1800 ? 'is-near-limit' : ''}`}>
+                              {(announcementForm.content || announcementForm.body || '').length}/2000
+                            </span>
+                          </div>
+                          <textarea
+                            id="ann-content"
+                            name="content"
+                            className="fc ann-form-textarea"
+                            required
+                            maxLength={2000}
+                            rows={8}
+                            placeholder="Isulat ang buong detalye ng announcement dito…"
+                            value={announcementForm.content || announcementForm.body || ''}
+                            onChange={(e) =>
+                              setAnnouncementForm({
+                                ...announcementForm,
+                                content: e.target.value,
+                                body: e.target.value
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+
+                      <div className="ann-form-divider" />
+
+                      {/* Section: Settings */}
+                      <div className="ann-form-section">
+                        <div className="ann-form-section__label">
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                            <circle cx="12" cy="12" r="3" />
+                            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+                          </svg>
+                          Settings
+                        </div>
+
+                        <div className="ann-form-grid">
+                          {/* Category */}
+                          <div className="ann-form-field">
+                            <label className="ann-form-label" htmlFor="ann-category">Category</label>
+                            <select
+                              id="ann-category"
+                              name="category"
+                              className="fc"
+                              value={announcementForm.category || 'General'}
+                              onChange={(e) => setAnnouncementForm({ ...announcementForm, category: e.target.value })}
+                            >
+                              <option value="General">General</option>
+                              <option value="Health">Health</option>
+                              <option value="Security">Security</option>
+                              <option value="Relief & Aid">Relief & Aid</option>
+                              <option value="Disaster Response">Disaster Response</option>
+                              <option value="Events">Events</option>
+                              <option value="Activities">Activities</option>
+                              <option value="Governance">Governance</option>
+                            </select>
+                          </div>
+
+                          {/* Pin toggle */}
+                          <div className="ann-form-field">
+                            <label className="ann-form-label">Publishing Options</label>
+                            <label className={`ann-pin-toggle ${announcementForm.pinned ? 'is-active' : ''}`}>
+                              <input
+                                type="checkbox"
+                                checked={announcementForm.pinned || false}
+                                onChange={(e) =>
+                                  setAnnouncementForm({ ...announcementForm, pinned: e.target.checked })
+                                }
+                              />
+                              <span className="ann-pin-toggle__box">
+                                <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              </span>
+                              <span className="ann-pin-toggle__content">
+                                <span className="ann-pin-toggle__title">Pin to top</span>
+                                <span className="ann-pin-toggle__hint">Always show at the top of the list</span>
+                              </span>
+                            </label>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="ann-form-divider" />
+
+                      {/* ── Action Bar ── */}
+                      <div className="ann-form-actions">
+                        <div className="ann-form-actions__left">
+                          <div className="ann-form-actions__hint">
+                            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="10" />
+                              <path d="M12 16v-4M12 8h.01" />
+                            </svg>
+                            <span>
+                              <span className="ann-form-req">*</span> Required fields
+                            </span>
+                          </div>
+                        </div>
+                        <div className="ann-form-actions__right">
+                          <button
+                            type="button"
+                            className="btn btn-g"
+                            disabled={isSavingAnnouncement}
+                            onClick={handleCancelOrBackAnnouncement}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className="btn btn-a"
+                            disabled={isSavingAnnouncement}
+                            onClick={(e) => handleSaveAnnouncement(e, 'Draft')}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                              <polyline points="17 21 17 13 7 13 7 21" />
+                              <polyline points="7 3 7 8 15 8" />
+                            </svg>
+                            {announcementSubScreen === 'edit' && announcementForm.status === 'Published'
+                              ? 'Move to Draft'
+                              : 'Save as Draft'}
+                          </button>
+                          <button
+                            type="submit"
+                            className="btn btn-p"
+                            disabled={isSavingAnnouncement}
+                          >
+                            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                              <line x1="22" y1="2" x2="11" y2="13" />
+                              <polygon points="22 2 15 22 11 13 2 9 22 2" />
+                            </svg>
+                            {isSavingAnnouncement
+                              ? 'Saving…'
+                              : announcementSubScreen === 'new' || announcementForm.status === 'Draft'
+                                ? 'Publish Announcement'
+                                : 'Save Changes'}
                           </button>
                         </div>
-
-                        <form onSubmit={(e) => handleSaveAnnouncement(e, 'Published')}>
-                          <div className="fg">
-                            <label className="fl">Title <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <input
-                              className="fc"
-                              required
-                              placeholder="Enter announcement title"
-                              value={announcementForm.title || ''}
-                              onChange={(e) => setAnnouncementForm({ ...announcementForm, title: e.target.value })}
-                            />
-                          </div>
-
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                            <div className="fg">
-                              <label className="fl">Category</label>
-                              <select
-                                className="fc"
-                                value={announcementForm.category || 'General'}
-                                onChange={(e) =>
-                                  setAnnouncementForm({ ...announcementForm, category: e.target.value })
-                                }
-                              >
-                                <option value="General">General</option> <option value="Health">Health</option>
-                                <option value="Security">Security</option>
-                                <option value="Relief & Aid">Relief & Aid</option>
-                                <option value="Disaster Response">Disaster Response</option>
-                                <option value="Events">Events</option>
-                                <option value="Activities">Activities</option>
-                                <option value="Governance">Governance</option>
-                              </select>
-                            </div>
-                            <div className="fg" style={{ display: 'flex', alignItems: 'center', paddingTop: '28px' }}>
-                              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: '13px', cursor: 'pointer' }}>
-                                <input
-                                  type="checkbox"
-                                  checked={announcementForm.pinned || false}
-                                  onChange={(e) => setAnnouncementForm({ ...announcementForm, pinned: e.target.checked })}
-                                />
-                                Pin to top of list
-                              </label>
-                            </div>
-                          </div>
-
-                          <div className="fg">
-                            <label className="fl">Content <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <textarea
-                              className="fc"
-                              required
-                              style={{ minHeight: '180px', lineHeight: 1.6, resize: 'vertical' }}
-                              placeholder="Write the announcement details..."
-                              value={announcementForm.content || announcementForm.body || ''}
-                              onChange={(e) => setAnnouncementForm({ ...announcementForm, content: e.target.value, body: e.target.value })}
-                            />
-                          </div>
-
-                          <div className="fa" style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '8px' }}>
-                            <button type="button" className="btn btn-g" onClick={() => setAnnouncementSubScreen('list')}>
-                              Cancel
-                            </button>
-                            <button
-                              type="button"
-                              className="btn btn-g"
-                              onClick={(e) => handleSaveAnnouncement(e, 'Draft')}
-                            >
-                              Save as Draft
-                            </button>
-                            <button
-                              type="submit"
-                              className="btn btn-p"
-                            >
-                              {announcementSubScreen === 'new' ? 'Publish' : 'Save Changes'}
-                            </button>
-                          </div>
-                        </form>
                       </div>
-                    )}
-
-                    {/* DELETE CONFIRMATION */}
-                    {showAnnDeleteModal && (
-                      <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: '20px' }}>
-                        <div className="fp" style={{ maxWidth: '400px', width: '100%', padding: '20px' }}>
-                          <h4 style={{ margin: '0 0 8px' }}>Delete announcement?</h4>
-                          <p style={{ margin: '0 0 20px', fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5 }}>
-                            This will permanently remove the announcement from the bulletin. This action cannot be undone.
-                          </p>
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px' }}>
-                            <button
-                              type="button"
-                              className="btn btn-g"
-                              onClick={() => { setShowAnnDeleteModal(false); setAnnIdToDelete(null); }}
-                            >
-                              Cancel
-                            </button>
-                            <button type="button" className="btn btn-d" onClick={handleConfirmDeleteAnnouncement}>
-                              Delete
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    )}
+                    </form>
+                  </div>
+                )}
                   </div>
                 )}
 
@@ -11246,6 +13365,67 @@ useEffect(() => {
                       </div>
                     </div>
 
+                     <div className="card" style={{
+                        padding: 18,
+                        marginBottom: 16,
+                        background: 'var(--surface)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 14
+                      }}>
+                        <div style={{
+                          fontSize: 14,
+                          fontWeight: 700,
+                          color: 'var(--text)',
+                          marginBottom: 14,
+                          borderBottom: '1px solid var(--border)',
+                          paddingBottom: 8
+                        }}>
+                          Notification Preferences
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+                          <button
+                            type="button"
+                            className="btn btn-g"
+                            onClick={requestNotificationPermission}
+                            style={{
+                              width: '100%',
+                              padding: '12px 14px',
+                              borderRadius: 8,
+                              textAlign: 'left',
+                              display: 'flex',
+                              justifyContent: 'space-between',
+                              alignItems: 'center'
+                            }}
+                          >
+                            <span style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
+                                <path d="M13.73 21a2 2 0 0 1-3.46 0" />
+                              </svg>
+                              <span>
+                                {typeof Notification !== 'undefined' && Notification.permission === 'granted'
+                                  ? 'Desktop Notifications: Enabled'
+                                  : 'Enable Desktop Notifications'}
+                              </span>
+                            </span>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                              <polyline points="9 18 15 12 9 6" />
+                            </svg>
+                          </button>
+
+                          <div style={{
+                            fontSize: 11,
+                            color: 'var(--muted)',
+                            lineHeight: 1.5,
+                            paddingLeft: 4
+                          }}>
+                            Makakatanggap ka ng real-time alerts para sa bagong certificates, blotter updates, at announcements.
+                          </div>
+                        </div>
+                      </div>
+
+
                     {/* 3. Security & Account Actions Card */}
                     <div className="card" style={{ padding: 18, marginBottom: 24, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14 }}>
                       <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: 14, borderBottom: '1px solid var(--border)', paddingBottom: 8 }}>
@@ -11255,7 +13435,7 @@ useEffect(() => {
                         <button 
                           type="button" 
                           className="btn btn-outline" 
-                          onClick={() => alert("Feature coming soon: Change Password")} 
+                          onClick={() => showToast("Feature coming soon: Change Password", 'info')} 
                           style={{ width: '100%', padding: '12px 14px', borderRadius: 8, textAlign: 'left', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
                         >
                           <span>Change Password</span>
@@ -11543,501 +13723,130 @@ useEffect(() => {
 
                   </div>
                 )}
-            
-            {/* ════════════════════════════════════════
-                SCREEN: MANAGE ACTIVITIES
-                ════════════════════════════════════════ */}
-            {screen === 'activities-manage' && (
-              <div className="screen active">
-                {/* Header Toolbar */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <div>
-                    <div style={{ fontSize: '12px', color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px' }}>
-                      Community Calendar
-                    </div>
-                    <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>
-                      {activitySubScreen === 'list' ? 'Barangay Activities' : editingActivityId ? 'Edit Activity' : 'New Activity'}
-                    </div>
-                  </div>
-                  {activitySubScreen === 'list' ? (
-                    <button 
-                      className="btn btn-p" 
-                      onClick={() => {
-                        setEditingActivityId(null);
-                        setActivityForm({
-                          title: '',
-                          category: 'Events',
-                          description: '',
-                          date: new Date().toISOString().split('T')[0],
-                          location: '',
-                        });
-                        setActivitySubScreen('new');
-                      }}
-                    >
-                      + Add Activity
-                    </button>
-                  ) : (
-                    <button 
-                      className="btn btn-g" 
-                      onClick={() => setActivitySubScreen('list')}
-                    >
-                      ← Back to List
-                    </button>
-                  )}
-                </div>
 
-                {/* LIST VIEW */}
-                {activitySubScreen === 'list' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {activitiesList.length === 0 ? (
-                      <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
-                        <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>No activities found</div>
-                        <div style={{ fontSize: '12px' }}>Click "+ Add Activity" to publish a new community event or program.</div>
-                      </div>
-                    ) : (
-                      activitiesList
-                        .slice()
-                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
-                        .map((act) => (
-                          <div
-                            key={act._id || act.id}
-                            className="card"
-                            style={{
-                              display: 'flex',
-                              justify: 'space-between',
-                              alignItems: 'flex-start',
-                              gap: '16px',
-                              padding: '16px 20px',
-                            }}
-                          >
-                            <div style={{ flex: 1 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '8px', flexWrap: 'wrap' }}>
-                                <span className="badge b" style={{ fontSize: '10px' }}>
-                                  {act.category || 'Events'}
-                                </span>
-
-                                {/* DATE & TIME */}
-                                <span style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                                    <line x1="16" y1="2" x2="16" y2="6" />
-                                    <line x1="8" y1="2" x2="8" y2="6" />
-                                    <line x1="3" y1="10" x2="21" y2="10" />
-                                  </svg>
-                                  {act.date} {act.time ? formatTime12hr(act.time) : ''}
-                                </span>
-
-                                {/* LOCATION WITH SVG ICON */}
-                                {act.location && (
-                                  <span style={{ fontSize: '11px', color: 'var(--accent)', display: 'inline-flex', alignItems: 'center', gap: '4px' }}>
-                                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
-                                      <circle cx="12" cy="10" r="3" />
-                                    </svg>
-                                    {act.location}
-                                  </span>
-                                )}
-                              </div>
-
-                              <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>
-                                {act.title}
-                              </div>
-                              <div style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5 }}>
-                                {act.description}
-                              </div>
-                            </div>
-
-                            <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                              <button className="btn btn-g btn-sm" onClick={() => handleEditActivity(act)}>
-                                Edit
-                              </button>
-                              <button className="btn btn-d btn-sm" onClick={() => handleDeleteActivity(act._id || act.id)}>
-                                Delete
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                    )}
-                  </div>
-                )}
-
-                {/* NEW / EDIT FORM */}
-                {(activitySubScreen === 'new' || activitySubScreen === 'edit') && (
-                  <div className="fp" style={{ maxWidth: '640px', margin: '0 auto', padding: '24px' }}>
-                    <form onSubmit={handleSaveActivity}>
-                      {/* TITLE */}
-                      <div className="fg">
-                        <label className="fl">Activity Title <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <input 
-                          className="fc" 
-                          required 
-                          placeholder="e.g. Barangay Assembly, Clean-up Drive, Medical Mission" 
-                          value={activityForm.title} 
-                          onChange={(e) => setActivityForm({ ...activityForm, title: e.target.value })} 
-                        />
-                      </div>
-
-                      {/* CATEGORY & LOCATION (Side-by-Side) */}
-                      <div className="fg2" style={{ marginTop: '12px' }}>
-                        <div className="fg">
-                          <label className="fl">Category</label>
-                          <select 
-                            className="fc" 
-                            value={activityForm.category} 
-                            onChange={(e) => setActivityForm({ ...activityForm, category: e.target.value })}
-                          >
-                            <option value="Events">Events</option>
-                            <option value="Meetings">Meetings</option>
-                            <option value="Programs">Programs</option>
-                            <option value="Health">Health</option>
-                            <option value="Governance">Governance</option>
-                            <option value="Sports">Sports</option>
-                            <option value="Others">Others</option>
-                          </select>
-                        </div>
-                        <div className="fg">
-                          <label className="fl">Location</label>
-                          <input 
-                            className="fc" 
-                            placeholder="e.g. Barangay Covered Court, Purok 3" 
-                            value={activityForm.location} 
-                            onChange={(e) => setActivityForm({ ...activityForm, location: e.target.value })} 
-                          />
-                        </div>
-                      </div>
-
-                      {/* DATE & TIME (Side-by-Side) */}
-                      <div className="fg2" style={{ marginTop: '12px' }}>
-                        <div className="fg">
-                          <label className="fl">Date <span style={{ color: 'var(--red)' }}>*</span></label>
-                          <input 
-                            className="fc" 
-                            type="date" 
-                            required 
-                            value={activityForm.date} 
-                            onChange={(e) => setActivityForm({ ...activityForm, date: e.target.value })} 
-                          />
-                        </div>
-                        <div className="fg">
-                          <label className="fl">Time (Optional)</label>
-                          <input 
-                            className="fc" 
-                            type="time" 
-                            value={activityForm.time || ''} 
-                            onChange={(e) => setActivityForm({ ...activityForm, time: e.target.value })} 
-                          />
-                        </div>
-                      </div>
-
-                      {/* DESCRIPTION */}
-                      <div className="fg" style={{ marginTop: '12px' }}>
-                        <label className="fl">Description / Details <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <textarea 
-                          className="fc" 
-                          required 
-                          rows={4} 
-                          placeholder="Describe the activity, schedule, and any instructions for residents..." 
-                          value={activityForm.description} 
-                          onChange={(e) => setActivityForm({ ...activityForm, description: e.target.value })} 
-                        />
-                      </div>
-
-                      {/* BUTTONS */}
-                      <div className="fa" style={{ marginTop: '20px', justifyContent: 'flex-end' }}>
-                        <button type="button" className="btn btn-g" onClick={() => setActivitySubScreen('list')} style={{ marginRight: '10px' }}>
-                          Cancel
-                        </button>
-                        <button type="submit" className="btn btn-p">
-                          {editingActivityId ? 'Save Changes' : 'Publish Activity'}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* ════════════════════════════════════════
-                SCREEN: RELIEF & AID ADVISORIES
-                ════════════════════════════════════════ */}
-            {screen === 'aid-advisories' && (
-              <div className="screen active">
-                
-                {/* Header Toolbar */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                  <div>
-                    <div style={{ fontSize: '12px', color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px' }}>
-                      Community Advisories
-                    </div>
-                    <div style={{ fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>
-                      {advisorySubScreen === 'list' ? 'Relief & Aid Advisories' : editingAdvisoryId ? 'Edit Advisory' : 'New Advisory'}
-                    </div>
-                  </div>
-                  {advisorySubScreen === 'list' ? (
-                    <button 
-                      className="btn btn-p" 
-                      onClick={() => {
-                        setEditingAdvisoryId(null);
-                        setAdvisoryForm({
-                          title: '',
-                          category: 'Relief',
-                          description: '',
-                          date: new Date().toISOString().split('T')[0],
-                          priority: 'Medium',
-                          status: 'Active',
-                        });
-                        setAdvisorySubScreen('new');
-                      }}
-                    >
-                      + Create Advisory
-                    </button>
-                  ) : (
-                    <button 
-                      className="btn btn-g" 
-                      onClick={() => setAdvisorySubScreen('list')}
-                    >
-                      ← Back to List
-                    </button>
-                  )}
-                </div>
-
-                {/* LIST VIEW */}
-                {advisorySubScreen === 'list' && (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                    {advisoriesList.length === 0 ? (
-                      <div className="card" style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
-                        <div style={{ fontSize: '14px', fontWeight: 600, marginBottom: '8px' }}>No advisories found</div>
-                        <div style={{ fontSize: '12px' }}>Click "+ Create Advisory" to publish relief operations or assistance program information.</div>
-                      </div>
-                    ) : (
-                      advisoriesList
-                        .slice()
-                        .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
-                        .map((adv) => (
-                          <div 
-                            key={adv._id || adv.id} 
-                            className="card"
-                            style={{ 
-                              display: 'flex', 
-                              justifyContent: 'space-between', 
-                              alignItems: 'flex-start',
-                              gap: '16px',
-                              padding: '16px 20px',
-                              borderLeft: adv.priority === 'High' ? '4px solid var(--red)' : adv.priority === 'Medium' ? '4px solid var(--amber)' : '4px solid var(--green)'
-                            }}
-                          >
-                            <div style={{ flex: 1 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '6px', flexWrap: 'wrap' }}>
-                                <span className="badge a" style={{ fontSize: '10px' }}>
-                                  {adv.category || 'Relief'}
-                                </span>
-                                <span style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-                                  {adv.date}
-                                </span>
-                                <span className={`badge ${adv.priority === 'High' ? 'r' : adv.priority === 'Medium' ? 'a' : 'g'}`} style={{ fontSize: '10px' }}>
-                                  {adv.priority} Priority
-                                </span>
-                                <span className="badge t" style={{ fontSize: '10px' }}>
-                                  {adv.status}
-                                </span>
-                              </div>
-                              <div style={{ fontWeight: 700, fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>
-                                {adv.title}
-                              </div>
-                              <div style={{ fontSize: '13px', color: 'var(--muted)', lineHeight: 1.5 }}>
-                                {adv.description}
-                              </div>
-                            </div>
-                            <div style={{ display: 'flex', gap: '8px', flexShrink: 0 }}>
-                              <button className="btn btn-g btn-sm" onClick={() => handleEditAdvisory(adv)}>
-                                Edit
-                              </button>
-                              <button 
-                                className="btn btn-d btn-sm" 
-                                onClick={() => handleDeleteAdvisory(adv._id || adv.id)}
-                              >
-                                Delete
-                              </button>
-                            </div>
-                          </div>
-                        ))
-                    )}
-                  </div>
-                )}
-
-                {/* NEW / EDIT FORM */}
-                {(advisorySubScreen === 'new' || advisorySubScreen === 'edit') && (
-                  <div className="fp" style={{ maxWidth: '640px', margin: '0 auto', padding: '24px' }}>
-                    <form onSubmit={handleSaveAdvisory}>
-                      <div className="fg">
-                        <label className="fl">Advisory Title <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <input
-                          className="fc"
-                          required
-                          placeholder="e.g. Typhoon Preparedness Advisory, Rice Distribution Schedule"
-                          value={advisoryForm.title}
-                          onChange={(e) => setAdvisoryForm({ ...advisoryForm, title: e.target.value })}
-                        />
-                      </div>
-
-                      <div className="fg2" style={{ marginTop: '12px' }}>
-                        <div className="fg">
-                          <label className="fl">Category</label>
-                          <select
-                            className="fc"
-                            value={advisoryForm.category}
-                            onChange={(e) => setAdvisoryForm({ ...advisoryForm, category: e.target.value })}
-                          >
-                            <option value="Relief">Relief</option>
-                            <option value="Aid">Aid</option>
-                            <option value="Disaster">Disaster</option>
-                            <option value="Health">Health</option>
-                            <option value="Emergency">Emergency</option>
-                            <option value="General">General</option>
-                          </select>
-                        </div>
-                        <div className="fg">
-                          <label className="fl">Date <span style={{ color: 'var(--red)' }}>*</span></label>
-                          <input
-                            className="fc"
-                            type="date"
-                            required
-                            value={advisoryForm.date}
-                            onChange={(e) => setAdvisoryForm({ ...advisoryForm, date: e.target.value })}
-                          />
-                        </div>
-                      </div>
-
-                      <div className="fg2" style={{ marginTop: '12px' }}>
-                        <div className="fg">
-                          <label className="fl">Priority</label>
-                          <select
-                            className="fc"
-                            value={advisoryForm.priority}
-                            onChange={(e) => setAdvisoryForm({ ...advisoryForm, priority: e.target.value })}
-                          >
-                            <option value="Low">Low</option>
-                            <option value="Medium">Medium</option>
-                            <option value="High">High</option>
-                          </select>
-                        </div>
-                        <div className="fg">
-                          <label className="fl">Status</label>
-                          <select
-                            className="fc"
-                            value={advisoryForm.status}
-                            onChange={(e) => setAdvisoryForm({ ...advisoryForm, status: e.target.value })}
-                          >
-                            <option value="Active">Active</option>
-                            <option value="Ongoing">Ongoing</option>
-                            <option value="Completed">Completed</option>
-                            <option value="Cancelled">Cancelled</option>
-                          </select>
-                        </div>
-                      </div>
-
-                      <div className="fg" style={{ marginTop: '12px' }}>
-                        <label className="fl">Description / Details <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <textarea
-                          className="fc"
-                          required
-                          rows={5}
-                          placeholder="Provide details about the relief operation, eligibility, schedule, distribution points..."
-                          value={advisoryForm.description}
-                          onChange={(e) => setAdvisoryForm({ ...advisoryForm, description: e.target.value })}
-                        />
-                      </div>
-
-                      <div className="fa" style={{ marginTop: '20px', justifyContent: 'flex-end' }}>
-                        <button type="button" className="btn btn-g" onClick={() => setAdvisorySubScreen('list')} style={{ marginRight: '10px' }}>
-                          Cancel
-                        </button>
-                        <button type="submit" className="btn btn-p">
-                          {editingAdvisoryId ? 'Save Changes' : 'Publish Advisory'}
-                        </button>
-                      </div>
-                    </form>
-                  </div>
-                )}
-
-              </div>
-            )}
             {/* ════════════════════════════════════════
                 SCREEN: CONFLICT RESOLUTION (Admin only)
                 ════════════════════════════════════════ */}
                 {role === 'admin' && screen === 'conflicts' && (
-                <div className="screen active">
-                  {conflictsList.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '40px', background: 'var(--surface)', borderRadius: '12px', border: '1px solid var(--border)' }}>
-                      <p style={{ color: 'var(--muted)', fontSize: '14px', display: 'inline-flex', alignItems: 'center', gap: '8px' }}>
-                        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                          <path d="M9 12l2 2 4-4" />
-                          <circle cx="12" cy="12" r="9" />
-                        </svg>
-                        No conflicts detected. All offline changes have synced seamlessly.
-                      </p>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                      
-                      {/* 🆕 NEW: Header with Bulk Resolve Button */}
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
-                        <h2 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
-                          Active Conflicts ({[...new Set(conflictsList.map(c => c.docId))].length} unique documents)
-                        </h2>
-                        <button 
-                          className="btn btn-d" 
+                  <div className="screen active certificate-lifecycle-screen" style={{ padding: '24px', maxWidth: '1000px', margin: '0 auto' }}>
+                    
+                    {/* 1. HEADER & BULK ACTION */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '20px', flexWrap: 'wrap', gap: '12px' }}>
+                      <div>
+                        <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
+                          {conflictsList.length} conflict(s) detected. Review and choose the correct version.
+                        </p>
+                      </div>
+                      {conflictsList.length > 0 && (
+                        <button
+                          type="button"
+                          className="btn btn-d"
                           onClick={handleResolveAllConflicts}
                           disabled={loadingConflicts}
-                          style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: loadingConflicts ? 0.7 : 1 }}
+                          style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: loadingConflicts ? 0.6 : 1 }}
                         >
-                          {loadingConflicts ? (
-                            <>
-                              <span style={{ display: 'inline-block', width: '14px', height: '14px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
-                              Resolving...
-                            </>
-                          ) : (
-                            <>🧹 Resolve All (Keep Version A)</>
-                          )}
+                          {loadingConflicts ? 'Resolving...' : '🧹 Resolve All (Keep Local Version)'}
                         </button>
-                      </div>
-
-                      {/* Existing Conflict Cards */}
-                      {conflictsList.map((item) => (
-                        <div key={item.id} style={{ background: 'var(--surface)', border: '1px solid rgba(248, 113, 113, 0.4)', padding: '20px', borderRadius: '12px' }}>
-                          <h3 style={{ color: 'var(--red)', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                              <path d="M12 3L2.5 20h19L12 3z" />
-                              <path d="M12 9v5" />
-                              <path d="M12 17h.01" />
-                            </svg>
-                            Conflict Detected: {item.residentName}
-                          </h3>
-                          <p style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '12px', fontFamily: 'var(--mono)' }}>
-                            Document ID: {item.docId}
-                          </p>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginBottom: '16px' }}>
-                            <div style={{ background: 'var(--surface2)', padding: '12px', borderRadius: '8px' }}>
-                              <strong style={{ color: 'var(--accent)' }}>Version A (Local Winning):</strong>
-                              <p style={{ fontSize: '13px', marginTop: '4px' }}>Purok: {item.docA.purok || 'N/A'}</p>
-                              <p style={{ fontSize: '11px', fontFamily: 'var(--mono)', color: 'var(--muted)' }}>Rev: {item.winningRev}</p>
-                            </div>
-                            <div style={{ background: 'var(--surface2)', padding: '12px', borderRadius: '8px' }}>
-                              <strong style={{ color: 'var(--amber)' }}>Version B (Conflicting):</strong>
-                              <p style={{ fontSize: '13px', marginTop: '4px' }}>Purok: {item.docB.purok || 'N/A'}</p>
-                              <p style={{ fontSize: '11px', fontFamily: 'var(--mono)', color: 'var(--muted)' }}>Rev: {item.conflictRev}</p>
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', gap: '8px' }}>
-                            <button className="btn btn-p btn-sm" onClick={() => handleKeepVersionA(item)}>Keep Version A</button>
-                            <button className="btn btn-g btn-sm" onClick={() => handleKeepVersionB(item)}>Keep Version B</button>
-                          </div>
-                        </div>
-                      ))}
+                      )}
                     </div>
-                  )}
-                </div>
-              )}
+
+                    {conflictsList.length === 0 ? (
+                      <div className="cert-section-card" style={{ padding: '40px', textAlign: 'center' }}>
+                        <p style={{ color: 'var(--text)', fontSize: '16px', fontWeight: 600, margin: 0 }}>All synced seamlessly!</p>
+                        <p style={{ color: 'var(--muted)', fontSize: '13px', marginTop: '4px' }}>No conflicting revisions detected in the local database.</p>
+                      </div>
+                    ) : (
+                      <>
+                        {/* 2. SEARCH BAR */}
+                        <div className="sb-box" style={{ marginBottom: '16px', maxWidth: '400px' }}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.35-4.35" />
+                          </svg>
+                          <input 
+                            placeholder="Search by Resident Name or Document ID..." 
+                            value={conflictSearch}
+                            onChange={(e) => { setConflictSearch(e.target.value); setConflictPage(1); }} // Reset to page 1 on search
+                          />
+                        </div>
+
+                        {/* 3. FILTERED & PAGINATED LIST */}
+                        {(() => {
+                          // Filter first
+                          const filtered = conflictsList.filter(item => 
+                            (item.residentName || '').toLowerCase().includes(conflictSearch.toLowerCase()) ||
+                            (item.docId || '').toLowerCase().includes(conflictSearch.toLowerCase())
+                          );
+
+                          // Then paginate
+                          const totalPages = Math.ceil(filtered.length / conflictsPerPage);
+                          const startIndex = (conflictPage - 1) * conflictsPerPage;
+                          const paginatedConflicts = filtered.slice(startIndex, startIndex + conflictsPerPage);
+
+                          return (
+                            <>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                                {paginatedConflicts.map((item, index) => (
+                                  <div key={item.id || `${item.docId}-${item.conflictRev}`} className="cert-section-card" style={{ border: '1px solid rgba(248, 113, 113, 0.4)', padding: '16px' }}>
+                                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                                      <div>
+                                        <h3 style={{ margin: 0, fontSize: '15px', fontWeight: 700, color: 'var(--red)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3L2.5 20h19L12 3z" /><path d="M12 9v5" /><path d="M12 17h.01" /></svg>
+                                          {item.residentName || 'Unknown Document'}
+                                        </h3>
+                                        <p style={{ fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)', margin: '4px 0 0' }}>ID: {item.docId || 'N/A'}</p>
+                                      </div>
+                                    </div>
+
+                                    {/* Compact Comparison */}
+                                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', background: 'var(--surface2)', padding: '12px', borderRadius: '8px', fontSize: '13px' }}>
+                                      <div>
+                                        <strong style={{ color: 'var(--accent)', display: 'block', marginBottom: '4px' }}>Version A (Local/Winning)</strong>
+                                        <span style={{ color: 'var(--text)' }}>Purok: {item.docA?.purok || 'N/A'}</span>
+                                      </div>
+                                      <div>
+                                        <strong style={{ color: 'var(--amber)', display: 'block', marginBottom: '4px' }}>Version B (Conflicting)</strong>
+                                        <span style={{ color: 'var(--text)' }}>Purok: {item.docB?.purok || 'N/A'}</span>
+                                      </div>
+                                    </div>
+
+                                    {/* Actions */}
+                                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end' }}>
+                                      <button className="btn btn-p btn-sm" onClick={() => typeof handleKeepVersionA === 'function' && handleKeepVersionA(item)}>Keep Version A</button>
+                                      <button className="btn btn-g btn-sm" onClick={() => typeof handleKeepVersionB === 'function' && handleKeepVersionB(item)}>Keep Version B</button>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+
+                              {/* 4. PAGINATION CONTROLS */}
+                              {totalPages > 1 && (
+                                <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '12px', marginTop: '24px' }}>
+                                  <button 
+                                    className="btn btn-g btn-sm" 
+                                    disabled={conflictPage === 1} 
+                                    onClick={() => setConflictPage(p => p - 1)}
+                                  >
+                                    Previous
+                                  </button>
+                                  <span style={{ fontSize: '13px', color: 'var(--muted)' }}>
+                                    Page {conflictPage} of {totalPages} ({filtered.length} total)
+                                  </span>
+                                  <button 
+                                    className="btn btn-g btn-sm" 
+                                    disabled={conflictPage === totalPages} 
+                                    onClick={() => setConflictPage(p => p + 1)}
+                                  >
+                                    Next
+                                  </button>
+                                </div>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </>
+                    )}
+                  </div>
+                )}
 
             {/* ════════════════════════════════════════
                 SCREEN: AUDIT LOG (Admin only)
@@ -12050,231 +13859,567 @@ useEffect(() => {
                 SCREEN: MANAGE USERS (Admin only)
                 ════════════════════════════════════════ */}
                 {role === 'admin' && screen === 'users' && (
-                <div className="screen active">
-                  <div className="tb" style={{ flexWrap: 'wrap', alignItems: 'center', gap: '10px', marginBottom: '12px' }}>
-                    <div className="sb-box">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                        <circle cx="11" cy="11" r="7" />
-                        <path d="m20 20-4-4" />
-                      </svg>
-                      <input placeholder="Search users..." value={searchUserQuery} onChange={(e) => setSearchUserQuery(e.target.value)} />
+                  <div className="screen active">
+                    {/* 0. Pending Account Requests */}
+                    <div className="fp" style={{ ...formCardStyle, borderRadius: '8px', padding: '16px', marginBottom: '16px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: 'var(--accent, #f59e0b)' }}>
+                            <path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
+                            <circle cx="8.5" cy="7" r="4" />
+                            <line x1="20" y1="8" x2="20" y2="14" />
+                            <line x1="23" y1="11" x2="17" y2="11" />
+                          </svg>
+                          <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>
+                            Pending Account Requests
+                          </span>
+                          <span style={{ fontSize: '10px', fontWeight: 700, padding: '2px 8px', borderRadius: '12px', background: accountRequests.length > 0 ? 'rgba(245, 158, 11, 0.15)' : 'rgba(16, 185, 129, 0.15)', color: accountRequests.length > 0 ? '#f59e0b' : '#10b981', border: `1px solid ${accountRequests.length > 0 ? 'rgba(245, 158, 11, 0.3)' : 'rgba(16, 185, 129, 0.3)'}` }}>
+                            {accountRequests.length}
+                          </span>
+                        </div>
+                        <button className="btn btn-g btn-sm" style={{ fontSize: '11px' }} onClick={() => fetchAccountRequests()}>
+                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: '4px' }}>
+                            <polyline points="23 4 23 10 17 10" />
+                            <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                          </svg>
+                          Refresh
+                        </button>
+                      </div>
+
+                      {accountRequests.length === 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '6px', padding: '24px 16px', color: 'var(--muted)', textAlign: 'center' }}>
+                          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.5 }}>
+                            <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+                            <polyline points="22 4 12 14.01 9 11.01" />
+                          </svg>
+                          <span style={{ fontSize: '13px', fontWeight: 600 }}>No pending account requests.</span>
+                          <span style={{ fontSize: '11px' }}>Ang mga bagong registration request mula sa public portal ay lilitaw dito.</span>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {accountRequests.map((req) => {
+                            const reqInitials = (req.fullName || req.name || 'U').split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+                            return (
+                              <div key={req._id} style={{ ...formFieldStyle, borderRadius: '8px', padding: '12px 14px', display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                                <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: 'var(--accent, #f59e0b)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
+                                  {reqInitials}
+                                </div>
+                                <div style={{ flex: '1 1 180px', minWidth: '0' }}>
+                                  <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>{req.fullName || req.name || 'Unknown'}</div>
+                                  <div style={{ fontSize: '11px', color: 'var(--muted)', display: 'flex', gap: '10px', flexWrap: 'wrap', marginTop: '2px' }}>
+                                    <span>{req.purok || 'N/A'}</span>
+                                    {req.contact && <span style={{ fontFamily: 'var(--mono)' }}>{req.contact}</span>}
+                                    <span style={monoMuted}>{req.requestedAt ? new Date(req.requestedAt).toLocaleString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—'}</span>
+                                  </div>
+                                </div>
+                                <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '12px', background: 'rgba(245, 158, 11, 0.12)', color: '#f59e0b', border: '1px solid rgba(245, 158, 11, 0.25)', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>
+                                  {req.type === 'resident_account_request' ? 'Resident Portal' : 'Account Request'}
+                                </span>
+                                <div style={{ display: 'flex', gap: '6px', marginLeft: 'auto' }}>
+                                  <button className="btn btn-sm" style={{ fontSize: '11px', background: 'rgba(16, 185, 129, 0.1)', color: '#10b981', border: '1px solid rgba(16, 185, 129, 0.25)' }} onClick={() => handleApproveRequest(req)}>
+                                    Approve
+                                  </button>
+                                  <button className="btn btn-sm" style={{ fontSize: '11px', background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.25)' }} onClick={() => handleRejectRequest(req._id)}>
+                                    Reject
+                                  </button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
                     </div>
-                    <select className="fc" style={{ width: '150px' }} value={filterUserRole} onChange={(e) => setFilterUserRole(e.target.value)}>
-                      <option value="All">All Roles</option>
-                      <option value="Admin">Admin</option>
-                      <option value="Barangay Captain">Barangay Captain</option>
-                      <option value="Staff">Staff</option>
-                      <option value="Resident">Resident</option>
-                    </select>
-                    <div style={{ flex: '1 1 auto' }} />
-                    <button className="btn btn-p">+ Add User</button>
-                  </div>
 
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: '0 4px' }}>
-                    <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                      Showing <strong>{filteredUsers.length}</strong> of <strong>{usersList.length}</strong> registered user accounts
-                      {filteredUsers.length !== usersList.length && ' (filtered)'}
-                    </span>
-                    {(searchUserQuery || filterUserRole !== 'All') && (
-                      <button className="btn btn-sm btn-g" onClick={() => { setSearchUserQuery(''); setFilterUserRole('All'); }}>
-                        Reset
+                    {/* 1. Header & Actions Toolbar */}
+                    <div className="tb" style={{ flexWrap: 'wrap', alignItems: 'center', gap: '12px', marginBottom: '16px' }}>
+                      <div className="sb-box" style={{ flex: '1 1 250px' }}>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <circle cx="11" cy="11" r="7" />
+                          <path d="m20 20-4-4" />
+                        </svg>
+                        <input 
+                          placeholder="Search by name, username, or purok..." 
+                          value={searchUserQuery} 
+                          onChange={(e) => setSearchUserQuery(e.target.value)} 
+                        />
+                      </div>
+                      
+                      <select className="fc" style={{ width: '160px' }} value={filterUserRole} onChange={(e) => setFilterUserRole(e.target.value)}>
+                        <option value="All">All Roles</option>
+                        <option value="Admin">Admin</option>
+                        <option value="Staff">Staff / Secretary</option>
+                        <option value="Resident">Resident</option>
+                      </select>
+
+                      <button 
+                        className="btn btn-p" 
+                        style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}
+                        onClick={() => setShowAddUserModal(true)}
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 5v14M5 12h14" />
+                        </svg>
+                        Add New User
                       </button>
-                    )}
-                  </div>
+                    </div>
 
-                  <div className="tw" style={{ maxHeight: '60vh' }}>
-                    <table>
-                      <thead>
+                    {/* 2. Stats & Reset Filters */}
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', padding: '0 4px' }}>
+                      <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                        Showing <strong style={{ color: 'var(--text)' }}>{filteredUsers.length}</strong> of <strong style={{ color: 'var(--text)' }}>{usersList.length}</strong> registered accounts
+                      </span>
+                      {(searchUserQuery || filterUserRole !== 'All') && (
+                        <button className="btn btn-sm btn-g" onClick={() => { setSearchUserQuery(''); setFilterUserRole('All'); }}>
+                          Reset Filters
+                        </button>
+                      )}
+                    </div>
+
+                    {/* 3. Data Table with Sticky Header & Hover Effects */}
+                    <div className="tw" style={{ minHeight: '300px', maxHeight: '65vh', borderRadius: '8px', overflowX: 'auto', overflowY: 'visible' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--surface2)' }}>
                         <tr>
-                          <th>User ID</th>
-                          <th>User</th>
-                          <th>Username</th>
-                          <th>Role</th>
-                          <th>Status</th>
-                          <th>Last Login</th>
-                          <th>Actions</th>
+                          <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              User Profile
+                            </span>
+                          </th>
+                          <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              Role
+                            </span>
+                          </th>
+                          <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              Purok / Zone
+                            </span>
+                          </th>
+                          <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              Status
+                            </span>
+                          </th>
+                          <th style={{ padding: '12px 16px', textAlign: 'left', fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              Last Active
+                            </span>
+                          </th>
+                          <th style={{ padding: '12px 16px', textAlign: 'right', fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>
+                            Actions
+                          </th>
                         </tr>
                       </thead>
-                      <tbody>
+                        <tbody>
                         {filteredUsers.length === 0 ? (
                           <tr>
-                            <td colSpan="7" style={{ textAlign: 'center', padding: '32px', color: 'var(--muted)' }}>
-                              <div style={{ fontWeight: 600, marginBottom: '4px' }}>No users found</div>
-                              <div style={{ fontSize: '12px' }}>Try adjusting the search or filter options.</div>
+                            <td colSpan="6" style={{ textAlign: 'center', padding: '48px 16px', color: 'var(--muted)' }}>
+                              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
+                                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.5 }}>
+                                  <circle cx="11" cy="11" r="7" />
+                                  <path d="m20 20-4-4" />
+                                </svg>
+                                <span style={{ fontSize: '13px', fontWeight: 600 }}>No users found matching your criteria.</span>
+                              </div>
                             </td>
                           </tr>
                         ) : (
-                          filteredUsers.map((u) => {
-                            const initials = u.name
-                              .split(' ')
-                              .map((n) => n[0])
-                              .join('')
-                              .slice(0, 2)
-                              .toUpperCase();
+                          filteredUsers.map((u, index) => {
+                            const displayName = u.fullName || u.name || u.username || u.uname || 'Unknown';
+                            const uname = u.username || u.uname || 'user';
+                            const initials = displayName.split(' ').map((n) => n[0]).join('').slice(0, 2).toUpperCase();
+                            const userRoleLower = (u.role || '').toLowerCase();
+                            const roleColor = userRoleLower === 'admin' ? '#ef4444' : userRoleLower === 'staff' || userRoleLower === 'secretary' ? '#3b82f6' : '#10b981';
+                            const roleBg = userRoleLower === 'admin' ? 'rgba(239, 68, 68, 0.1)' : userRoleLower === 'staff' || userRoleLower === 'secretary' ? 'rgba(59, 130, 246, 0.1)' : 'rgba(16, 185, 129, 0.1)';
+                            const isCurrentlyActive = (u.status || 'Active').toLowerCase() === 'active';
+                            const userKey = u._id || `user_${uname}` || `user-${index}`;
+
                             return (
-                              <tr key={u.id}>
-                                <td style={{ fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--muted)' }}>{u.id}</td>
-                                <td>
-                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                                    <div style={{
-                                      width: '32px',
-                                      height: '32px',
-                                      borderRadius: '50%',
-                                      background: 'var(--accent)',
-                                      display: 'flex',
-                                      alignItems: 'center',
-                                      justifyContent: 'center',
-                                      fontSize: '11px',
-                                      fontWeight: 700,
-                                      flexShrink: 0,
-                                      fontFamily: 'var(--mono)',
-                                      color: '#fff'
-                                    }}>
+                              <tr 
+                                key={userKey} 
+                                style={{ borderBottom: '1px solid var(--border)', transition: 'background 0.2s' }}
+                                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface2)'}
+                                onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                              >
+                                <td style={{ padding: '12px 16px' }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+                                    <div style={{ width: '36px', height: '36px', borderRadius: '50%', background: roleColor, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '12px', fontWeight: 700, color: '#fff', flexShrink: 0 }}>
                                       {initials}
                                     </div>
-                                    <strong>{u.name}</strong>
+                                    <div>
+                                      <div style={{ fontWeight: 700, fontSize: '13px', color: 'var(--text)' }}>{displayName}</div>
+                                      <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>@{uname}</div>
+                                    </div>
                                   </div>
                                 </td>
-                                <td style={{ fontFamily: 'var(--mono)', fontSize: '12px' }}>{u.uname}</td>
-                                <td>
-                                  <span className={`badge ${u.rClass}`}>{u.role}</span>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <span style={{ fontSize: '10px', fontWeight: 700, padding: '3px 8px', borderRadius: '12px', color: roleColor, background: roleBg, border: `1px solid ${roleColor}33`, textTransform: 'uppercase' }}>
+                                    {u.role || 'Resident'}
+                                  </span>
                                 </td>
-                                <td>
-                                  <span className="badge g">{u.status}</span>
+                                <td style={{ padding: '12px 16px', fontSize: '12px', color: 'var(--text)' }}>{u.purok || 'N/A'}</td>
+                                <td style={{ padding: '12px 16px' }}>
+                                  <span
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: '6px',
+                                      fontSize: '11px',
+                                      fontWeight: 600,
+                                      color: isCurrentlyActive ? '#10b981' : '#ef4444',
+                                      background: isCurrentlyActive ? 'rgba(16, 185, 129, 0.1)' : 'rgba(239, 68, 68, 0.1)',
+                                      border: `1px solid ${isCurrentlyActive ? 'rgba(16, 185, 129, 0.25)' : 'rgba(239, 68, 68, 0.25)'}`,
+                                      padding: '3px 8px',
+                                      borderRadius: '12px',
+                                    }}
+                                  >
+                                    <span style={{ width: '6px', height: '6px', borderRadius: '50%', background: isCurrentlyActive ? '#10b981' : '#ef4444' }}></span>
+                                    {u.status || 'Active'}
+                                  </span>
                                 </td>
-                                <td style={{ fontSize: '12px', color: 'var(--muted)' }}>{u.last}</td>
-                                <td>
-                                  <button className="btn btn-g btn-sm">Edit</button>
-                                  {u.role !== 'Admin' && (
-                                    <button className="btn btn-d btn-sm" style={{ marginLeft: '6px' }}>Deactivate</button>
-                                  )}
+                                <td style={{ padding: '12px 16px', fontSize: '11px', color: 'var(--muted)' }}>
+                                  {u.last || (u.updatedAt ? new Date(u.updatedAt).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : 'Recently')}
+                                </td>
+                                <td style={{ padding: '12px 16px', textAlign: 'right', position: 'relative' }}>
+                                  {/* KEBAB ACTION MENU */}
+                                  <div style={{ position: 'relative', display: 'inline-block' }} onClick={(e) => e.stopPropagation()}>
+                                    <button 
+                                      className="btn btn-g btn-sm"
+                                      style={{
+                                        width: '32px',
+                                        height: '32px',
+                                        padding: 0,
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        fontSize: '16px',
+                                        fontWeight: 800,
+                                        lineHeight: 1,
+                                        borderRadius: '8px',
+                                      }}
+                                      title="Account Actions"
+                                      onClick={() => setActiveActionMenu(activeActionMenu === userKey ? null : userKey)}
+                                    >
+                                      ⋮
+                                    </button>
+
+                                    {activeActionMenu === userKey && (
+                                      <div
+                                        style={{
+                                          position: 'absolute',
+                                          right: 0,
+                                          top: '100%',
+                                          marginTop: '6px',
+                                          background: 'var(--surface, #1e293b)',
+                                          border: '1px solid var(--border, #334155)',
+                                          borderRadius: '10px',
+                                          boxShadow: '0 10px 20px -3px rgba(0, 0, 0, 0.4), 0 4px 6px -4px rgba(0, 0, 0, 0.4)',
+                                          zIndex: 100,
+                                          minWidth: '170px',
+                                          padding: '6px',
+                                          display: 'flex',
+                                          flexDirection: 'column',
+                                          gap: '2px',
+                                          textAlign: 'left',
+                                        }}
+                                      >
+                                        <button
+                                          style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            padding: '8px 12px',
+                                            color: 'var(--text, #f8fafc)',
+                                            fontSize: '12px',
+                                            fontWeight: 500,
+                                            cursor: 'pointer',
+                                            borderRadius: '6px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            width: '100%',
+                                            textAlign: 'left',
+                                          }}
+                                          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface2, #0f172a)'}
+                                          onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                          onClick={() => {
+                                            setActiveActionMenu(null);
+                                            setEditingUser(u);
+                                          }}
+                                        >
+                                          <span>✏️</span> Edit User
+                                        </button>
+
+                                        <button
+                                          style={{
+                                            background: 'none',
+                                            border: 'none',
+                                            padding: '8px 12px',
+                                            color: 'var(--text, #f8fafc)',
+                                            fontSize: '12px',
+                                            fontWeight: 500,
+                                            cursor: 'pointer',
+                                            borderRadius: '6px',
+                                            display: 'flex',
+                                            alignItems: 'center',
+                                            gap: '8px',
+                                            width: '100%',
+                                            textAlign: 'left',
+                                          }}
+                                          onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface2, #0f172a)'}
+                                          onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                          onClick={() => {
+                                            setActiveActionMenu(null);
+                                            handleResetPassword(u);
+                                          }}
+                                        >
+                                          <span>🔑</span> Reset Password
+                                        </button>
+
+                                        {userRoleLower !== 'admin' && (
+                                          <button
+                                            style={{
+                                              background: 'none',
+                                              border: 'none',
+                                              padding: '8px 12px',
+                                              color: isCurrentlyActive ? '#ef4444' : '#10b981',
+                                              fontSize: '12px',
+                                              fontWeight: 500,
+                                              cursor: 'pointer',
+                                              borderRadius: '6px',
+                                              display: 'flex',
+                                              alignItems: 'center',
+                                              gap: '8px',
+                                              width: '100%',
+                                              textAlign: 'left',
+                                            }}
+                                            onMouseEnter={(e) => e.currentTarget.style.background = 'var(--surface2, #0f172a)'}
+                                            onMouseLeave={(e) => e.currentTarget.style.background = 'none'}
+                                            onClick={() => {
+                                              setActiveActionMenu(null);
+                                              handleToggleUserStatus(u);
+                                            }}
+                                          >
+                                            <span>{isCurrentlyActive ? '🚫' : '✅'}</span>
+                                            {isCurrentlyActive ? 'Deactivate User' : 'Activate User'}
+                                          </button>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             );
                           })
                         )}
                       </tbody>
-                    </table>
-                  </div>
-                </div>
-              )}
-                
-                {role === 'admin' && screen === 'officials' && (
-                <div className="screen active">
-                  <div style={{ maxWidth: '600px', margin: '0 auto' }}>
-                    <div className="card" style={{ padding: '24px' }}>
-                      <h3 style={{ margin: '0 0 16px', fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
-                        Barangay Officials & System Configuration
-                      </h3>
-                      
-                      <div className="fg" style={{ marginTop: '12px' }}>
-                        <label className="fl">Punong Barangay (Lupon Chairman)</label>
-                        <input 
-                          className="fc" 
-                          value={settingsForm.punongBarangay || ''} 
-                          onChange={(e) => setSettingsForm({...settingsForm, punongBarangay: e.target.value})} 
-                          placeholder="e.g. HON. ANNABELLE E. RULL" 
-                        />
-                      </div>
-                      
-                      <div className="fg" style={{ marginTop: '16px' }}>
-                        <label className="fl">Barangay Secretary / Lupon Secretary</label>
-                        <input 
-                          className="fc" 
-                          value={settingsForm.luponSecretary || ''} 
-                          onChange={(e) => setSettingsForm({...settingsForm, luponSecretary: e.target.value})} 
-                          placeholder="e.g. MRS. MELY M. PRESADO" 
-                        />
-                      </div>
-
-                      <div className="fg" style={{ marginTop: '16px' }}>
-                        <label className="fl">Barangay Treasurer (optional)</label>
-                        <input 
-                          className="fc" 
-                          value={settingsForm.treasurer || ''} 
-                          onChange={(e) => setSettingsForm({...settingsForm, treasurer: e.target.value})} 
-                          placeholder="e.g. JUAN DELA CRUZ"
-                        />
-                      </div>
-
-                      
-
-                      <button 
-                        className="btn btn-p" 
-                        style={{ marginTop: '24px', width: '100%' }} 
-                        onClick={() => saveSettings(settingsForm)}
-                      >
-                        Save Official Settings
-                      </button>
+                      </table>
                     </div>
 
-                    {/* Preview ng Current Saved Settings */}
-                    <div className="card" style={{ marginTop: '16px', padding: '20px', background: 'var(--surface2)' }}>
-                      <div style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 700, textTransform: 'uppercase', marginBottom: '12px' }}>
-                        Currently Active Configuration
-                      </div>
-                      <div style={{ fontSize: '13px', lineHeight: 1.6 }}>
-                        <div><strong>Punong Barangay:</strong> {systemSettings?.punongBarangay || settingsForm.punongBarangay || 'Not set'}</div>
-                        <div><strong>Secretary:</strong> {systemSettings?.luponSecretary || settingsForm.luponSecretary || 'Not set'}</div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              )}
+                    {/* ═══ USER MANAGEMENT MODALS ═══ */}
+                    {editingUser && (
+                      <EditUserModal
+                        user={editingUser}
+                        onClose={() => setEditingUser(null)}
+                        onSave={() => fetchUsers()}
+                        db={db}
+                        currentUser={currentUser}
+                      />
+                    )}
 
+                    {showAddUserModal && (
+                      <AddUserModal
+                        isOpen={showAddUserModal}
+                        onClose={() => setShowAddUserModal(false)}
+                        onSave={() => fetchUsers()}
+                        db={db}
+                        currentUser={currentUser}
+                      />
+                    )}
+
+                    {linkRequestTarget && (
+                      <LinkResidentModal
+                        isOpen={Boolean(linkRequestTarget)}
+                        requestDoc={linkRequestTarget}
+                        residentsList={residentsList}
+                        onClose={() => setLinkRequestTarget(null)}
+                        onLinkResident={async (chosenResident) => {
+                          const targetReq = linkRequestTarget;
+                          setLinkRequestTarget(null);
+                          await proceedToGenerateAndLink(targetReq, chosenResident);
+                        }}
+                        onCreateNewResident={async (targetReq) => {
+                          setLinkRequestTarget(null);
+                          await handleCreateAndLinkResident(targetReq);
+                        }}
+                      />
+                    )}
+                  </div>
+                )}
+      
             {/* ════════════════════════════════════════
                 SCREEN: GENERATE REPORTS
                 ════════════════════════════════════════ */}
                 {screen === 'reports' && (
                   <div className="screen active">
-                    <div className="thc" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: '16px' }}>
+                    <div
+                      className="thc"
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))',
+                        gap: '16px'
+                      }}
+                    >
                       {[
-                        { title: 'Certificate Issuance', desc: 'Monthly issuance summary by type', select: ['April 2026', 'March 2026', 'February 2026'], module: 'certificates' },
-                        { title: 'Aid Distribution', desc: 'Beneficiary list per program', select: ['Ayuda Rice Distribution', 'Financial Assistance', 'Medical Aid'], module: 'aid' },
-                        { title: 'Resident Registry', desc: 'Full resident list by purok', select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'], module: 'residents' },
-                        { title: 'Blotter Summary', desc: 'Cases grouped by type and status', select: ['September 2026', 'August 2026', 'July 2026'], module: 'blotter' },
-                        { title: 'Feedback Report', desc: 'Concern submissions and resolutions', select: ['All Status', 'Pending', 'Under Review', 'Resolved'], module: 'feedback' },
-                        { title: 'Household Registry', desc: 'Household listing by purok', select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'], module: 'households' },
-                        ...(role === 'admin' ? [{ title: 'Audit Trail Report', desc: 'Full system transaction log', select: ['September 2026', 'August 2026', 'July 2026'], module: 'audit', adminOnly: true }] : [])
+                        {
+                          title: 'Certificate Issuance',
+                          desc: 'Monthly issuance summary by type',
+                          select: ['April 2026', 'March 2026', 'February 2026'],
+                          module: 'certificates'
+                        },
+                        {
+                          title: 'Aid Distribution',
+                          desc: 'Beneficiary list per program',
+                          select: ['Ayuda Rice Distribution', 'Financial Assistance', 'Medical Aid'],
+                          module: 'aid'
+                        },
+                        {
+                          title: 'Resident Registry',
+                          desc: 'Full resident list by purok',
+                          select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'],
+                          module: 'residents'
+                        },
+                        {
+                          title: 'Blotter Summary',
+                          desc: 'Cases grouped by type and status',
+                          select: ['September 2026', 'August 2026', 'July 2026'],
+                          module: 'blotter'
+                        },
+                        {
+                          title: 'Feedback Report',
+                          desc: 'Concern submissions and resolutions',
+                          select: ['All Status', 'Pending', 'Under Review', 'Resolved'],
+                          module: 'feedback'
+                        },
+                        {
+                          title: 'Household Registry',
+                          desc: 'Household listing by purok',
+                          select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'],
+                          module: 'households'
+                        },
+                        ...(role === 'admin'
+                          ? [{
+                              title: 'Audit Trail Report',
+                              desc: 'Full system transaction log',
+                              select: ['September 2026', 'August 2026', 'July 2026'],
+                              module: 'audit',
+                              adminOnly: true
+                            }]
+                          : [])
                       ].map((r) => (
-                        <div key={r.title} className="fp" style={{ margin: 0, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: '14px' }}>
+                        <div
+                          key={r.title}
+                          className="fp"
+                          style={{
+                            margin: 0,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            gap: '14px'
+                          }}
+                        >
                           <div>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '8px', marginBottom: '6px' }}>
-                              <div style={{ fontWeight: 600, fontSize: '15px', color: 'var(--text)' }}>{r.title}</div>
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'flex-start',
+                                gap: '8px',
+                                marginBottom: '6px'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontWeight: 600,
+                                  fontSize: '15px',
+                                  color: 'var(--text)'
+                                }}
+                              >
+                                {r.title}
+                              </div>
+
                               {r.adminOnly && (
-                                <span style={{ fontSize: '10px', color: 'var(--red)', fontWeight: 600, whiteSpace: 'nowrap', flexShrink: 0 }}>
+                                <span
+                                  style={{
+                                    fontSize: '10px',
+                                    color: 'var(--red)',
+                                    fontWeight: 600,
+                                    whiteSpace: 'nowrap',
+                                    flexShrink: 0
+                                  }}
+                                >
                                   Admin Only
                                 </span>
                               )}
                             </div>
-                            <div style={{ fontSize: '12px', color: 'var(--muted)', marginBottom: '12px' }}>{r.desc}</div>
+
+                            <div
+                              style={{
+                                fontSize: '12px',
+                                color: 'var(--muted)',
+                                marginBottom: '12px'
+                              }}
+                            >
+                              {r.desc}
+                            </div>
+
                             <select className="fc" style={{ margin: 0 }}>
                               {r.select.map((o) => (
-                                <option key={o} value={o}>{o}</option>
+                                <option key={o} value={o}>
+                                  {o}
+                                </option>
                               ))}
                             </select>
                           </div>
 
-                          {/* Action Buttons Row: PDF & Excel */}
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
-                            {/* Generate PDF Button */}
+                          <div
+                            style={{
+                              display: 'grid',
+                              gridTemplateColumns: '1fr 1fr',
+                              gap: '8px'
+                            }}
+                          >
                             <button
                               className="btn btn-p"
                               disabled={generatingReport === r.module}
-                              style={{ justifyContent: 'center', opacity: generatingReport === r.module ? 0.7 : 1, cursor: generatingReport === r.module ? 'wait' : 'pointer', fontSize: '12px', padding: '8px 10px' }}
+                              style={{
+                                justifyContent: 'center',
+                                opacity: generatingReport === r.module ? 0.7 : 1,
+                                cursor: generatingReport === r.module ? 'wait' : 'pointer',
+                                fontSize: '12px',
+                                padding: '8px 10px'
+                              }}
                               onClick={() => handleGenerateReport(r.module)}
                             >
                               {generatingReport === r.module ? (
                                 <>
-                                  <span style={{ display: 'inline-block', width: '12px', height: '12px', border: '2px solid rgba(255,255,255,0.3)', borderTopColor: '#fff', borderRadius: '50%', animation: 'spin 0.6s linear infinite' }} />
+                                  <span
+                                    style={{
+                                      display: 'inline-block',
+                                      width: '12px',
+                                      height: '12px',
+                                      border: '2px solid rgba(255,255,255,0.3)',
+                                      borderTopColor: '#fff',
+                                      borderRadius: '50%',
+                                      animation: 'spin 0.6s linear infinite'
+                                    }}
+                                  />
                                   Generating...
                                 </>
                               ) : (
-                                '📄 Generate PDF'
+                                'Generate PDF'
                               )}
                             </button>
 
-                            {/* Export Excel Button */}
                             <button
                               className="btn"
                               style={{
@@ -12289,11 +14434,181 @@ useEffect(() => {
                               }}
                               onClick={() => handleGenerateExcelReport(r.module)}
                             >
-                              📊 Export Excel
+                              Export Excel
                             </button>
                           </div>
                         </div>
                       ))}
+
+                      {role === 'admin' && (
+                        <div
+                          className="fp"
+                          style={{
+                            margin: 0,
+                            display: 'flex',
+                            flexDirection: 'column',
+                            justifyContent: 'space-between',
+                            gap: '14px',
+                            border: '1px solid var(--accent)',
+                            background: 'rgba(59, 130, 246, 0.05)'
+                          }}
+                        >
+                          <div>
+                            <div
+                              style={{
+                                display: 'flex',
+                                justifyContent: 'space-between',
+                                alignItems: 'flex-start',
+                                gap: '8px',
+                                marginBottom: '6px'
+                              }}
+                            >
+                              <div
+                                style={{
+                                  fontWeight: 600,
+                                  fontSize: '15px',
+                                  color: 'var(--text)'
+                                }}
+                              >
+                                Database Backup & Restore
+                              </div>
+
+                              <span
+                                style={{
+                                  fontSize: '10px',
+                                  color: 'var(--amber)',
+                                  fontWeight: 600,
+                                  whiteSpace: 'nowrap',
+                                  flexShrink: 0
+                                }}
+                              >
+                                Admin Only
+                              </span>
+                            </div>
+
+                            <div
+                              style={{
+                                fontSize: '12px',
+                                color: 'var(--muted)',
+                                marginBottom: '12px'
+                              }}
+                            >
+                              Export all local PouchDB data to a JSON file, or restore data from a previous backup.
+                            </div>
+                          </div>
+
+                          <div
+                            style={{
+                              display: 'flex',
+                              flexDirection: 'column',
+                              gap: '8px'
+                            }}
+                          >
+                            <button
+                              type="button"
+                              className="btn btn-p"
+                              onClick={handleExportBackup}
+                              disabled={isDbProcessing}
+                              style={{
+                                justifyContent: 'center',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                opacity: isDbProcessing ? 0.6 : 1,
+                                cursor: isDbProcessing ? 'wait' : 'pointer'
+                              }}
+                            >
+                              {isDbProcessing ? (
+                                <>
+                                  <span
+                                    style={{
+                                      display: 'inline-block',
+                                      width: '12px',
+                                      height: '12px',
+                                      border: '2px solid rgba(255,255,255,0.3)',
+                                      borderTopColor: '#fff',
+                                      borderRadius: '50%',
+                                      animation: 'spin 0.6s linear infinite'
+                                    }}
+                                  />
+                                  Processing...
+                                </>
+                              ) : (
+                                <>
+                                  <svg
+                                    width="16"
+                                    height="16"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                  >
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="7 10 12 15 17 10" />
+                                    <line x1="12" y1="15" x2="12" y2="3" />
+                                  </svg>
+                                  Export Full Database Backup
+                                </>
+                              )}
+                            </button>
+
+                            <label
+                              className="btn btn-g"
+                              style={{
+                                justifyContent: 'center',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                cursor: isDbProcessing ? 'not-allowed' : 'pointer',
+                                opacity: isDbProcessing ? 0.6 : 1,
+                                pointerEvents: isDbProcessing ? 'none' : 'auto'
+                              }}
+                            >
+                              {isDbProcessing ? (
+                                'Restoring...'
+                              ) : (
+                                <>
+                                  <svg
+                                    width="16"
+                                    height="16"
+                                    viewBox="0 0 24 24"
+                                    fill="none"
+                                    stroke="currentColor"
+                                    strokeWidth="2"
+                                  >
+                                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                                    <polyline points="17 8 12 3 7 8" />
+                                    <line x1="12" y1="3" x2="12" y2="15" />
+                                  </svg>
+                                  Import Database Backup
+                                </>
+                              )}
+
+                              <input
+                                type="file"
+                                accept=".json"
+                                style={{ display: 'none' }}
+                                disabled={isDbProcessing}
+                                onChange={(e) => {
+                                  const file = e.target.files?.[0];
+
+                                  if (file) {
+                                    if (
+                                      window.confirm(
+                                        'Are you sure you want to restore this database backup? Existing local data may be overwritten. This action cannot be undone.'
+                                      )
+                                    ) {
+                                      handleImportBackup(file);
+                                    }
+
+                                    e.target.value = '';
+                                  }
+                                }}
+                              />
+                            </label>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -12311,86 +14626,129 @@ useEffect(() => {
 
         {/* ═══ 1. GENERAL PRINT MODAL (FOR ALL CERTIFICATES / PERMITS) ═══ */}
         {showPrintModal && selectedPrintCert && (
-          <div 
-            className="print-modal-overlay" 
-            style={{ 
-              position: 'fixed', 
-              top: 0, 
-              left: 0, 
-              right: 0, 
-              bottom: 0, 
-              backgroundColor: 'rgba(0, 0, 0, 0.85)', 
-              display: 'flex', 
-              alignItems: 'center', 
-              justifyContent: 'center', 
-              zIndex: 99999, 
-              backdropFilter: 'blur(6px)', 
-              padding: '20px', 
-            }} 
+          <div
+            className="print-modal-overlay"
+            style={{
+              position: 'fixed',
+              inset: 0,
+              backgroundColor: 'rgba(0, 0, 0, 0.85)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              zIndex: 99999,
+              backdropFilter: 'blur(6px)',
+              padding: '20px',
+            }}
             onClick={() => setShowPrintModal(false)}
           >
-            <div 
-              className="print-modal-content" 
-              style={{ 
-                background: '#fff', 
-                borderRadius: '12px', 
-                width: '100%', 
-                maxWidth: '900px', 
-                maxHeight: '92vh', 
-                display: 'flex', 
-                flexDirection: 'column', 
-                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', 
-                overflow: 'auto', 
-              }} 
+            <div
+              className="print-modal-content"
+              style={{
+                background: 'var(--surface)',
+                border: '1px solid var(--border)',
+                borderRadius: '12px',
+                width: '100%',
+                maxWidth: '900px',
+                maxHeight: '92vh',
+                display: 'flex',
+                flexDirection: 'column',
+                boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)',
+                overflow: 'hidden',
+              }}
               onClick={(e) => e.stopPropagation()}
             >
-              {/* Print Preview Area */}
-              <div style={{ padding: '20px', flex: 1, overflow: 'auto' }}>
-                <div id="printable-certificate-card" data-print-mode={printMode}>
+              <div
+                style={{
+                  padding: '24px',
+                  flex: 1,
+                  overflow: 'auto',
+                  background: 'var(--surface2)',
+                  display: 'flex',
+                  justifyContent: 'center',
+                  alignItems: 'flex-start',
+                }}
+              >
+                <div
+                  id="printable-certificate-card"
+                  data-print-mode={printMode}
+                  style={{
+                    background: '#ffffff',
+                    color: '#000000',
+                  }}
+                >
                   {(() => {
                     const typeStr = String(
-                      selectedPrintCert.certificateType || 
-                      selectedPrintCert.type || 
-                      selectedPrintCert.clearanceType || 
-                      selectedPrintCert.certType || 
-                      ''
+                      selectedPrintCert.certificateType ||
+                        selectedPrintCert.type ||
+                        ''
                     ).toLowerCase();
-                    
-                    if (typeStr.includes('business') || typeStr.includes('permit') || selectedPrintCert.businessName) {
-                      return <BusinessPermit data={selectedPrintCert} />;
+
+                    const activeDomain =
+                      systemSettings?.publicDomain || settingsForm?.publicDomain;
+
+                    if (
+                      typeStr.includes('business') ||
+                      typeStr.includes('permit') ||
+                      selectedPrintCert.businessName
+                    ) {
+                      return (
+                        <BusinessPermit
+                          data={selectedPrintCert}
+                          publicDomain={activeDomain}
+                        />
+                      );
                     } else if (typeStr.includes('indigency')) {
-                      return <IndigencyTemplate data={selectedPrintCert} />;
-                    } else if (typeStr.includes('residency') || typeStr.includes('resident')) {
-                      return <ResidencyCertificate data={selectedPrintCert} />;
+                      return (
+                        <IndigencyTemplate
+                          data={selectedPrintCert}
+                          publicDomain={activeDomain}
+                        />
+                      );
+                    } else if (
+                      typeStr.includes('residency') ||
+                      typeStr.includes('resident')
+                    ) {
+                      return (
+                        <ResidencyCertificate
+                          data={selectedPrintCert}
+                          publicDomain={activeDomain}
+                        />
+                      );
                     } else {
-                      return <BarangayClearance data={selectedPrintCert} />;
+                      return (
+                        <BarangayClearance
+                          data={selectedPrintCert}
+                          publicDomain={activeDomain}
+                        />
+                      );
                     }
                   })()}
                 </div>
               </div>
 
-              {/* Modal Action Controls - Hidden during print via CSS */}
-              <div className="no-print" style={{ 
-                display: 'flex', 
-                justifyContent: 'flex-end', 
-                gap: '10px', 
-                padding: '16px', 
-                borderTop: '1px solid #e2e8f0', 
-                background: '#f8fafc', 
-              }}>
-                <button 
-                  type="button" 
-                  className="btn btn-g" 
-                  onClick={() => setShowPrintModal(false)} 
-                  style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}
+              <div
+                className="no-print"
+                style={{
+                  display: 'flex',
+                  justifyContent: 'flex-end',
+                  gap: '10px',
+                  padding: '16px',
+                  borderTop: '1px solid var(--border)',
+                  background: 'var(--surface)',
+                }}
+              >
+                <button
+                  type="button"
+                  className="btn btn-g"
+                  onClick={() => setShowPrintModal(false)}
                 >
                   Close
                 </button>
-                <button 
-                  type="button" 
-                  className="btn btn-p" 
-                  onClick={() => window.print()} 
-                  style={{ padding: '8px 18px', fontSize: '13px', fontWeight: 600, cursor: 'pointer', display: 'inline-flex', alignItems: 'center', gap: '6px' }}
+
+                <button
+                  type="button"
+                  className="btn btn-p"
+                  onClick={() => window.print()}
                 >
                   🖨️ Print Document
                 </button>
@@ -12696,51 +15054,51 @@ useEffect(() => {
           onClick={() => setViewingProgram(null)}
         >
           <div
-            className="modal-card"
-            style={{ background: '#1e293b', border: '1px solid rgba(79, 142, 247, 0.3)', borderRadius: '12px', width: '90%', maxWidth: '550px', padding: '24px', color: '#f8fafc', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}
+className="modal-card"
+            style={{ background: 'var(--surface)', border: '1px solid rgba(79, 142, 247, 0.3)', borderRadius: '12px', width: '90%', maxWidth: '550px', padding: '24px', color: 'var(--text)', boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.5)' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid rgba(255,255,255,0.1)', paddingBottom: '12px' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', borderBottom: '1px solid var(--border)', paddingBottom: '12px' }}>
               <div>
                 <span className={`badge ${viewingProgram.status === 'Completed' ? 't' : 'r'}`} style={{ marginBottom: '6px', display: 'inline-block' }}>
                   {viewingProgram.status}
                 </span>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: '#f1f5f9' }}>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
                   {viewingProgram.title}
                 </h3>
-                <div style={{ fontSize: '12px', color: '#94a3b8', fontFamily: 'var(--mono)', marginTop: '2px' }}>
+                <div style={{ fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)', marginTop: '2px' }}>
                   ID: {viewingProgram.id}
                 </div>
               </div>
               <button className="btn btn-g btn-sm" onClick={() => setViewingProgram(null)} style={{ padding: '4px 10px', fontSize: '14px', borderRadius: '50%' }}>
-                ✕
+                �o
               </button>
             </div>
 
-            <div style={{ background: 'rgba(15, 23, 42, 0.6)', padding: '16px', borderRadius: '8px', marginBottom: '16px', border: '1px solid rgba(255,255,255,0.05)' }}>
+            <div style={{ background: 'var(--surface2)', padding: '16px', borderRadius: '8px', marginBottom: '16px', border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
-                <span style={{ color: '#94a3b8' }}>Distribution Capacity:</span> <strong>{viewingProgram.current || 0} / {viewingProgram.target} Beneficiaries</strong>
+                <span style={{ color: 'var(--muted)' }}>Distribution Capacity:</span> <strong>{viewingProgram.current || 0} / {viewingProgram.target} Beneficiaries</strong>
               </div>
-              <div style={{ margin: '8px 0', background: '#334155', borderRadius: '4px', height: '10px', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}%`, height: '100%', background: viewingProgram.status === 'Completed' ? '#10b981' : '#3b82f6' }} />
+              <div style={{ margin: '8px 0', background: 'var(--border2)', borderRadius: '4px', height: '10px', overflow: 'hidden' }}>
+                <div style={{ width: `${Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}%`, height: '100%', background: viewingProgram.status === 'Completed' ? 'var(--green)' : '#3b82f6' }} />
               </div>
-              <div style={{ textAlign: 'right', fontSize: '12px', fontWeight: 'bold', color: '#10b981' }}>
+              <div style={{ textAlign: 'right', fontSize: '12px', fontWeight: 'bold', color: 'var(--green)' }}>
                 {Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}% Capacity Reached
               </div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', fontSize: '12px', marginBottom: '20px' }}>
               <div>
-                <label style={{ color: '#94a3b8', display: 'block' }}>Date Created / Label</label>
+                <label style={{ color: 'var(--muted)', display: 'block' }}>Date Created / Label</label>
                 <div style={{ fontWeight: 600 }}>{viewingProgram.dateLabel || 'N/A'}</div>
               </div>
               <div>
-                <label style={{ color: '#94a3b8', display: 'block' }}>Category / Type</label>
+                <label style={{ color: 'var(--muted)', display: 'block' }}>Category / Type</label>
                 <div style={{ fontWeight: 600 }}>{viewingProgram.category || 'Aid Distribution'}</div>
               </div>
             </div>
 
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid rgba(255,255,255,0.1)', paddingTop: '16px' }}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
               <button className="btn btn-g" onClick={() => { nav('aid-logs'); setViewingProgram(null); }}>
                 View Distribution Logs
               </button>
@@ -12753,54 +15111,54 @@ useEffect(() => {
       )}
       
       {/* PROGRAM EDIT MODAL */}
-{editingProgram && (
-  <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: '20px' }} onClick={() => setEditingProgram(null)}>
-    <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', width: '100%', maxWidth: '500px', padding: '24px' }} onClick={(e) => e.stopPropagation()}>
-      <h3 style={{ margin: '0 0 16px', fontSize: '18px' }}>Edit Program</h3>
-      
-      <div className="fg">
-        <label className="fl">Program Title</label>
-        <input className="fc" value={editingProgram.title} onChange={(e) => setEditingProgram({...editingProgram, title: e.target.value})} />
-      </div>
-      
-      <div className="fg2" style={{ marginTop: '12px' }}>
-        <div className="fg">
-          <label className="fl">Target</label>
-          <input className="fc" type="number" value={editingProgram.target} onChange={(e) => setEditingProgram({...editingProgram, target: Number(e.target.value)})} />
-        </div>
-        <div className="fg">
-          <label className="fl">Status</label>
-          <select className="fc" value={editingProgram.status} onChange={(e) => setEditingProgram({...editingProgram, status: e.target.value})}>
-            <option value="Active">Active</option>
-            <option value="Upcoming">Upcoming</option>
-            <option value="Completed">Completed</option>
-            <option value="Archived">Archived</option>
-          </select>
-        </div>
-      </div>
+      {editingProgram && (
+        <div className="modal-overlay" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: '20px' }} onClick={() => setEditingProgram(null)}>
+          <div className="modal-card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', width: '100%', maxWidth: '500px', padding: '24px' }} onClick={(e) => e.stopPropagation()}>
+            <h3 style={{ margin: '0 0 16px', fontSize: '18px' }}>Edit Program</h3>
+            
+            <div className="fg">
+              <label className="fl">Program Title</label>
+              <input className="fc" value={editingProgram.title} onChange={(e) => setEditingProgram({...editingProgram, title: e.target.value})} />
+            </div>
+            
+            <div className="fg2" style={{ marginTop: '12px' }}>
+              <div className="fg">
+                <label className="fl">Target</label>
+                <input className="fc" type="number" value={editingProgram.target} onChange={(e) => setEditingProgram({...editingProgram, target: Number(e.target.value)})} />
+              </div>
+              <div className="fg">
+                <label className="fl">Status</label>
+                <select className="fc" value={editingProgram.status} onChange={(e) => setEditingProgram({...editingProgram, status: e.target.value})}>
+                  <option value="Active">Active</option>
+                  <option value="Upcoming">Upcoming</option>
+                  <option value="Completed">Completed</option>
+                  <option value="Archived">Archived</option>
+                </select>
+              </div>
+            </div>
 
-      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
-        <button className="btn btn-g" onClick={() => setEditingProgram(null)}>Cancel</button>
-        <button className="btn btn-p" onClick={async () => {
-          try {
-            const docId = `program_${editingProgram.id}`;
-            const existing = await db.get(docId);
-            await db.put({
-              ...existing,
-              ...editingProgram,
-              updatedAt: new Date().toISOString()
-            });
-            setProgramsList(prev => prev.map(p => p.id === editingProgram.id ? editingProgram : p));
-            setEditingProgram(null);
-          } catch (err) {
-            console.error('Failed to update program:', err);
-            alert('Failed to save changes.');
-          }
-        }}>Save Changes</button>
-      </div>
-    </div>
-  </div>
-)}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px' }}>
+              <button className="btn btn-g" onClick={() => setEditingProgram(null)}>Cancel</button>
+              <button className="btn btn-p" onClick={async () => {
+                try {
+                  const docId = `program_${editingProgram.id}`;
+                  const existing = await db.get(docId);
+                  await db.put({
+                    ...existing,
+                    ...editingProgram,
+                    updatedAt: new Date().toISOString()
+                  });
+                  setProgramsList(prev => prev.map(p => p.id === editingProgram.id ? editingProgram : p));
+                  setEditingProgram(null);
+                } catch (err) {
+                  console.error('Failed to update program:', err);
+                  showToast('Failed to save changes.', 'error');
+                }
+              }}>Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ═══ 7. BUSINESS CLEARANCE EDIT MODAL ═══ */}
       {isBusinessModalOpen && (
@@ -12814,16 +15172,16 @@ useEffect(() => {
             style={{ background: 'var(--surface, #1e293b)', color: 'var(--text, #f8fafc)', borderRadius: '12px', width: '100%', maxWidth: '800px', maxHeight: '90vh', display: 'flex', flexDirection: 'column', boxShadow: '0 25px 50px -12px rgba(0,0,0,0.7)', border: '1px solid var(--border, #334155)', overflow: 'hidden' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--bg-card, #ffffff)', color: 'var(--text-main, inherit)' }}>
+            <div className="modal-header" style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--surface2)', color: 'var(--text)' }}>
               <div>
-                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text-main, inherit)' }}>
+                <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 700, color: 'var(--text)' }}>
                   {businessModalMode === 'edit' ? 'Edit Business Clearance' : 'New Business Clearance'}
                 </h3>
-                <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted, #64748b)' }}>
+                <p className="modal-subtitle" style={{ margin: '2px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
                   Update business details, owner information, and OR reference
                 </p>
               </div>
-              <button type="button" className="btn-close" onClick={() => setIsBusinessModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--text-main, var(--muted))', fontSize: '20px', cursor: 'pointer' }}>
+              <button type="button" className="btn-close" onClick={() => setIsBusinessModalOpen(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '20px', cursor: 'pointer' }}>
                 ✕
               </button>
             </div>
@@ -12903,31 +15261,28 @@ useEffect(() => {
       )}
 
       {/* ═══ 8. BLOTTER CERTIFICATE PRINT MODAL CALL ═══ */}
-      {/* ═══ 8. BLOTTER CERTIFICATE PRINT MODAL CALL ═══ */}
-<BlotterCertificatePrintModal
-  isOpen={isPrintModalOpen}
-  onClose={() => {
-    setIsPrintModalOpen(false);
-    setSelectedBlotter(null);
-  }}
-  blotterData={selectedBlotter ? {
-    ...selectedBlotter,
-    // ✅ Safe Fallback Mappings para maiwasan ang "undefined" errors sa loob ng Modal
-    caseNum: selectedBlotter.caseNum || selectedBlotter.trackingNo || selectedBlotter.id || selectedBlotter._id || 'N/A',
-    complainantName: selectedBlotter.complainantName || selectedBlotter.complainant || 'N/A',
-    respondentName: selectedBlotter.respondentName || selectedBlotter.respondent || 'N/A',
-    dateFiled: selectedBlotter.dateFiled || selectedBlotter.date || 'N/A',
-    timeFiled: selectedBlotter.timeFiled || selectedBlotter.incidentTime || selectedBlotter.time || 'N/A',
-    incidentType: selectedBlotter.incidentType || selectedBlotter.type || 'N/A',
-    narrative: selectedBlotter.narrative || selectedBlotter.details || 'No narrative provided.',
-    location: selectedBlotter.location || selectedBlotter.purok || 'Barangay Bustrac',
-    status: selectedBlotter.status || 'Pending',
-    // ✅ Siguraduhing may laman ang mga signatories
-    captainName: systemSettings?.punongBarangay || settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
-    secretaryName: systemSettings?.luponSecretary || settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
-    publicDomain: systemSettings?.publicDomain || settingsForm?.publicDomain || ''
-  } : null}
-/>
+      <BlotterCertificatePrintModal
+        isOpen={isPrintModalOpen}
+        onClose={() => {
+          setIsPrintModalOpen(false);
+          setSelectedBlotter(null);
+        }}
+        blotterData={selectedBlotter ? {
+          ...selectedBlotter,
+          caseNum: selectedBlotter.caseNum || selectedBlotter.trackingNo || selectedBlotter.id || selectedBlotter._id || 'N/A',
+          complainantName: selectedBlotter.complainantName || selectedBlotter.complainant || 'N/A',
+          respondentName: selectedBlotter.respondentName || selectedBlotter.respondent || 'N/A',
+          dateFiled: selectedBlotter.dateFiled || selectedBlotter.date || 'N/A',
+          timeFiled: selectedBlotter.timeFiled || selectedBlotter.incidentTime || selectedBlotter.time || 'N/A',
+          incidentType: selectedBlotter.incidentType || selectedBlotter.type || 'N/A',
+          narrative: selectedBlotter.narrative || selectedBlotter.details || 'No narrative provided.',
+          location: selectedBlotter.location || selectedBlotter.purok || 'Barangay Bustrac',
+          status: selectedBlotter.status || 'Pending',
+          captainName: systemSettings?.punongBarangay || settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
+          secretaryName: systemSettings?.luponSecretary || settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
+          publicDomain: systemSettings?.publicDomain || settingsForm?.publicDomain || ''
+        } : null}
+      />
       
       {/* ═══ BARANGAY CLEARANCE PRINT MODAL PORTAL ═══ */}
       {showClearancePrintModal && selectedClearanceCert && createPortal(
@@ -12957,7 +15312,10 @@ useEffect(() => {
             >
               <div id="printable-certificate-card" style={{ width: '210mm', minHeight: '297mm', backgroundColor: '#ffffff', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
                 <A4PreviewWrapper>
-                  <BarangayClearance data={selectedClearanceCert} />
+                  <BarangayClearance 
+                   data={selectedClearanceCert}
+                   publicDomain={systemSettings?.publicDomain || settingsForm?.publicDomain}
+                  />
                 </A4PreviewWrapper>
               </div>
             </div>
@@ -13003,6 +15361,194 @@ useEffect(() => {
         </div>,
         document.body
       )}
+
+      {/* ════════════════════════════════════════
+              CERTIFICATE REQUEST DISPATCHER MODAL
+          ════════════════════════════════════════ */}
+          {showCertDispatcher && (
+            <div
+              style={{
+                position: 'fixed',
+                top: 0,
+                left: 0,
+                right: 0,
+                bottom: 0,
+                backgroundColor: 'rgba(0, 0, 0, 0.75)',
+                backdropFilter: 'blur(4px)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                zIndex: 99999,
+                padding: '20px',
+              }}
+              onClick={() => setShowCertDispatcher(false)}
+            >
+              <div
+                style={{
+                  background: 'var(--surface, #1e293b)',
+                  border: '1px solid var(--border, #334155)',
+                  borderRadius: '16px',
+                  width: '100%',
+                  maxWidth: '850px',
+                  padding: '32px',
+                  boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)',
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+                  <div>
+                    <h3 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>
+                      Select Certificate Workflow
+                    </h3>
+                    <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
+                      Choose the appropriate processing module for this request.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setShowCertDispatcher(false)}
+                    style={{ background: 'none', border: 'none', color: 'var(--muted)', cursor: 'pointer', fontSize: '24px', lineHeight: 1 }}
+                  >
+                    ✕
+                  </button>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: '16px' }}>
+                  
+                  {/* Option 1: Barangay Clearance (Individual) */}
+                  <button
+                    onClick={() => {
+                      setShowCertDispatcher(false);
+                      nav('brgy_clearance');
+                    }}
+                    style={{
+                      background: 'var(--surface2, #334155)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '12px',
+                      padding: '24px 16px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.2s ease',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-start',
+                      gap: '12px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--primary, #3b82f6)';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(59, 130, 246, 0.2)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  >
+                    <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: 'rgba(59, 130, 246, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary, #3b82f6)' }}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <line x1="16" y1="13" x2="8" y2="13" />
+                        <line x1="16" y1="17" x2="8" y2="17" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>Barangay Clearance</div>
+                      <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px', lineHeight: 1.4 }}>For individual residents. Includes blotter verification & CTC integration.</div>
+                    </div>
+                  </button>
+
+                  {/* Option 2: Business Clearance */}
+                  <button
+                    onClick={() => {
+                      setShowCertDispatcher(false);
+                      nav('business_clearance');
+                    }}
+                    style={{
+                      background: 'var(--surface2, #334155)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '12px',
+                      padding: '24px 16px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.2s ease',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-start',
+                      gap: '12px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--amber, #f59e0b)';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(245, 158, 11, 0.2)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  >
+                    <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: 'rgba(245, 158, 11, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--amber, #f59e0b)' }}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+                        <path d="M9 22V12h6v10" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>Business Clearance</div>
+                      <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px', lineHeight: 1.4 }}>For business permits, sari-sari stores, and commercial establishments.</div>
+                    </div>
+                  </button>
+
+                  {/* Option 3: Standard Certificates */}
+                  <button
+                    onClick={() => {
+                      setShowCertDispatcher(false);
+                      nav('cert-new');// Opens the standard CertificateLifecycle screen
+                    }}
+                    style={{
+                      background: 'var(--surface2, #334155)',
+                      border: '1px solid var(--border)',
+                      borderRadius: '12px',
+                      padding: '24px 16px',
+                      cursor: 'pointer',
+                      textAlign: 'left',
+                      transition: 'all 0.2s ease',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'flex-start',
+                      gap: '12px',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--green, #10b981)';
+                      e.currentTarget.style.transform = 'translateY(-2px)';
+                      e.currentTarget.style.boxShadow = '0 10px 15px -3px rgba(16, 185, 129, 0.2)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.borderColor = 'var(--border)';
+                      e.currentTarget.style.transform = 'translateY(0)';
+                      e.currentTarget.style.boxShadow = 'none';
+                    }}
+                  >
+                    <div style={{ width: '48px', height: '48px', borderRadius: '10px', background: 'rgba(16, 185, 129, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--green, #10b981)' }}>
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                        <polyline points="14 2 14 8 20 8" />
+                        <path d="M12 18v-6" />
+                        <path d="M9 15h6" />
+                      </svg>
+                    </div>
+                    <div>
+                      <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>Standard Certificates</div>
+                      <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px', lineHeight: 1.4 }}>For Indigency, Residency, and other general certificate requests.</div>
+                    </div>
+                  </button>
+
+                </div>
+              </div>
+            </div>
+          )}
                 
                 <div className="toast-container" style={{ position: 'fixed', bottom: '24px', right: '24px', zIndex: 99999, display: 'flex', flexDirection: 'column', gap: '12px' }}>
                   {toasts.map((toast) => (
@@ -13034,19 +15580,286 @@ useEffect(() => {
                     </div>
                   ))}
                 </div>
+                {/* Credentials Display Modal */}
+{credentialsModal?.show && (
+  <div 
+    style={{ 
+      position: 'fixed', 
+      inset: 0, 
+      background: 'rgba(0,0,0,0.75)', 
+      display: 'flex', 
+      alignItems: 'center', 
+      justifyContent: 'center', 
+      zIndex: 99999, 
+      padding: '20px' 
+    }}
+    onClick={() => setCredentialsModal(null)}
+  >
+    <div 
+      style={{ 
+        background: 'var(--surface)', 
+        border: '1px solid var(--border)', 
+        borderRadius: '16px', 
+        width: '100%', 
+        maxWidth: '480px', 
+        padding: '32px',
+        boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)'
+      }}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{ textAlign: 'center', marginBottom: '24px' }}>
+        <div style={{ 
+          width: '64px', 
+          height: '64px', 
+          borderRadius: '50%', 
+          background: 'rgba(16, 185, 129, 0.15)', 
+          display: 'flex', 
+          alignItems: 'center', 
+          justifyContent: 'center', 
+          margin: '0 auto 16px',
+          color: 'var(--green, #10b981)'
+        }}>
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <polyline points="20 6 9 17 4 12" />
+          </svg>
+        </div>
+        <h3 style={{ margin: '0 0 8px', fontSize: '18px', fontWeight: '700', color: 'var(--text)' }}>
+          Credentials Generated Successfully!
+        </h3>
+        <p style={{ margin: 0, fontSize: '13px', color: 'var(--muted)' }}>
+          Please provide these credentials to: <strong>{credentialsModal.residentName}</strong>
+        </p>
+      </div>
+
+      <div style={{ 
+        background: 'var(--surface2)', 
+        border: '1px solid var(--border)', 
+        borderRadius: '12px', 
+        padding: '20px',
+        marginBottom: '20px'
+      }}>
+        <div style={{ marginBottom: '16px' }}>
+          <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px', display: 'block' }}>
+            Username
+          </label>
+          <div style={{ 
+            fontFamily: 'var(--mono)', 
+            fontSize: '16px', 
+            fontWeight: '700', 
+            color: 'var(--text)',
+            background: 'var(--surface)',
+            padding: '12px',
+            borderRadius: '8px',
+            border: '1px solid var(--border)',
+            wordBreak: 'break-all'
+          }}>
+            {credentialsModal.username}
+          </div>
+        </div>
+
+        <div>
+          <label style={{ fontSize: '11px', fontWeight: '700', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '6px', display: 'block' }}>
+            Temporary Password
+          </label>
+          <div style={{ 
+            fontFamily: 'var(--mono)', 
+            fontSize: '16px', 
+            fontWeight: '700', 
+            color: 'var(--text)',
+            background: 'var(--surface)',
+            padding: '12px',
+            borderRadius: '8px',
+            border: '1px solid var(--border)',
+            wordBreak: 'break-all'
+          }}>
+            {credentialsModal.password}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ 
+        background: 'rgba(245, 158, 11, 0.1)', 
+        border: '1px solid rgba(245, 158, 11, 0.3)', 
+        borderRadius: '8px', 
+        padding: '12px',
+        marginBottom: '20px',
+        fontSize: '12px',
+        color: 'var(--amber, #f59e0b)',
+        lineHeight: '1.5'
+      }}>
+        <strong>⚠️ Important:</strong> Advise the resident to change their password immediately after first login for security purposes.
+      </div>
+
+      <div style={{ display: 'flex', gap: '10px' }}>
+        <button 
+          className="btn btn-g" 
+          onClick={() => {
+            navigator.clipboard.writeText(`Username: ${credentialsModal.username}\nPassword: ${credentialsModal.password}`);
+            showToast('Credentials copied to clipboard!', 'success');
+          }}
+          style={{ flex: 1 }}
+        >
+           Copy Credentials
+        </button>
+        <button 
+          className="btn btn-p" 
+          onClick={() => setCredentialsModal(null)}
+          style={{ flex: 1 }}
+        >
+          Done
+        </button>
+      </div>
+    </div>
+  </div>
+)}
+{showAddResidentModal && (
+  <div 
+    style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: '20px' }} 
+    onClick={() => setShowAddResidentModal(false)}
+  >
+    <div 
+      style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '16px', width: '100%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }} 
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '20px 24px', borderBottom: '1px solid var(--border)' }}>
+        <div>
+          <h3 style={{ margin: 0, fontSize: '18px', fontWeight: '700', color: 'var(--text)' }}>
+            New Resident Information
+          </h3>
+          <p style={{ margin: '4px 0 0', fontSize: '12px', color: 'var(--muted)' }}>
+            Please fill out the required fields below to register a new resident.
+          </p>
+        </div>
+        <button onClick={() => setShowAddResidentModal(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '24px', cursor: 'pointer' }}>
+          ✕
+        </button>
+      </div>
+      
+      {/* Modal Body (Your ResidentForm Component) */}
+      <div style={{ padding: '24px' }}>
+        <ResidentForm
+          residentForm={residentForm}
+          setResidentForm={setResidentForm}
+          editingResidentId={editingResidentId}
+          photoPreviewUrl={photoPreviewUrl}
+          setPhotoPreviewUrl={setPhotoPreviewUrl}
+          handlePhotoChange={handlePhotoChange}
+          handleRemovePhoto={handleRemovePhoto}
+          updateResidentField={updateResidentField}
+          submitAddResident={(e) => {
+            submitAddResident(e); 
+            setShowAddResidentModal(false); 
+          }}
+          nav={nav}
+          setEditingResidentId={setEditingResidentId}
+          EMPTY_RESIDENT={EMPTY_RESIDENT}
+          onCancel={() => setShowAddResidentModal(false)}
+        />
+      </div>
+    </div>
+  </div>
+)}
+
+      {/* ═══════════════════════════════════════════════════════════
+          GLOBAL PRINT PORTAL — outside all screen conditionals
+          ═══════════════════════════════════════════════════════════ */}
+      {printPreviewProps && createPortal(
+        <div
+          className="print-overlay"
+          onClick={(e) => {
+            // Click backdrop to close
+            if (e.target === e.currentTarget) closePrint();
+          }}
+        >
+          {!printPreviewProps.valid ? (
+            /* ── Invalid / Error State ── */
+            <div style={{
+              background: 'var(--surface)',
+              padding: '40px',
+              borderRadius: '12px',
+              textAlign: 'center',
+              maxWidth: '420px',
+              width: '90%',
+              boxShadow: '0 20px 40px rgba(0,0,0,0.3)'
+            }}>
+              <div style={{ fontSize: '40px', marginBottom: '12px' }}>⚠️</div>
+              <h3 style={{ margin: '0 0 8px', color: 'var(--text)' }}>
+                Unable to Load Preview
+              </h3>
+              <p style={{ margin: '0 0 20px', color: 'var(--muted)', fontSize: '13px', lineHeight: 1.5 }}>
+                {printPreviewProps.error}
+              </p>
+              <button type="button" className="btn btn-p" onClick={closePrint}>
+                Close Preview
+              </button>
+            </div>
+          ) : (
+            /* ── Valid Print Wrapper ── */
+            <CertificatePrintWrapper
+              key={`${printData?._id || 'print'}-${printMode}`}
+              type={printPreviewProps.printType}
+              mode={printPreviewProps.mode}
+              data={printPreviewProps.data}
+              onClose={closePrint}
+            />
+          )}
+        </div>,
+        document.body
+      )}
+      {/* ═══ GLOBAL PRINT PORTAL — isang beses lang, outside all screens ═══ */}
+{printData && createPortal(
+  <div
+    className="print-overlay"
+    onClick={(e) => {
+      if (e.target === e.currentTarget) {
+        setPrintData(null);
+        setSelectedCertificate(null);
+      }
+    }}
+  >
+    <CertificatePrintWrapper
+      key={`${printData._id || 'print'}-${printMode}`}
+      type={normalizeCertType(printData.certificateType || printData.certType || printData.type)}
+      mode={printMode}
+      data={{
+        trackingCode: printData.trackingCode || printData._id || 'CERT-000000',
+        fullName: printData.residentName || (printData.firstName ? `${printData.firstName} ${printData.lastName}` : printData.fullName) || 'JUAN DELA CRUZ',
+        address: printData.address || printData.purok || 'Barangay Bustrac, Nabua, Camarines Sur',
+        purpose: printData.purpose || 'Local Employment',
+        issueDate: (() => {
+          const raw = printData.issueDate || printData.issuedAt || printData.dateIssued;
+          return raw
+            ? new Date(raw).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
+            : new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' });
+        })(),
+        orNumber: printData.orNumber ?? 'N/A',
+        ctcNumber: printData.ctc?.number ?? printData.ctcNumber ?? 'N/A',
+        amountPaid: printData.amountPaid ?? printData.ctc?.amountPaid ?? 0,
+        civilStatus: printData.civilStatus || 'Single',
+        age: printData.age || 'N/A',
+        punongBarangay: printData.punongBarangay || 'HON. ANNABELLE E. RULL',
+      }}
+      onClose={() => {
+        setPrintData(null);
+        setSelectedCertificate(null);
+      }}
+    />
+  </div>,
+  document.body
+)}
+
 
                 </div>{/* /app */}
               </div>/* /dashboard-shell-container */
             );
           }
-
 const dropdownItemStyle = {
   width: '100%',
   textAlign: 'left',
   background: 'transparent',
   border: 'none',
   padding: '10px 14px',
-  color: '#e5e7eb',
+  color: 'var(--text)',
   fontSize: '12px',
   cursor: 'pointer',
   transition: 'background 0.2s',

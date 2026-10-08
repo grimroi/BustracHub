@@ -5,7 +5,7 @@ const nano = require('nano');
 const certificateRoutes = require('./routes/certificateRoutes');
 const blotterRoutes = require('./routes/blotterRoutes');
 const { sendBlotterNotification } = require('./services/emailService');
-const { sendBlotterSMS } = require('./services/smsService'); // ⬅️ Inilipat dito sa taas
+const { sendResidentSMS } = require('./services/smsService');
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -18,7 +18,6 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// CouchDB Connection
 const COUCHDB_URL = process.env.COUCHDB_URL || 'http://admin:capstone2026@127.0.0.1:5984';
 const couch = nano(COUCHDB_URL);
 const DB_NAME = 'bustrachub_db';
@@ -36,7 +35,6 @@ async function initDB() {
     db = couch.use(DB_NAME);
     app.set('db', db);
 
-    // Default accounts na kailangang siguraduhing naroroon
     const demoUsers = [
       { _id: 'user_mgcortero', type: 'user', username: 'mgcortero', password: 'password', role: 'staff', path: '/staff' },
       { _id: 'user_jmacabangon', type: 'user', username: 'jmacabangon', password: 'password', role: 'admin', path: '/admin' },
@@ -358,18 +356,18 @@ function startBlotterSMSListener() {
   const axios = require('axios');
   const changesUrl = `${COUCHDB_URL}/${DB_NAME}/_changes?feed=continuous&since=now&include_docs=true&heartbeat=10000`;
 
-  let streamBuffer = ''; // 🟢 FIX 1: Stream Buffer para sa naputol na JSON network chunks
+  let streamBuffer = '';
 
   axios({
     method: 'GET',
     url: changesUrl,
     responseType: 'stream',
-    timeout: 0 // 🟢 FIX 2: Pigilan ang kusa at paulit-ulit na pag-disconnect ng Axios socket
+    timeout: 0 
   }).then((response) => {
     response.data.on('data', (chunk) => {
       streamBuffer += chunk.toString();
       const lines = streamBuffer.split('\n');
-      streamBuffer = lines.pop(); // Iwanan ang huling hindi pa buong linya sa buffer
+      streamBuffer = lines.pop(); 
 
       for (const line of lines) {
         if (!line.trim()) continue;
@@ -391,7 +389,6 @@ function startBlotterSMSListener() {
           const caseNum = doc.caseNumber || doc.trackingNo || doc.refNumber || doc._id;
           const currentStatus = doc.status;
           
-          // Unique processing key bawat status (para gumana sa 1st, 2nd, at 3rd Summon)
           const processingKey = `${caseNum}_${currentStatus}`;
 
           if (processingCases.has(processingKey)) continue;
@@ -407,7 +404,7 @@ function startBlotterSMSListener() {
           const needsSms = doc.lastSmsStatus !== currentStatus;
 
           if (needsSms && phone) {
-            sendBlotterSMS(phone, name, caseNum, currentStatus, schedule).then(success => {
+            sendResidentSMS(phone, name, `Ang inyong blotter case ${caseNum} ay may bagong update. Status: ${currentStatus}. ${schedule ? `Patawag: ${schedule}.` : ''}`).then(success => {
               if (success) {
                 console.log(`✅ SMS successfully sent to ${name} (${phone})`);
                 doc.smsSent = true;

@@ -39,7 +39,6 @@ const SyncStatusIndicator = ({ syncState }) => {
 
   const status = getStatus();
 
-  // 🔴 Huwag magpakita ng kahit ano sa UI kapag ONLINE + SYNCED (pagkalipas ng 3 seconds)
   if (status === 'success' && !showSuccessMessage) {
     return null;
   }

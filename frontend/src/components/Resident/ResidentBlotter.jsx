@@ -1,5 +1,7 @@
 import { useState } from 'react';
 import { getBlotterStepProgress, formatLocationDisplay } from '../../utils/residentUtils';
+import { localDb as db } from "../../services/db";
+
 
 const blotterSteps = ['Filed', 'Investigation', 'Mediation / Summons', 'Resolved'];
 
@@ -8,6 +10,7 @@ export default function ResidentBlotter({
   loggedInUser,
   submitBlotter,
   handleOpenEdit,
+  loadData
 }) {
   const [blotterForm, setBlotterForm] = useState({
     subject: '',
@@ -15,6 +18,7 @@ export default function ResidentBlotter({
     incidentDate: '',
     location: '',
     respondent: '',
+    attachments: [], 
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(!myBlotters || myBlotters.length === 0);
@@ -24,42 +28,112 @@ export default function ResidentBlotter({
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    if (!blotterForm.subject.trim() || !blotterForm.details.trim()) {
-      alert('Please fill in all required fields.');
-      return;
+  e.preventDefault();
+
+  if (!blotterForm.subject?.trim() || !blotterForm.details?.trim()) {
+  showToast('error', 'Please fill in all required fields (Subject and Details).');
+    return;
+  }
+
+  setIsSubmitting(true);
+
+  try {
+    const formattedLocation =
+      blotterForm.location?.trim() || 'Unknown Location';
+    const trackingNo = `BLT-${new Date().getFullYear()}-${Date.now()
+      .toString()
+      .slice(-5)}`;
+
+    const newReport = {
+      _id: `blotter_${Date.now()}`,
+      type: 'blotter_report',
+      trackingNo,
+      refNumber: trackingNo,
+      subject: blotterForm.subject.trim(),
+      incidentType: blotterForm.subject.trim(),
+      details: blotterForm.details.trim(),
+      narrative: blotterForm.details.trim(),
+      incidentDate:
+        blotterForm.incidentDate ||
+        new Date().toISOString().split('T')[0],
+      location: formattedLocation,
+      purok: formattedLocation,
+      respondent:
+        blotterForm.respondent?.trim() || 'Under Investigation',
+      respondentName:
+        blotterForm.respondent?.trim() || 'Under Investigation',
+      complainant:
+        loggedInUser?.fullName || loggedInUser?.name || 'Resident',
+      complainantName:
+        loggedInUser?.fullName || loggedInUser?.name || 'Resident',
+      residentId:
+        loggedInUser?.residentId ||
+        loggedInUser?.id ||
+        loggedInUser?._id ||
+        'RES-UNKNOWN',
+      attachments: blotterForm.attachments || [],
+      status: 'Open',
+      step: 1,
+      synced: false,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    if (!db) {
+      throw new Error('Database connection is not available.');
     }
-    setIsSubmitting(true);
-    try {
-      await submitBlotter({
-        subject: blotterForm.subject.trim(),
-        details: blotterForm.details.trim(),
-        incidentDate: blotterForm.incidentDate,
-        location: blotterForm.location.trim(),
-        respondent: blotterForm.respondent.trim(),
-        complainant: loggedInUser?.fullName || loggedInUser?.name || 'Resident',
-        residentId: loggedInUser?.residentId || loggedInUser?.id || loggedInUser?._id || '',
-      });
-      setBlotterForm({ subject: '', details: '', incidentDate: '', location: '', respondent: '' });
-    } catch (err) {
-      console.error('Blotter submit error:', err);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
+
+    await db.put(newReport);
+
+    setBlotterForm({
+      subject: '',
+      details: '',
+      incidentDate: '',
+      location: '',
+      respondent: '',
+      attachments: [],
+    });
+
+    setIsFormOpen(false);
+
+if (typeof Swal !== 'undefined') {
+  Swal.fire({
+    icon: 'success',
+    title: 'Report Submitted Successfully!',
+    text: 'It is saved locally and will automatically sync to the Barangay Admin once you are online.',
+    timer: 3500,
+    showConfirmButton: false,
+    timerProgressBar: true,
+  });
+} else if (typeof showToast === 'function') {
+  showToast('Report submitted! It will sync when online.', 'success');
+} else {
+  alert('Report submitted successfully! It will sync when online.');
+}
+
+if (typeof loadData === 'function') {
+  await loadData();
+}
+  } catch (err) {
+    console.error('Blotter submit error:', err);
+   showToast('error', `Failed to submit report: ${err.message || 'Unknown error'}`);
+  } finally {
+    setIsSubmitting(false);
+  }
+};
   
   const handleBlotterSuccess = (newDoc, wasOffline) => {
     if (wasOffline) {
       if (typeof showToast === 'function') {
-        showToast("✅ Report saved locally! It will auto-sync when online.", "success");
+        showToast(" Report saved locally! It will auto-sync when online.", "success");
       } else {
-        alert("✅ Report saved locally! It will auto-sync when online.");
+        showToast('success', 'Report saved locally! It will auto-sync when online.');
       }
     } else {
       if (typeof showToast === 'function') {
-        showToast("✅ Incident report submitted successfully!", "success");
+        showToast(" Incident report submitted successfully!", "success");
       } else {
-        alert("✅ Incident report submitted successfully!");
+        showToast('success', 'Incident report submitted successfully!');
       }
     }
     
@@ -131,29 +205,43 @@ export default function ResidentBlotter({
               />
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 10, marginBottom: 12 }}>
-              <div className="fg" style={{ margin: 0 }}>
-                <label className="fl" htmlFor="blotter-date">Incident Date</label>
-                <input 
-                  id="blotter-date" 
-                  type="date" 
-                  className="fc" 
-                  value={blotterForm.incidentDate} 
-                  onChange={updateForm('incidentDate')} 
+            <div
+                style={{
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                  gap: 10,
+                  marginBottom: 12
+                }}
+              >
+                <div className="fg" style={{ margin: 0 }}>
+                <label className="fl" htmlFor="blotter-date">
+                  Incident Date <span style={{ color: 'var(--red)' }}>*</span>
+                </label>
+                <input
+                  id="blotter-date"
+                  type="date"
+                  className="fc"
+                  required
+                  value={blotterForm.incidentDate}
+                  onChange={updateForm('incidentDate')}
+                  max={new Date().toISOString().split('T')[0]}
                 />
               </div>
+
               <div className="fg" style={{ margin: 0 }}>
-                <label className="fl" htmlFor="blotter-location">Location / Zone</label>
-                <input 
-                  id="blotter-location" 
-                  type="text" 
-                  className="fc" 
-                  placeholder="e.g. Purok 3" 
-                  value={blotterForm.location} 
-                  onChange={updateForm('location')} 
+                <label className="fl" htmlFor="blotter-location">
+                  Location / Zone
+                </label>
+                <input
+                  id="blotter-location"
+                  type="text"
+                  className="fc"
+                  placeholder="e.g. Purok 3, Main Street"
+                  value={blotterForm.location}
+                  onChange={updateForm('location')}
                 />
               </div>
-            </div>
+              </div>
 
             <div className="fg" style={{ marginBottom: 12 }}>
               <label className="fl" htmlFor="blotter-respondent">Respondent (if known)</label>
@@ -189,6 +277,109 @@ export default function ResidentBlotter({
                   {(blotterForm.details || '').length}/500
                 </span>
               </div>
+            </div>
+
+            {/* Evidence Upload Section */}
+            <div className="fg" style={{ marginBottom: '16px' }}>
+              <label className="fl">Evidence Attachments (Optional)</label>
+              <input 
+                type="file" 
+                id="resident-blotter-evidence" 
+                multiple 
+                accept="image/*, video/*, application/pdf" 
+                style={{ display: 'none' }} 
+                onChange={async (e) => {
+                  const files = Array.from(e.target.files || []);
+                  if (!files.length) return;
+                  const MAX_SIZE_MB = 5;
+                  const processedFiles = [];
+                  for (const file of files) {
+                    if (file.size > MAX_SIZE_MB * 1024 * 1024) {
+                     showToast('error', `Masyadong malaki ang file na "${file.name}". Ang limit ay ${MAX_SIZE_MB}MB lamang bawat file.`);
+                      continue;
+                    }
+                    const base64Data = await new Promise((resolve, reject) => {
+                      const reader = new FileReader();
+                      reader.readAsDataURL(file);
+                      reader.onload = () => resolve(reader.result);
+                      reader.onerror = (error) => reject(error);
+                    });
+                    processedFiles.push({
+                      id: 'EVID-' + Date.now() + '-' + Math.random().toString(36).substr(2, 4),
+                      name: file.name,
+                      size: (file.size / 1024 / 1024).toFixed(2) + ' MB',
+                      type: file.type,
+                      data: base64Data,
+                    });
+                  }
+                  setBlotterForm((prev) => ({ ...prev, attachments: [...(prev.attachments || []), ...processedFiles] }));
+                  e.target.value = ''; // Reset input
+                }} 
+              />
+              
+              {/* ✅ FIXED: Added flexWrap: 'wrap' at pinaliit ng konti ang text para sa mobile */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
+                <button 
+                  type="button" 
+                  className="btn btn-g btn-sm" 
+                  onClick={() => document.getElementById('resident-blotter-evidence').click()} 
+                  style={{ 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    justifyContent: 'center',
+                    gap: '6px', 
+                    flex: '1 1 250px' 
+                  }} 
+                >
+                  📎 Attach Photo/Video/PDF (Max 5MB/file, 8MB total)
+                </button>
+                
+                {blotterForm.attachments && blotterForm.attachments.length > 0 && (
+                  <button 
+                    type="button" 
+                    className="btn btn-sm" 
+                    onClick={() => setBlotterForm(prev => ({ ...prev, attachments: [] }))} 
+                    style={{ 
+                      background: 'rgba(239, 68, 68, 0.1)', 
+                      color: '#ef4444', 
+                      border: '1px solid rgba(239, 68, 68, 0.3)', 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      justifyContent: 'center',
+                      gap: '6px',
+                      flex: '0 1 auto' // ✅ Keep it compact
+                    }} 
+                  >
+                    🗑️ Clear All
+                  </button>
+                )}
+              </div>
+
+              {/* Display Attached Files List */}
+              {blotterForm.attachments && blotterForm.attachments.length > 0 && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '10px' }}>
+                  {blotterForm.attachments.map((att) => (
+                    <div key={att.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--surface2)', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', fontSize: '12px' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '8px', overflow: 'hidden', flex: 1 }}>
+                        <span style={{ fontWeight: 600, textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }}>
+                          {att.name}
+                        </span>
+                        <span style={{ fontSize: '10px', color: 'var(--muted)', flexShrink: 0 }}>({att.size})</span>
+                      </div>
+                      <button 
+                        type="button" 
+                        style={{ background: 'none', border: 'none', color: '#ef4444', cursor: 'pointer', padding: '0 4px', fontSize: '14px', flexShrink: 0 }} 
+                        onClick={() => {
+                          setBlotterForm((prev) => ({ ...prev, attachments: prev.attachments.filter((item) => item.id !== att.id) }));
+                        }} 
+                        title="Remove attachment"
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             <button 
@@ -349,13 +540,18 @@ export default function ResidentBlotter({
                     Incident Date:{" "}
                     <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{item.incidentDate || item.dateFiled || 'N/A'}</strong>
                   </span>
-                  <span style={{
-                    fontSize: 9, fontWeight: 700, padding: '2px 6px', borderRadius: 4,
-                    background: 'var(--surface2, rgba(255,255,255,0.05))',
-                    color: (item.synced === true || item.isSynced === true) ? '#10b981' : '#f59e0b',
-                    border: `1px solid ${(item.synced === true || item.isSynced === true) ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                  <span style={{ 
+                    fontSize: 9, 
+                    fontWeight: 700, 
+                    padding: '2px 6px', 
+                    borderRadius: 4, 
+                    background: (item.synced || item.isSynced) ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', 
+                    color: (item.synced || item.isSynced) ? '#10b981' : '#f59e0b', 
+                    border: `1px solid ${(item.synced || item.isSynced) ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.5px'
                   }}>
-                    {(item.synced === true || item.isSynced === true) ? 'Synced' : 'Local Log'}
+                    {(item.synced || item.isSynced) ? '✓ Synced' : '⏳ Local Log'}
                   </span>
                 </div>
               </div>

@@ -55,7 +55,7 @@
 
 /* Fallback para sa system-level Dark Mode preference */
 @media (prefers-color-scheme: dark) {
-  body:not(.light-theme) {
+  html:not([data-theme="light"]) {
     --sync-success-bg: rgba(30, 142, 62, 0.2);
     --sync-success-text: #81c995;
     --sync-success-border: rgba(129, 201, 149, 0.3);

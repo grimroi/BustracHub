@@ -26,11 +26,12 @@ export interface CertificateData {
 
 interface WrapperProps {
   type: CertificateType;
+  mode?: 'original' | 'copy' | 'standard'; 
   data: CertificateData;
   onClose?: () => void;
 }
 
-export const CertificatePrintWrapper: React.FC<WrapperProps> = ({ type, data, onClose }) => {
+export const CertificatePrintWrapper: React.FC<WrapperProps> = ({ type, mode,  data, onClose }) => {
   const printRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
@@ -53,45 +54,41 @@ export const CertificatePrintWrapper: React.FC<WrapperProps> = ({ type, data, on
   };
 
   return (
-    <div className="flex flex-col items-center p-4 min-h-screen bg-gray-900 text-white">
-      {/* Control Action Buttons */}
-      <div className="no-print flex gap-4 mb-6 bg-gray-800 p-4 rounded-lg shadow-md w-full max-w-4xl justify-between items-center">
+  <div className="print-modal-overlay" onClick={(e) => e.stopPropagation()}>
+    <div className="print-modal-content"> 
+      <div className="modal-actions-bar no-print">
         <div>
-          <h2 className="text-lg font-bold">Print Preview: {type.toUpperCase()}</h2>
-          <p className="text-sm text-gray-400">Reference: {data.trackingCode}</p>
+          <h2 style={{ margin: 0, fontSize: '16px', fontWeight: 700, color: '#f8fafc' }}>
+            Print Preview: {type.toUpperCase()}
+          </h2>
+          <p style={{ margin: '4px 0 0', fontSize: '13px', color: '#94a3b8' }}>
+            Reference: {data.trackingCode}
+          </p>
         </div>
-        <div className="flex gap-2">
+        <div style={{ display: 'flex', gap: '10px' }}>
           {onClose && (
-            <button
-              onClick={onClose}
-              className="px-4 py-2 bg-gray-600 hover:bg-gray-700 rounded text-sm font-semibold transition"
-            >
-              Cancel
+            <button type="button" className="btn-close-modal" onClick={onClose}>
+              ✕ Close
             </button>
           )}
-          <button
-            onClick={handlePrint}
-            className="px-6 py-2 bg-blue-600 hover:bg-blue-700 rounded text-sm font-bold flex items-center gap-2 shadow transition"
-          >
+          <button type="button" className="btn-print" onClick={handlePrint}>
             🖨️ Print Document
           </button>
         </div>
       </div>
-
-      {/* Printable Paper Canvas Area */}
-      <div
-        ref={printRef}
-        className="printable-area bg-white text-black shadow-2xl p-8 rounded-sm"
-        style={{
-          width: '210mm',
-          minHeight: '297mm',
-          boxSizing: 'border-box'
-        }}
-      >
-        {renderTemplate()}
-      </div>     
-    </div>
-  );
+      <div className="paper-scroll-wrapper">
+        <div
+          ref={printRef}
+          className="printable-certificate"
+          id="printable-certificate-card"
+          data-print-mode={mode || 'standard'}
+        >
+          {renderTemplate()}
+        </div>
+      </div>
+    </div> 
+  </div>
+);
 };
 
 export default CertificatePrintWrapper;

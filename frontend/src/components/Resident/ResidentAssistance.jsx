@@ -1,9 +1,10 @@
 export default function ResidentAssistance({ myAssistance }) {
-  const pendingCount = myAssistance.filter((a) =>
+  const safeAssistance = Array.isArray(myAssistance) ? myAssistance : [];
+  const pendingCount = safeAssistance.filter((a) =>
     ['pending', 'scheduled'].includes((a.status || '').toLowerCase())
   ).length;
 
-  const completedCount = myAssistance.filter((a) =>
+  const completedCount = safeAssistance.filter((a) =>
     ['released', 'completed'].includes((a.status || '').toLowerCase())
   ).length;
 
@@ -20,7 +21,7 @@ export default function ResidentAssistance({ myAssistance }) {
         {/* Total Received */}
         <div style={{ padding: '14px 10px', textAlign: 'center', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12 }}>
           <div style={{ color: 'var(--text)', fontSize: 22, fontWeight: 800, lineHeight: 1 }}>
-            {myAssistance.length}
+            {safeAssistance.length}
           </div>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 6 }}>
             Total Received
@@ -52,7 +53,7 @@ export default function ResidentAssistance({ myAssistance }) {
       <div className="card" style={{ padding: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14 }}>
         <div style={{ marginBottom: 14, fontWeight: 800, fontSize: 14, color: 'var(--text)' }}>Assistance History</div>
 
-        {myAssistance.length === 0 ? (
+       {safeAssistance.length === 0 ? (
           <div style={{
             textAlign: 'center', padding: '32px 20px', background: 'var(--surface2, rgba(255,255,255,0.02))',
             border: '1px dashed var(--border)', borderRadius: 12, color: 'var(--muted)', marginTop: 8,
@@ -64,7 +65,7 @@ export default function ResidentAssistance({ myAssistance }) {
           </div>
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-            {myAssistance.map((item) => {
+            {safeAssistance.map((item) => {
               const isCompleted = ['released', 'completed'].includes((item.status || '').toLowerCase());
               return (
                 <div key={item._id || item.refNumber} style={{

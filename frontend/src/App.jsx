@@ -6,7 +6,9 @@ import ResidentUI from './pages/ResidentUI';
 import DashboardPortal from './pages/DashboardPortal';
 import ProtectedRoute from './pages/ProtectedRoute';
 import Register from './pages/Register';
+import ResidentRegister from './pages/ResidentRegister';
 import { setupPouchDBSync, resolveDbConflicts } from './services/db';
+import VerifyDocument from './pages/VerifyDocument';
 
 
 
@@ -28,6 +30,7 @@ export default function App() {
         <Route path="/" element={<LandingPage />} />
         <Route path="/login" element={<LogIn />} />
         <Route path="/register" element={<Register />} />
+        <Route path="/resident-register" element={<ResidentRegister />} />
 
         <Route
           path="/resident"
@@ -54,6 +57,7 @@ export default function App() {
           }
         />
         <Route path="*" element={<LogIn />} />
+        <Route path="/verify" element={<VerifyDocument />} />
       </Routes>
     </Router>
   );

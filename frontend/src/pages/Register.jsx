@@ -25,7 +25,7 @@ export default function Register() {
 
     try {
       if (!formData.username || !formData.password || !formData.fullName) {
-        alert('Please fill in all required fields.');
+        showToast('error', 'Please fill in all required fields.');
         setIsLoading(false);
         return;
       }
@@ -71,11 +71,11 @@ export default function Register() {
       };
       localStorage.setItem('bustrac_offline_auth', JSON.stringify(existingOfflineAuth));
 
-      alert('✓ Account successfully created! You may now sign in.');
+     showToast('success', 'Account successfully created! You may now sign in.');
       navigate('/login');
     } catch (err) {
       console.error('Registration error:', err);
-      alert(`Registration failed: ${err.message}`);
+     showToast('error', `Registration failed: ${err.message}`);
     } finally {
       setIsLoading(false);
     }

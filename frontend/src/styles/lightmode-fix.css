@@ -143,7 +143,11 @@ body[data-theme="light"] {
   color: #1e293b !important;
   border-radius: 8px !important;
   box-shadow: inset 0 1px 2px rgba(15, 23, 42, 0.03) !important;
-  transition: border-color 0.15s, box-shadow 0.15s !important;
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease !important;
 }
 
 [data-theme="light"] .fc:focus,
@@ -255,4 +259,14 @@ body[data-theme="light"] {
 
 [data-theme="light"] [style*="height: '10px'"][style*="background: 'var(--surface2)'"] {
   background: #e2e8f0 !important;
+}
+
+/* ── Theme color transitions for shell inputs (defined here so they load
+   after DashboardLayout.css and combine with existing focus transitions) ── */
+.dashboard-shell-container .fc {
+  transition:
+    background-color 180ms ease,
+    color 180ms ease,
+    border-color 180ms ease,
+    box-shadow 180ms ease;
 }

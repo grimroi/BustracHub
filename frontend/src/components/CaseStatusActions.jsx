@@ -10,7 +10,8 @@ export function CaseStatusActions({ currentCase, db, setBlotterList, onPrintCFA 
     currentCase?.status === 'Dismissed' || 
     currentCase?.cfaIssued || 
     currentCase?.status === 'Referred to PNP (CFA Issued)';
-
+  
+  console.log("Attempting update. DocID:", currentCase._id || currentCase.trackingNo, "DB exists:", !!db);
   const handleUpdateStatus = async (newStatus, actionType) => {
     if (!currentCase) return;
 
@@ -28,7 +29,7 @@ export function CaseStatusActions({ currentCase, db, setBlotterList, onPrintCFA 
       const docId = currentCase._id || currentCase.trackingNo || currentCase.id;
       
       if (!docId) {
-        alert("⚠️ Error: Walang valid na Case ID ang kasong ito. Paki-save muna ang blotter bago i-update ang status.");
+       showToast('error', 'Walang valid na Case ID ang kasong ito. Paki-save muna ang blotter bago i-update ang status.');
         setUpdating(false);
         return;
       }
@@ -132,8 +133,7 @@ export function CaseStatusActions({ currentCase, db, setBlotterList, onPrintCFA 
         });
       }
 
-      alert(`✓ Status successfully updated to: ${newStatus}`);
-
+ showToast('success', `Status successfully updated to: ${newStatus}`);
       // 6. Auto-trigger CFA print if escalated
       if (actionType === 'cfa' && typeof onPrintCFA === 'function') {
         onPrintCFA(updatedPayload);
@@ -141,7 +141,10 @@ export function CaseStatusActions({ currentCase, db, setBlotterList, onPrintCFA 
 
     } catch (err) {
       console.error('Error updating status:', err);
-      alert(`⚠️ Hindi naiproseso ang pagbabago ng status.\n\nDetails: ${err.message || 'Unknown error'}`);
+     showToast(
+  'error',
+  `Hindi naiproseso ang pagbabago ng status.\n\nDetails: ${err.message || 'Unknown error'}`
+);
     } finally {
       setUpdating(false);
     }

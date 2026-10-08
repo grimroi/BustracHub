@@ -1,8 +1,8 @@
 /* ═══ DARK THEME FORCE FOR LANDING PAGE ═══ */
 
-/* 1. Universal Color Scheme Force */
-html, 
-body {
+/* 1. Universal Color Scheme Force (login-only scope: landing page only) */
+html:has(.landing-page-root),
+body:has(.landing-page-root) {
   color-scheme: dark !important;
 }
 

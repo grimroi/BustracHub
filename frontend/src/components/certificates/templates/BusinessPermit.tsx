@@ -1,4 +1,5 @@
 import React from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
 
@@ -47,9 +48,10 @@ export interface BusinessPermitData {
 
 interface BusinessPermitProps {
   data: BusinessPermitData;
+  publicDomain?: string;
 }
 
-export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
+export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data, publicDomain }) => {
   if (!data) return null;
 
   // Extract and format data with defaults
@@ -266,6 +268,22 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data }) => {
           MAUNLAD NA BARANGAY!
         </div>
       </div>
+
+         {data?._id && (
+        <div style={{ position: 'absolute', bottom: '40px', right: '40px', textAlign: 'center', zIndex: 20 }}>
+          <QRCodeSVG 
+            value={`https://${publicDomain || 'localhost:5173'}/verify?id=${encodeURIComponent(data._id)}`} 
+            size={90} 
+            level="H" 
+            bgColor="#ffffff" 
+            fgColor="#000000" 
+            includeMargin={true} 
+          />
+          <div style={{ fontSize: '9px', marginTop: '6px', fontWeight: 'bold', color: '#000' }}>
+            Scan to Verify Authenticity
+          </div>
+        </div>
+      )}
     </div>
   );
 };

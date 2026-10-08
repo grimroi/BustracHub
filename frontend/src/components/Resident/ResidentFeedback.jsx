@@ -21,7 +21,7 @@ export default function ResidentFeedback({
   const handleSubmit = async (e) => {
     e.preventDefault();
     if (!feedbackSubject.trim() || !feedbackMessage.trim()) {
-      alert('Please fill in all required fields.');
+    showToast('error', 'Please fill in all required fields.');
       return;
     }
     setIsSubmitting(true);

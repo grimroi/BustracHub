@@ -1,4 +1,5 @@
 import React from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
 
@@ -69,11 +70,12 @@ export interface ResidencyData {
   [key: string]: any;
 }
 
-export interface BarangayCertificationProps {
+export interface ResidencyProps {
   data?: ResidencyData;
+  publicDomain?: string;
 }
 
-export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ data = {} }) => {
+export const ResidencyCertificate: React.FC<ResidencyProps> = ({ data, publicDomain }) => {
   if (!data) return null;
 
   // 1. Safe Extraction ng Nested Issuance Metadata
@@ -138,6 +140,11 @@ export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ dat
   const ctcPlaceIssued = data.ctcPlaceIssued || 'NABUA, CAMARINES SUR';
 
   const datePrinted = data.datePrinted || new Date().toLocaleDateString('en-US');
+
+  // Verification URL (kung wala ang _id, wala ring QR)
+  const verifyUrl = data._id
+    ? `https://${publicDomain || 'localhost:5173'}/verify?id=${encodeURIComponent(data._id)}`
+    : null;
 
   // 4. Watermark Condition Check
   const isDuplicateMode = data.printMode === 'copy' || data.isDuplicate || data.status === 'Released';
@@ -319,6 +326,23 @@ export const ResidencyCertificate: React.FC<BarangayCertificationProps> = ({ dat
           </div>
         </div>
       </div>
+
+      {/* QR Code Verification */}
+      {verifyUrl && (
+        <div style={{ position: 'absolute', bottom: '40px', right: '40px', textAlign: 'center', zIndex: 20 }}>
+          <QRCodeSVG
+            value={verifyUrl}
+            size={90}
+            level="H"
+            bgColor="#ffffff"
+            fgColor="#000000"
+            includeMargin={true}
+          />
+          <div style={{ fontSize: '9px', marginTop: '6px', fontWeight: 'bold', color: '#000' }}>
+            Scan to Verify Authenticity
+          </div>
+        </div>
+      )}
     </div>
   );
 };
