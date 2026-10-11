@@ -8871,6 +8871,7 @@ const handleGenerateCredentials = async (resident) => {
             pendingCount={pendingCount}
             lastSynced={lastSynced}
             logout={logout}
+            forceSync={forceSyncToRemote}
           />
 
           <div className="content">

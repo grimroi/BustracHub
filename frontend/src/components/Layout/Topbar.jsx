@@ -1,5 +1,6 @@
 // src/components/layout/Topbar.jsx
-import React from 'react';
+import React, { useState } from 'react';
+import Swal from 'sweetalert2';
 import SyncStatusIndicator from '../SyncStatusIndicator';
 import { ThemeToggle } from '../ThemeToggle';
 
@@ -11,7 +12,10 @@ const Topbar = React.memo(function Topbar({
   pendingCount,
   lastSynced,
   logout,
+  forceSync,
+  showToast,
 }) {
+  const [isSyncing, setIsSyncing] = useState(false);
   return (
     <header
       className="topbar"
@@ -54,6 +58,60 @@ const Topbar = React.memo(function Topbar({
           pendingCount={pendingCount}
           lastSynced={lastSynced}
         />
+        <button
+          className="btn btn-g btn-sm"
+          onClick={async () => {
+            setIsSyncing(true);
+            if (typeof showToast === 'function') {
+              showToast('info', 'Syncing…');
+            } else if (typeof Swal !== 'undefined' && Swal.fire) {
+              Swal.fire({
+                icon: 'info',
+                toast: true,
+                position: 'top-end',
+                timer: 2000,
+                showConfirmButton: false,
+                title: 'Syncing…',
+              });
+            }
+            try {
+              if (typeof forceSync === 'function') {
+                await forceSync();
+              }
+              if (typeof showToast === 'function') {
+                showToast('success', 'Sync complete');
+              } else if (typeof Swal !== 'undefined' && Swal.fire) {
+                Swal.fire({
+                  icon: 'success',
+                  toast: true,
+                  position: 'top-end',
+                  timer: 2500,
+                  showConfirmButton: false,
+                  title: 'Sync complete',
+                });
+              }
+            } catch (err) {
+              if (typeof showToast === 'function') {
+                showToast('error', 'Sync failed — will retry');
+              } else if (typeof Swal !== 'undefined' && Swal.fire) {
+                Swal.fire({
+                  icon: 'error',
+                  toast: true,
+                  position: 'top-end',
+                  timer: 2500,
+                  showConfirmButton: false,
+                  title: 'Sync failed — will retry',
+                });
+              }
+            } finally {
+              setIsSyncing(false);
+            }
+          }}
+          disabled={isSyncing}
+          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+        >
+          {isSyncing ? 'Syncing…' : pendingCount > 0 ? `Force Sync (${pendingCount})` : 'Force Sync'}
+        </button>
         <ThemeToggle />
         <button
           className="btn btn-g btn-sm"
