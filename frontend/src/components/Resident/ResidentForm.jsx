@@ -1,7 +1,24 @@
 import React, { useState, useEffect } from 'react';
-
+import { calculateAge, isValidPHMobile } from "../../utils/residentUtils";
 const formLabelStyle = { color: 'var(--text)' };
 const formFieldStyle = { backgroundColor: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)' };
+
+const SectionHeading = ({ number, children }) => (
+  <div
+    style={{
+      margin: '0 0 12px',
+      paddingTop: '14px',
+      borderTop: '1px solid var(--border)',
+      fontSize: '12px',
+      fontWeight: 800,
+      letterSpacing: '0.06em',
+      textTransform: 'uppercase',
+      color: 'var(--muted)',
+    }}
+  >
+    {number}. {children}
+  </div>
+);
 
 export default function ResidentForm({
   residentForm,
@@ -207,6 +224,29 @@ export default function ResidentForm({
 
             {/* ═══ MAIN FORM CONTENT ═══ */}
             <div>
+              <SectionHeading number="A">Profile</SectionHeading>
+
+              {/* System IDs — immutable on edit */}
+              <div className="fg" style={{ marginBottom: '16px' }}>
+                <label className="fl" style={formLabelStyle}>
+                  RESIDENT ID
+                  {!isEditMode && (
+                    <span style={{ color: 'var(--muted)', fontSize: '11px', fontWeight: 400, marginLeft: '4px' }}>
+                      (Auto-generated on save)
+                    </span>
+                  )}
+                </label>
+                <input
+                  type="text"
+                  className="fc"
+                  readOnly
+                  disabled={isSaving}
+                  placeholder="—"
+                  style={{ ...formFieldStyle, cursor: 'not-allowed', color: 'var(--muted)' }}
+                  value={isEditMode ? editingResidentId : ''}
+                />
+              </div>
+
               {/* Header / ID Info */}
               <div className="fg2" style={{ marginBottom: '16px' }}>
                 <div className="fg">
@@ -272,6 +312,7 @@ export default function ResidentForm({
               </div>
 
               {/* Full Name Fields - AUTO-UPPERCASE APPLIED */}
+              <SectionHeading number="B">Personal Information</SectionHeading>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 120px 120px', gap: '10px', marginBottom: '16px' }}>
                 <div className="fg">
                   <label className="fl">LAST NAME *</label>
@@ -341,7 +382,7 @@ export default function ResidentForm({
                     value={residentForm.birthdate}
                     onChange={(e) => {
                       const bdate = e.target.value;
-                      const calculatedAge = bdate ? Math.floor((new Date() - new Date(bdate)) / 31557600000) : 0;
+                      const calculatedAge = bdate ? calculateAge(bdate) : 0;
                       updateResidentField('birthdate', bdate);
                       updateResidentField('age', calculatedAge > 0 ? calculatedAge : 0);
                     }}
@@ -364,6 +405,7 @@ export default function ResidentForm({
               </div>
 
               {/* Sex / LGBTQIA+ */}
+              <SectionHeading number="C">Demographic Information</SectionHeading>
               <div className="fg2" style={{ marginBottom: '16px' }}>
                 <div className="fg">
                   <label className="fl">SEX *</label>
@@ -555,6 +597,7 @@ export default function ResidentForm({
               </div>
 
               {/* Residency Information */}
+              <SectionHeading number="D">Residency &amp; Voting</SectionHeading>
               <div
                 style={{
                   backgroundColor: 'var(--surface2)',
@@ -660,18 +703,25 @@ export default function ResidentForm({
               </div>
 
               {/* Address & Contact Info */}
+              <SectionHeading number="E">Contact &amp; Address</SectionHeading>
               <div className="fg2" style={{ marginBottom: '16px' }}>
                 <div className="fg">
-                  <label className="fl">CONTACT NOS.</label>
-                  <input
-                    type="text"
-                    className="fc"
-                    disabled={isSaving}
-                    placeholder="09XX-XXX-XXXX"
-                    value={residentForm.contactNo}
-                    onChange={(e) => updateResidentField('contactNo', e.target.value)}
-                  />
-                </div>
+  <label className="fl">CONTACT NOS.</label>
+  <input
+    type="tel"
+    inputMode="numeric"
+    className="fc"
+    disabled={isSaving}
+    placeholder="09123456789"
+    maxLength={11}
+    pattern="09[0-9]{9}"
+    value={residentForm.contactNo || ''}
+    onChange={(e) => {
+      const cleaned = e.target.value.replace(/\D/g, '').slice(0, 11);
+      updateResidentField('contactNo', cleaned);
+    }}
+  />
+</div>
                 <div className="fg">
                   <label className="fl">EMAIL ADD</label>
                   <input
@@ -709,7 +759,7 @@ export default function ResidentForm({
 
               {/* Household Assignment Section */}
               <section style={{ marginBottom: '20px', padding: '16px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px' }}>
-                <h3 style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 800, color: 'var(--text)' }}>Household Information</h3>
+                <h3 style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 800, color: 'var(--text)' }}>F. Household Information</h3>
                 {canCreateHousehold && (
                   <div role="group" aria-label="Household assignment method" style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                     <button

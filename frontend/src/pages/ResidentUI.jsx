@@ -1,13 +1,13 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { localDb as db, forceSyncToRemote } from '../services/db';
+import { localDb as db, forceSyncToRemote, remoteDb } from '../services/db';
 import { createAuditLog } from '../utils/auditLog';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
-import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart } from "react-icons/fa";
+import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt } from "react-icons/fa";
 import { saveCertificateRequest } from '../services/db';
 import Swal from 'sweetalert2'; // ✅ Added SweetAlert2 Import
-
+import EventRegistrationScreen from '../components/screens/EventRegistrationScreen';
 import {
   normalizeCertificateDoc,
   normalizeBlotterDoc,
@@ -18,6 +18,7 @@ import {
   getStoredUser,
   clearStoredUser,
 } from '../utils/residentUtils';
+import { enforceBlotterSubmission } from '../utils/blotterSubmitGuard';
 
 import ResidentHome from '../components/Resident/ResidentHome';
 import ResidentCertificates from '../components/Resident/ResidentCertificates';
@@ -28,6 +29,26 @@ import ResidentAssistance from '../components/Resident/ResidentAssistance';
 import ResidentProfile from '../components/Resident/ResidentProfile';
 
 const CERT_FORM_INITIAL = { certType: '', certPurpose: '' };
+
+const safePut = async (doc) => {
+    let attempts = 0;
+    while (attempts < 3) {
+      try {
+        return await db.put(doc);
+      } catch (e) {
+        if (e.status === 409) {
+          attempts++;
+          console.warn(`Conflict detected on ${doc._id}. Retrying with latest _rev... (Attempt ${attempts})`);
+          const latest = await db.get(doc._id);
+          doc = { ...doc, _rev: latest._rev };
+        } else {
+          throw e;
+        }
+      }
+    }
+    throw new Error('Max retries reached: Document conflict unresolved');
+  };
+
 
 export default function ResidentUI() {
   const navigate = useNavigate();
@@ -64,6 +85,7 @@ export default function ResidentUI() {
   const [editForm, setEditForm] = useState({
     subject: '', details: '', incidentDate: '', zone: 'Zone 1', street: '', respondent: '',
   });
+    const [isSavingEdit, setIsSavingEdit] = useState(false); 
 
   const [sseNotification, setSseNotification] = useState(null);
 
@@ -73,16 +95,30 @@ export default function ResidentUI() {
   const loggedInUserRef = useRef(loggedInUser);
   const isFetchingRef = useRef(false);
   const notifiedCertIds = useRef(new Set());
+  const reloadTimerRef = useRef(null);
 
   /* ═══════════════════════════════════════════════════════════
      SECTION 3: SIMPLE useEffect (no interdependencies)
      ═══════════════════════════════════════════════════════════ */
+    //  3a. Sync loggedInUserRef — DAPAT PINAKAUNA
+      useEffect(() => {
+        loggedInUserRef.current = loggedInUser;
+      }, [loggedInUser]);
+
   // 3b. Theme
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     document.body.setAttribute('data-theme', theme);
     localStorage.setItem('theme', theme);
   }, [theme]);
+ 
+  // ✅ 3c. Modal scroll lock 
+useEffect(() => {
+  document.body.style.overflow = editingReport ? 'hidden' : '';
+  return () => {
+    document.body.style.overflow = '';
+  };
+}, [editingReport]);
 
   // 3c. Multi-tab & same-tab user sync
   useEffect(() => {
@@ -110,6 +146,16 @@ export default function ResidentUI() {
       window.removeEventListener('offline', onOffline);
     };
   }, []);
+
+  useEffect(() => {
+  if (import.meta.env.DEV && typeof window !== 'undefined') {
+    window.db = db;
+    window.remoteDb = remoteDb;
+    window.forceSync = forceSyncToRemote;
+    console.log('✅ Debug helpers exposed (Resident UI)');
+    console.log('  → window.db, window.remoteDb, window.forceSync');
+  }
+}, []);
 
   /* ═══════════════════════════════════════════════════════════
      SECTION 4: SIMPLE useMemo (no callback deps)
@@ -142,27 +188,58 @@ export default function ResidentUI() {
 
     const comp = typeof doc.complainant === 'object' ? (doc.complainant?.name || '') : (doc.complainant || doc.complainantName || '');
     const resp = typeof doc.respondent === 'object' ? (doc.respondent?.name || '') : (doc.respondent || doc.respondentName || '');
-    const compLower = String(comp).toLowerCase().trim();
-    const respLower = String(resp).toLowerCase().trim();
+    const normalizeName = (val) => String(val || '').toLowerCase().trim().replace(/\s+/g, ' ');
+    const compNorm = normalizeName(comp);
+    const respNorm = normalizeName(resp);
+    const userNorm = normalizeName(userFullName);
 
-    const matchesComplainant = Boolean(
-      (userFullName && compLower.includes(userFullName)) ||
-      (userFullName && userFullName.includes(compLower) && compLower.length > 2) ||
-      (userName && compLower.includes(userName))
-    );
-    const matchesRespondent = Boolean(
-      (userFullName && respLower.includes(userFullName)) ||
-      (userFullName && userFullName.includes(respLower) && respLower.length > 2) ||
-      (userName && respLower.includes(userName))
-    );
+    // Legitimate blotter visibility is granted only on an EXACT full-name match
+    // (case-insensitive). Partial or substring name matches are NOT treated as
+    // proof that a record belongs to the logged-in resident — being named as a
+    // respondent (or a name collision) alone must not expose another's records.
+    const matchesComplainant = Boolean(userNorm && compNorm && compNorm === userNorm);
+    const matchesRespondent = Boolean(userNorm && respNorm && respNorm === userNorm);
     return matchesComplainant || matchesRespondent;
   }, []);
 
-  // 5b. goToTab — no deps
   const goToTab = useCallback((id) => {
-    setActiveScreen(id);
-    window.scrollTo(0, 0);
-  }, []);
+  setActiveScreen(id);
+}, []);
+
+useLayoutEffect(() => {
+  window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
+}, [activeScreen]);
+
+  // ── Toast notification helper (Swal-based) ──
+const showToast = useCallback((message, type = 'success') => {
+  // Handle swapped arguments (some components use showToast('error', msg))
+  const VALID_TYPES = ['success', 'error', 'warning', 'info'];
+  if (
+    typeof message === 'string' &&
+    VALID_TYPES.includes(message.toLowerCase()) &&
+    typeof type === 'string' &&
+    !VALID_TYPES.includes(type.toLowerCase())
+  ) {
+    const swapped = type;
+    type = message;
+    message = swapped;
+  }
+
+  if (typeof Swal !== 'undefined' && Swal.fire) {
+    Swal.fire({
+      icon: type === 'error' ? 'error' : type === 'warning' ? 'warning' : type === 'info' ? 'info' : 'success',
+      toast: true,
+      position: 'top-end',
+      timer: 2500,
+      timerProgressBar: true,
+      showConfirmButton: false,
+      title: message,
+    });
+  } else {
+    // Fallback kung wala si Swal
+    console.warn(`[${type}] ${message}`);
+  }
+}, []);
   
   // 5b-2. requestNotificationPermission — no deps
   const requestNotificationPermission = useCallback(() => {
@@ -249,7 +326,11 @@ export default function ResidentUI() {
         .map(normalizeCertificateDoc).filter(Boolean).sort(sortTs);
       setMyRequests(userRequests);
 
-      setAnnouncements(byType('announcement').sort(sortTs));
+      setAnnouncements(
+        byType('announcement')
+          .filter((a) => (a.status || 'Published').toLowerCase() !== 'draft')
+          .sort(sortTs)
+      );
       setMyAssistance(docs.filter((d) => d.type === 'aid_distribution' && checkUserMatch(d)).sort(sortTs));
 
       const currentUserId = String(user?.residentId || user?.id || user?._id || '').toLowerCase().trim();
@@ -374,7 +455,7 @@ export default function ResidentUI() {
         updatedAt: nowIso
       };
 
-      await db.put(payload);
+    await safePut(payload);
 
       try {
         await createAuditLog({
@@ -430,7 +511,6 @@ export default function ResidentUI() {
       throw new Error('No db');
     }
 
-    // 🛡️ ANTI-SPAM: DB-level check — Max 1 feedback per 24 hours
     try {
       const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
       const recentChecks = await db.allDocs({
@@ -473,7 +553,7 @@ export default function ResidentUI() {
       dateResolved: '',
     };
 
-    await db.put(doc);
+    await safePut(doc);
 
     try {
       const auditPayload = buildAuditLogPayload({
@@ -503,31 +583,36 @@ export default function ResidentUI() {
     const safeComplainant = currentUser?.fullName || currentUser?.name || 'Anonymous Resident';
     const safeResidentId = currentUser?.residentId || currentUser?.id || 'RES-UNKNOWN';
 
-    // 🛡️ ANTI-SPAM: DB-level check
+    // 🛡️ ANTI-SPAM + 🧾 DUPLICATE / PRELIMINARY BLOTTER CHECK.
+    // Anti-spam runs FIRST and short-circuits the duplicate guard. The guard
+    // blocks ONLY on reliable evidence that this submission duplicates the
+    // resident's OWN active case; similar-name matches (possibly another
+    // person) yield a neutral, non-blocking warning and never expose case
+    // references. Logic lives in blotterSubmitGuard so the full decision flow
+    // (including the Magpatuloy / Kanselahin buttons) is unit-tested.
     try {
-      const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString();
-      const recentChecks = await db.allDocs({ include_docs: true, startkey: 'BLT-', endkey: 'BLT-\ufff0' });
+      const blotterDocs = await db.allDocs({ include_docs: true, startkey: 'BLT-', endkey: 'BLT-\ufff0' });
+      const blotterList = blotterDocs.rows.map((r) => r.doc).filter(Boolean);
 
-      const userRecentBlotters = recentChecks.rows
-        .map((r) => r.doc)
-        .filter((doc) => doc && doc.residentId === safeResidentId && doc.createdAt > twoHoursAgo);
+      const guard = await enforceBlotterSubmission({
+        blotterList,
+        resident: { id: safeResidentId, name: safeComplainant },
+        submission: { subject, incidentDate },
+      });
 
-      if (userRecentBlotters.length > 0) {
-        Swal.fire('Wait a moment', '⚠️ A blotter report was recently filed. Please wait 2 hours before submitting another, or visit the Barangay Hall directly.', 'warning');
-        return;
+      if (!guard.proceed) {
+        return { success: false, reason: guard.reason };
       }
     } catch (err) {
-      console.warn('Anti-spam check failed, proceeding with caution:', err);
+      console.warn('Preliminary blotter check failed, proceeding with caution:', err);
     }
 
     const totalSizeMB = (attachments || []).reduce((acc, file) => acc + (parseFloat(file.size) || 0), 0);
     if (totalSizeMB > 8) {
       Swal.fire('File Too Large', `⚠️ Ang total size ng mga ebidensya ay ${totalSizeMB.toFixed(2)}MB. Ang limit ay 8MB lamang.`, 'warning');
-      return;
+      return { success: false, reason: 'oversize' };
     }
-
-    const randomNum = Math.floor(100000 + Math.random() * 900000);
-    const refNumber = `BLT-2026-${randomNum}`;
+     const refNumber = `BLT-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
 
     const payload = {
       _id: refNumber,
@@ -558,7 +643,7 @@ export default function ResidentUI() {
       isSynced: false,
     };
 
-    await db.put(payload);
+    await safePut(payload);
 
     try {
       const auditPayload = buildAuditLogPayload({
@@ -578,10 +663,13 @@ export default function ResidentUI() {
     }
 
     Swal.fire('Success', 'Blotter report filed successfully!', 'success');
-    await loadData();
-  }, [loadData]);
 
-  // 5h. handleCancelRequest — deps: myRequests, loadData ✅
+    return { success: true, data: payload };
+  },
+  []
+);
+
+  // 5h. handleCancelRequest — deps: myRequests, loadData 
   const handleCancelRequest = useCallback(
     async (certId) => {
       if (!db) { 
@@ -610,7 +698,7 @@ export default function ResidentUI() {
       
       try {
         const latest = await db.get(certId);
-        await db.put({ ...latest, status: 'Cancelled', cancelledAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
+        await safePut({  ...latest, status: 'Cancelled', cancelledAt: new Date().toISOString(), updatedAt: new Date().toISOString() });
         Swal.fire('Cancelled', `Request ${refNum} has been cancelled successfully.`, 'success');
         await loadData();
       } catch (err) {
@@ -643,11 +731,48 @@ export default function ResidentUI() {
       respondent: report.respondent || report.respondentName || '',
     });
   }, []);
+ 
+  const closeEditModal = useCallback(() => {
+  const rawLoc = editingReport?.location || editingReport?.purok || '';
+  const zoneMatch = rawLoc.match(/(Zone\s*[1-5]|Purok\s*[1-5])/i);
+  const detectedZone = zoneMatch ? zoneMatch[0] : '';
+  const detectedStreet = rawLoc.replace(zoneMatch ? zoneMatch[0] : '', '').replace(/^[ ,\-]+|[ ,\-]+$/g, '');
+
+  const isModified =
+    editForm.subject.trim() !== (editingReport?.subject || editingReport?.incidentType || '').trim() ||
+    editForm.details.trim() !== (editingReport?.details || editingReport?.narrative || '').trim() ||
+    editForm.respondent.trim() !== (editingReport?.respondent || editingReport?.respondentName || '').trim() ||
+    editForm.incidentDate !== (editingReport?.incidentDate || '') ||
+    editForm.zone !== (detectedZone || 'Zone 1') ||
+    editForm.street.trim() !== detectedStreet.trim();
+
+  if (isModified) {
+    Swal.fire({
+      title: 'Discard changes?',
+      text: 'You have unsaved changes in this report.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonColor: '#ef4444',
+      cancelButtonColor: '#6b7280',
+      confirmButtonText: 'Yes, discard',
+      cancelButtonText: 'Keep editing'
+    }).then((result) => {
+      if (result.isConfirmed) {
+        setEditingReport(null);
+        setEditForm({ subject: '', details: '', incidentDate: '', zone: 'Zone 1', street: '', respondent: '' });
+      }
+    });
+  } else {
+    setEditingReport(null);
+    setEditForm({ subject: '', details: '', incidentDate: '', zone: 'Zone 1', street: '', respondent: '' });
+  }
+}, [editForm, editingReport]);
 
   // 5j. handleSaveEdit — deps: editingReport, editForm, loadData ✅
   const handleSaveEdit = useCallback(
   async (e) => {
     e.preventDefault();
+     if (isSavingEdit) return; 
     if (!db || !editingReport) return;
 
     if (!editForm.subject.trim() || !editForm.details.trim()) {
@@ -655,9 +780,13 @@ export default function ResidentUI() {
       return;
     }
 
+    setIsSavingEdit(true); 
+
     try {
       const existingDoc = await db.get(editingReport._id);
-      const formattedLocation = editForm.street.trim() ? `${editForm.street.trim()}, ${editForm.zone.trim()}` : editForm.zone.trim();
+      const formattedLocation = editForm.street.trim()
+        ? `${editForm.street.trim()}, ${editForm.zone.trim()}`
+        : editForm.zone.trim();
 
       const updatedDoc = {
         ...existingDoc,
@@ -682,30 +811,18 @@ export default function ResidentUI() {
         ],
       };
 
-      await db.put(updatedDoc);
-
-      try {
-        await createAuditLog({
-          action: 'UPDATE_BLOTTER_REPORT',
-          module: 'BLOTTER',
-          recordId: editingReport._id,
-          actor: { username: loggedInUser?.username || 'resident', role: 'resident', fullName: loggedInUser?.fullName || 'Resident' },
-          details: `Updated report details for ${editingReport._id}`,
-        });
-      } catch (auditErr) {
-        console.warn('Audit log failed:', auditErr);
-      }
+      await safePut(updatedDoc); 
 
       Swal.fire('Success', 'Report updated successfully! Changes will sync to the Barangay Admin.', 'success');
-      setEditingReport(null);
+      closeEditModal();
       await loadData();
     } catch (err) {
       console.error('Error updating report:', err);
       Swal.fire('Error', 'Failed to update the report. Please try again.', 'error');
+    } finally {
+      setIsSavingEdit(false); // ✅ ADD THIS
     }
-  },
-  [editForm, editingReport, db, loggedInUser, loadData]
-);
+    }, [editForm, editingReport, db, loggedInUser, loadData, closeEditModal, isSavingEdit]);
 
   // 5k. handleSaveProfileEdit — deps: db, residentProfile, loggedInUser
   const handleSaveProfileEdit = useCallback(
@@ -776,7 +893,7 @@ export default function ResidentUI() {
           updatedAt: new Date().toISOString(),
         };
 
-      const result = await db.put(updatedDoc);
+      const result = await safePut(updatedDoc);
 
       try {
         const auditPayload = buildAuditLogPayload({
@@ -839,9 +956,11 @@ export default function ResidentUI() {
      ═══════════════════════════════════════════════════════════ */
   const pendingRequestCount = useMemo(() => {
     return myRequests.filter((r) => {
-      const status = r.status || 'Pending';
+      const status = (r.status || '').toLowerCase();
       const step = Number(r.step || 1);
-      return status !== 'Issued' && step < 5;
+      if (status === 'cancelled') return false;
+      if (['issued', 'released'].includes(status)) return false;
+      return step < 5;
     }).length;
   }, [myRequests]);
 
@@ -874,6 +993,60 @@ export default function ResidentUI() {
       loadData();
     }
   }, [loadData]);
+  
+  // ✅ 7d. PouchDB LIVE LISTENER
+useEffect(() => {
+  if (!db) return;
+  let isMounted = true;
+
+  const changes = db.changes({
+    since: 'now',
+    live: true,
+    include_docs: true,
+  })
+    .on('change', (change) => {
+      if (!isMounted || !change.doc) return;
+      const doc = change.doc;
+
+      const isRelevant = [
+        'certificate_request',
+        'blotter_record',
+        'blotter',
+        'announcement',
+        'aid_distribution',
+        'feedback_report',
+      ].includes(doc.type || doc.docType);
+
+      if (isRelevant) {
+        // ✅ useRef-based timer — per-instance, auto-cleanup
+        if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
+        reloadTimerRef.current = setTimeout(() => {
+          if (isMounted) loadData();
+        }, 800);
+      }
+    })
+    .on('error', (err) => console.error('PouchDB changes error:', err));
+
+  return () => {
+    isMounted = false;
+    changes.cancel();
+    if (reloadTimerRef.current) {
+      clearTimeout(reloadTimerRef.current);
+      reloadTimerRef.current = null;
+    }
+  };
+}, [loadData]);
+
+ // Close edit modal on Escape key
+useEffect(() => {
+  const handleEsc = (e) => {
+    if (e.key === 'Escape' && editingReport) {
+      closeEditModal();
+    }
+  };
+  window.addEventListener('keydown', handleEsc);
+  return () => window.removeEventListener('keydown', handleEsc);
+}, [editingReport, closeEditModal]);
 
   // 7b. Tab routing mula sa navigate state
   useEffect(() => {
@@ -922,8 +1095,6 @@ export default function ResidentUI() {
           } else if (Notification.permission !== 'denied') {
             Notification.requestPermission();
           }
-
-          if (typeof loadData === 'function') loadData();
         }
       } catch (err) {
         console.error('Error parsing SSE data:', err);
@@ -956,27 +1127,9 @@ export default function ResidentUI() {
     { id: 's-feedback', label: 'Feedback', icon: <FaCommentDots /> },
     { id: 's-blotter', label: 'Blotter', icon: <FaBalanceScale /> },
     { id: 's-assistance', label: 'Aid', icon: <FaHandHoldingHeart /> },
+    { id: 's-events', label: 'Events', icon: <FaCalendarAlt /> },
     { id: 's-profile', label: 'Profile', icon: <FaUser /> },
   ];
-
-  const safePut = async (doc) => {
-    let attempts = 0;
-    while (attempts < 3) {
-      try {
-        return await db.put(doc);
-      } catch (e) {
-        if (e.status === 409) {
-          attempts++;
-          console.warn(`Conflict detected on ${doc._id}. Retrying with latest _rev... (Attempt ${attempts})`);
-          const latest = await db.get(doc._id);
-          doc = { ...doc, _rev: latest._rev };
-        } else {
-          throw e;
-        }
-      }
-    }
-    throw new Error('Max retries reached: Document conflict unresolved');
-  };
 
   /* ── Render ── */
   return (
@@ -1051,7 +1204,7 @@ export default function ResidentUI() {
           )}
 
           {!isLoading && !loadError && activeScreen === 's-certificates' && (
-            <ResidentCertificates loggedInUser={loggedInUser} myRequests={myRequests} showCertForm={showCertForm} setShowCertForm={setShowCertForm} certForm={certForm} updateCertField={updateCertField} submitCert={submitCert} certSuccess={certSuccess} setCertSuccess={setCertSuccess} filterTab={filterTab} setFilterTab={setFilterTab} handleCancelRequest={handleCancelRequest} />
+            <ResidentCertificates loggedInUser={loggedInUser} myRequests={myRequests} showCertForm={showCertForm} setShowCertForm={setShowCertForm} certForm={certForm} updateCertField={updateCertField} submitCert={submitCert} certSuccess={certSuccess} setCertSuccess={setCertSuccess} filterTab={filterTab} setFilterTab={setFilterTab} handleCancelRequest={handleCancelRequest} onRefresh={loadData} />
           )}
 
           {!isLoading && !loadError && activeScreen === 's-announcements' && (
@@ -1069,7 +1222,15 @@ export default function ResidentUI() {
           {!isLoading && !loadError && activeScreen === 's-assistance' && (
             <ResidentAssistance myAssistance={myAssistance} />
           )}
-
+          
+          {!isLoading && !loadError && activeScreen === 's-events' && (
+            <EventRegistrationScreen
+              db={db}
+              loggedInUser={loggedInUser}
+              showToast={showToast}
+              createAuditLog={createAuditLog}
+            />
+          )}
           {!isLoading && !loadError && activeScreen === 's-profile' && (
             <ResidentProfile residentProfile={residentProfile} loggedInUser={loggedInUser} isOffline={isOffline} lastSync={lastSync} handleLogout={handleLogout} handleSaveProfileEdit={handleSaveProfileEdit} />
           )}
@@ -1103,14 +1264,14 @@ export default function ResidentUI() {
 
       {/* Blotter Edit Modal */}
       {editingReport && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 9999, padding: 16 }} onClick={() => setEditingReport(null)}>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', padding: 20 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 9999, padding: '48px 16px 16px', overflowY: 'auto' }} onClick={closeEditModal}>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', padding: 20, marginBottom: 48 }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
               <span>Edit Report — {editingReport.refNumber || editingReport._id}</span>
-              <button onClick={() => setEditingReport(null)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 20, cursor: 'pointer' }}>✕</button>
+              <button onClick={closeEditModal}  style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 20, cursor: 'pointer' }}>✕</button>
             </div>
 
-            <form onSubmit={handleSaveEdit}>
+            <form onSubmit={handleSaveEdit} noValidate>
               <div className="fg" style={{ marginBottom: 12 }}>
                 <label className="fl">Incident Subject *</label>
                 <input className="fc" required value={editForm.subject} onChange={(e) => setEditForm({ ...editForm, subject: e.target.value })} />
@@ -1155,10 +1316,15 @@ export default function ResidentUI() {
               </div>
 
               <div style={{ display: 'flex', gap: 8 }}>
-                <button type="submit" className="btn btn-primary" disabled={isSubmittingCert} style={{ opacity: isSubmittingCert ? 0.7 : 1, cursor: isSubmittingCert ? 'not-allowed' : 'pointer' }}>
-                  {isSubmittingCert ? 'Submitting...' : 'Submit Request'}
-                </button>
-                <button type="button" className="btn btn-ghost" onClick={() => setEditingReport(null)}>Cancel</button>
+                <button
+  type="submit"
+  className="btn btn-primary"
+  disabled={isSavingEdit}
+  style={{ opacity: isSavingEdit ? 0.7 : 1, cursor: isSavingEdit ? 'not-allowed' : 'pointer' }}
+>
+  {isSavingEdit ? 'Saving...' : 'Save Changes'}
+</button>
+                <button type="button" className="btn btn-ghost" onClick={closeEditModal}>Cancel</button>
               </div>
             </form>
           </div>

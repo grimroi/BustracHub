@@ -1,7 +1,22 @@
 import { useState } from 'react';
+import Swal from 'sweetalert2';
 import { getBlotterStepProgress, formatLocationDisplay } from '../../utils/residentUtils';
-import { localDb as db } from "../../services/db";
+import { validateBlotterForm } from '../../utils/blotterSubmitGuard';
 
+
+
+const showToast = (type, message) => {
+  if (typeof Swal !== 'undefined' && Swal.fire) {
+    Swal.fire({
+      icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
+      toast: true,
+      position: 'top-end',
+      timer: 2500,
+      showConfirmButton: false,
+      title: message,
+    });
+  }
+};
 
 const blotterSteps = ['Filed', 'Investigation', 'Mediation / Summons', 'Resolved'];
 
@@ -10,7 +25,6 @@ export default function ResidentBlotter({
   loggedInUser,
   submitBlotter,
   handleOpenEdit,
-  loadData
 }) {
   const [blotterForm, setBlotterForm] = useState({
     subject: '',
@@ -30,119 +44,43 @@ export default function ResidentBlotter({
   const handleSubmit = async (e) => {
   e.preventDefault();
 
-  if (!blotterForm.subject?.trim() || !blotterForm.details?.trim()) {
-  showToast('error', 'Please fill in all required fields (Subject and Details).');
+  const validation = validateBlotterForm(blotterForm);
+  if (!validation.valid) {
+    showToast('error', validation.message);
     return;
   }
 
   setIsSubmitting(true);
-
   try {
-    const formattedLocation =
-      blotterForm.location?.trim() || 'Unknown Location';
-    const trackingNo = `BLT-${new Date().getFullYear()}-${Date.now()
-      .toString()
-      .slice(-5)}`;
-
-    const newReport = {
-      _id: `blotter_${Date.now()}`,
-      type: 'blotter_report',
-      trackingNo,
-      refNumber: trackingNo,
+    const result = await submitBlotter({
       subject: blotterForm.subject.trim(),
-      incidentType: blotterForm.subject.trim(),
       details: blotterForm.details.trim(),
-      narrative: blotterForm.details.trim(),
-      incidentDate:
-        blotterForm.incidentDate ||
-        new Date().toISOString().split('T')[0],
-      location: formattedLocation,
-      purok: formattedLocation,
-      respondent:
-        blotterForm.respondent?.trim() || 'Under Investigation',
-      respondentName:
-        blotterForm.respondent?.trim() || 'Under Investigation',
-      complainant:
-        loggedInUser?.fullName || loggedInUser?.name || 'Resident',
-      complainantName:
-        loggedInUser?.fullName || loggedInUser?.name || 'Resident',
-      residentId:
-        loggedInUser?.residentId ||
-        loggedInUser?.id ||
-        loggedInUser?._id ||
-        'RES-UNKNOWN',
+      incidentDate: blotterForm.incidentDate || new Date().toISOString().split('T')[0],
+      location: blotterForm.location?.trim() || 'Unknown Location',
+      respondent: blotterForm.respondent?.trim() || 'Under Investigation',
       attachments: blotterForm.attachments || [],
-      status: 'Open',
-      step: 1,
-      synced: false,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    if (!db) {
-      throw new Error('Database connection is not available.');
-    }
-
-    await db.put(newReport);
-
-    setBlotterForm({
-      subject: '',
-      details: '',
-      incidentDate: '',
-      location: '',
-      respondent: '',
-      attachments: [],
     });
 
+    // ✅ Kung na-block ng anti-spam/oversize, huwag mag-show ng success
+    // (parent na ang nag-show ng warning Swal)
+    if (result?.success === false) {
+      return;
+    }
+
+    // ✅ Success — reset form at mag-show ng success message
+    setBlotterForm({
+      subject: '', details: '', incidentDate: '', location: '', respondent: '', attachments: [],
+    });
     setIsFormOpen(false);
 
-if (typeof Swal !== 'undefined') {
-  Swal.fire({
-    icon: 'success',
-    title: 'Report Submitted Successfully!',
-    text: 'It is saved locally and will automatically sync to the Barangay Admin once you are online.',
-    timer: 3500,
-    showConfirmButton: false,
-    timerProgressBar: true,
-  });
-} else if (typeof showToast === 'function') {
-  showToast('Report submitted! It will sync when online.', 'success');
-} else {
-  alert('Report submitted successfully! It will sync when online.');
-}
-
-if (typeof loadData === 'function') {
-  await loadData();
-}
+    // ✅ WALANG loadData() — parent's 7d PouchDB listener na ang bahala
   } catch (err) {
     console.error('Blotter submit error:', err);
-   showToast('error', `Failed to submit report: ${err.message || 'Unknown error'}`);
+    showToast('error', `Failed to submit report: ${err.message || 'Unknown error'}`);
   } finally {
     setIsSubmitting(false);
   }
 };
-  
-  const handleBlotterSuccess = (newDoc, wasOffline) => {
-    if (wasOffline) {
-      if (typeof showToast === 'function') {
-        showToast(" Report saved locally! It will auto-sync when online.", "success");
-      } else {
-        showToast('success', 'Report saved locally! It will auto-sync when online.');
-      }
-    } else {
-      if (typeof showToast === 'function') {
-        showToast(" Incident report submitted successfully!", "success");
-      } else {
-        showToast('success', 'Incident report submitted successfully!');
-      }
-    }
-    
-    setIsFormOpen(false);
-    
-    if (typeof loadData === 'function') {
-      loadData();
-    }
-  };
 
   return (
     <div className="screen active" style={{ background: 'transparent', border: 'none', boxShadow: 'none', padding: 0 }}>
@@ -282,6 +220,7 @@ if (typeof loadData === 'function') {
             {/* Evidence Upload Section */}
             <div className="fg" style={{ marginBottom: '16px' }}>
               <label className="fl">Evidence Attachments (Optional)</label>
+
               <input 
                 type="file" 
                 id="resident-blotter-evidence" 
@@ -317,42 +256,37 @@ if (typeof loadData === 'function') {
                 }} 
               />
               
-              {/* ✅ FIXED: Added flexWrap: 'wrap' at pinaliit ng konti ang text para sa mobile */}
-              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '8px', marginTop: '6px' }}>
-                <button 
-                  type="button" 
-                  className="btn btn-g btn-sm" 
-                  onClick={() => document.getElementById('resident-blotter-evidence').click()} 
-                  style={{ 
-                    display: 'inline-flex', 
-                    alignItems: 'center', 
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', marginTop: '6px' }}>
+                <button
+                  type="button"
+                  className="btn btn-g btn-sm"
+                  onClick={() => document.getElementById('resident-blotter-evidence').click()}
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
                     justifyContent: 'center',
-                    gap: '6px', 
-                    flex: '1 1 250px' 
-                  }} 
+                    gap: '6px',
+                    width: '100%',
+                    minHeight: '44px',
+                    textAlign: 'center'
+                  }}
                 >
-                  📎 Attach Photo/Video/PDF (Max 5MB/file, 8MB total)
+                  📎 Attach Photo / Video / PDF
                 </button>
-                
-                {blotterForm.attachments && blotterForm.attachments.length > 0 && (
-                  <button 
-                    type="button" 
-                    className="btn btn-sm" 
-                    onClick={() => setBlotterForm(prev => ({ ...prev, attachments: [] }))} 
-                    style={{ 
-                      background: 'rgba(239, 68, 68, 0.1)', 
-                      color: '#ef4444', 
-                      border: '1px solid rgba(239, 68, 68, 0.3)', 
-                      display: 'inline-flex', 
-                      alignItems: 'center', 
-                      justifyContent: 'center',
-                      gap: '6px',
-                      flex: '0 1 auto' // ✅ Keep it compact
-                    }} 
-                  >
-                    🗑️ Clear All
-                  </button>
-                )}
+                <div style={{
+                  fontSize: '11px',
+                  color: 'var(--muted)',
+                  textAlign: 'center',
+                  lineHeight: 1.4
+                }}>
+                  Max 5MB per file · 8MB total
+                </div>
+                {blotterForm.attachments?.length > 0 && (
+    <button type="button" onClick={() => setBlotterForm(p => ({ ...p, attachments: [] }))}
+      style={{ flex: '0 1 auto', minHeight: '44px' }}>
+      🗑️ Clear All
+    </button>
+  )}
               </div>
 
               {/* Display Attached Files List */}

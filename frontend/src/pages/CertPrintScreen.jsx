@@ -78,12 +78,13 @@ export default function CertPrintScreen({
   setIssuanceMeta,
   blotterVerifyQuery,
   setBlotterVerifyQuery,
-  blotterMatches = [],
   issuedCertificates = [],
   printMode,
   setPrintMode,
   onOpenPrintPreview,
-  showToast
+  showToast,
+  notifyDesktop,
+  nav,  
 }) {
   const [dbIssuedCertificates, setDbIssuedCertificates] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -92,15 +93,13 @@ export default function CertPrintScreen({
   const workspaceRef = useRef(null);
   const [saving, setSaving] = useState(false);   
   const isInitialLoadRef = useRef(true); 
+  const [blotterRecords, setBlotterRecords] = useState([]);
+const [blotterMatches, setBlotterMatches] = useState([]);
 
   const loadIssuedCertificates = useCallback(async () => {
   try {
     if (isInitialLoadRef.current) setLoading(true);
-    const result = await db.allDocs({
-      include_docs: true,
-      startkey: 'certificate_request_',
-      endkey: 'certificate_request_\ufff0',
-    });
+    const result = await db.allDocs({ include_docs: true });
     const allDocs = result.rows.map((row) => row.doc);
     const issued = allDocs.filter(
       (doc) =>
@@ -121,28 +120,69 @@ export default function CertPrintScreen({
 }, []);
 
   useEffect(() => {
-  loadIssuedCertificates(); 
+  if (!db || typeof db.allDocs !== 'function') return;
+  let isMounted = true;
+
   
-  const changes = db
-    .changes({ live: true, include_docs: true, since: 'now' })
-    .on('change', (change) => {
-      if (change.doc && change.doc.type === 'certificate_request') {
-        setDbIssuedCertificates((prev) => {
-          const filtered = prev.filter((c) => c._id !== change.doc._id);
-          if (change.deleted) return filtered;
-          if (['Approved', 'Issued', 'Released'].includes(change.doc.status)) {
-            return [change.doc, ...filtered];
-          }
-          return filtered;
-        });
-      }
-    })
-    .on('error', (err) => {
-      console.error('Certificate changes error:', err);
+
+  const changes = db.changes({
+    since: 'now', live: true, include_docs: true,
+    filter: (doc) => doc.type === 'certificate_request'
+  })
+  .on('change', (change) => {
+    if (!isMounted || !change.doc) return;
+
+    const doc = change.doc;
+    const isNewRequest =
+      doc.step === 1 &&
+      ['Under Review', 'Pending', 'Proceeding'].includes(doc.status);
+
+    if (isNewRequest) {
+      const applicant =
+        `${doc.firstName || ''} ${doc.lastName || ''}`.trim() || 'Resident';
+      notifyDesktop(
+        ' New Certificate Request',
+        `${applicant} — ${doc.certificateType || 'Certificate'}`,
+        {
+          tag: `cert-${doc._id}`,
+          onClick: () => nav('cert-approve'),
+        }
+      );
+    }
+
+    setIssuedCertificates((prevCerts) => {
+      const filtered = (prevCerts || []).filter((c) => c?._id !== doc._id);
+      return [doc, ...filtered];
     });
-    
-  return () => changes.cancel();
-}, []); 
+  })
+  .on('error', (err) => {
+    console.error('PouchDB cert changes listener error:', err);
+  });
+
+  return () => {
+    isMounted = false;
+    changes.cancel();
+  };
+}, [notifyDesktop, nav]);
+
+// Load blotter records for auto-verification
+useEffect(() => {
+  const loadBlotter = async () => {
+    try {
+      const result = await db.allDocs({ include_docs: true });
+      const records = result.rows
+        .map((row) => row.doc)
+        .filter((doc) => doc && doc.type === 'blotter');
+      setBlotterRecords(records);
+    } catch (err) {
+      console.error('Error loading blotter records:', err);
+      setBlotterRecords([]);
+    }
+  };
+  loadBlotter();
+}, []);
+
+
 
   // Default OR details allocation
   useEffect(() => {
@@ -228,15 +268,32 @@ export default function CertPrintScreen({
 }, [dbIssuedCertificates, issuedCertificates]);
 
   const [issuedSearchQuery, setIssuedSearchQuery] = useState('');
-  const filteredIssuedAndReleased = useMemo(() => {
-    if (!issuedSearchQuery.trim()) return issuedAndReleased;
-    const q = issuedSearchQuery.toLowerCase();
-    return issuedAndReleased.filter((c) => 
-      (c._id || '').toLowerCase().includes(q) ||
-      getApplicantName(c).toLowerCase().includes(q) ||
-      (c.certificateType || '').toLowerCase().includes(q)
-    );
-  }, [issuedAndReleased, issuedSearchQuery]);
+  // ✅ Filter states
+const [showIssuedFilters, setShowIssuedFilters] = useState(false);
+const [filterIssuedStatus, setFilterIssuedStatus] = useState('All');
+const [filterIssuedType, setFilterIssuedType] = useState('All');
+  const filteredIssuedAndReleased = issuedAndReleased.filter((cert) => {
+  // 1. Search filter
+  const query = issuedSearchQuery.toLowerCase().trim();
+  const residentName = getApplicantName(cert).toLowerCase();
+  const certType = (cert.certificateType || '').toLowerCase();
+  const reqId = (cert.requestId || cert._id || '').toLowerCase();
+  
+  const matchesSearch = !query ||
+    residentName.includes(query) ||
+    certType.includes(query) ||
+    reqId.includes(query);
+  
+  // 2. Status filter
+  const matchesStatus = filterIssuedStatus === 'All' || 
+    (cert.status || '').toLowerCase() === filterIssuedStatus.toLowerCase();
+  
+  // 3. Type filter
+  const matchesType = filterIssuedType === 'All' ||
+    (cert.certificateType || '').toLowerCase().includes(filterIssuedType.toLowerCase());
+  
+  return matchesSearch && matchesStatus && matchesType;
+});
 
   const [approvedSearchQuery, setApprovedSearchQuery] = useState('');
   const filteredApprovedCertificates = useMemo(() => {
@@ -263,7 +320,6 @@ export default function CertPrintScreen({
     amountPaid: cert?.certificateType?.toLowerCase().includes('indigency') ? 0 : 50,
     dateIssued: new Date().toISOString().split('T')[0],
     ctcNumber: cert?.ctc?.number || '',
-    noDerogatoryRecord: false,
     remarks: '',
   });
 }, [selectedCertificate, setSelectedCertificate, setIssuanceMeta]);
@@ -424,13 +480,13 @@ export default function CertPrintScreen({
   }, [approvedCertificates, currentSelectedId, setSelectedCertificate]);
 
     return (
-    <div className="cert-print-screen" style={{ display: 'flex', flexDirection: 'column', gap: '20px', height: 'calc(100vh - 100px)' }}>
+    <div className="cert-print-screen" style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: 'calc(100vh - 70px)' }}>
       
       {/* MAIN WORKSPACE: Split View Layout */}
-      <div style={{ display: 'flex', gap: '20px', flex: 1, minHeight: 0 }}>
+      <div style={{ display: 'flex', gap: '16px', flex: '0 0 72%', minHeight: 0, alignItems: 'stretch', overflow: 'hidden' }}>
         
         {/* LEFT PANEL: Approved Certificates Queue (40% Width) */}
-        <div className="cert-section-card" style={{ flex: '0 0 40%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="cert-section-card" style={{ flex: '0 0 40%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
           <div className="cert-section-header" style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
             <div className="cert-section-title" style={{ fontWeight: 600, fontSize: '15px', marginBottom: '8px' }}>
               Ready for Issuance
@@ -444,12 +500,12 @@ export default function CertPrintScreen({
               style={{ width: '100%', height: '36px', fontSize: '13px' }} 
             />
           </div>
-          <div className="cert-table-wrapper" style={{ flex: 1, overflowY: 'auto' }}>
+            <div className="cert-table-wrapper" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead style={{ position: 'sticky', top: 0, background: 'var(--surface2)', zIndex: 10 }}>
                 <tr>
                   <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)' }}>Resident</th>
-                  <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)' }}>Type</th>
+                  <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)', minWidth: '140px', whiteSpace: 'nowrap' }}>Type</th>
                   <th style={{ padding: '10px', textAlign: 'right', fontSize: '11px', color: 'var(--muted)' }}>Action</th>
                 </tr>
               </thead>
@@ -476,7 +532,9 @@ export default function CertPrintScreen({
                           <div style={{ fontWeight: 600, fontSize: '13px' }}>{getApplicantName(cert)}</div>
                           <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{cert._id}</div>
                         </td>
-                        <td style={{ padding: '12px', fontSize: '12px' }}>{cert.certificateType || '—'}</td>
+                        <td style={{ padding: '12px', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }} title={cert.certificateType}>
+                          {cert.certificateType || '—'}
+                        </td>
                         <td style={{ padding: '12px', textAlign: 'right' }}>
                           <span className={`badge ${isSelected ? 'b' : 'g'}`}>{isSelected ? 'Selected' : 'Process'}</span>
                         </td>
@@ -490,11 +548,11 @@ export default function CertPrintScreen({
         </div>
 
         {/* RIGHT PANEL: Issuance Workspace (60% Width) */}
-        <div className="cert-section-card" style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+        <div className="cert-section-card" style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
           {selectedCertificate ? (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', minHeight: 0 }}>
               {/* Workspace Header */}
-              <div style={{ padding: '16px', borderBottom: '1px solid var(--border)', background: 'rgba(59, 130, 246, 0.05)' }}>
+              <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: '10px', justifyContent: 'flex-end', flexShrink: 0 }}>
                 <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>
                   Issuance Workspace: {getApplicantName(selectedCertificate)}
                 </div>
@@ -504,24 +562,36 @@ export default function CertPrintScreen({
               </div>
               
               {/* Workspace Scrollable Content */}
-              <div style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
                 
                 {/* 1. Blotter Verification */}
-                <div className="fp cert-panel" style={{ background: 'var(--surface2)', padding: '16px', borderRadius: '8px' }}>
+                <div className="fp cert-panel" style={{ background: 'var(--surface2)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
                   <div className="fp-t" style={{ fontWeight: 600, marginBottom: '10px', fontSize: '13px' }}> Blotter Verification Check</div>
                   <input className="fc" placeholder="Search last name to check for derogatory records..." value={blotterVerifyQuery} onChange={(e) => setBlotterVerifyQuery(e.target.value)} style={{ marginBottom: '10px' }} />
-                  <div className="cert-mini-table-wrap" style={{ maxHeight: '150px', overflowY: 'auto', marginBottom: '10px', background: '#fff', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                    <table className="cert-mini-table" style={{ width: '100%', fontSize: '12px' }}>
+                  <div className="cert-mini-table-wrap" style={{ maxHeight: '100px', overflowY: 'auto', marginBottom: '8px', background: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                    <table className="cert-mini-table" style={{ width: '100%', fontSize: '12px', background: 'var(--surface)' }}>
                       <thead style={{ background: 'var(--surface2)', position: 'sticky', top: 0 }}>
-                        <tr><th style={{ padding: '8px', textAlign: 'left' }}>Respondent</th><th style={{ padding: '8px', textAlign: 'left' }}>Status</th></tr>
-                      </thead>
-                      <tbody>
-                        {blotterMatches.length > 0 ? blotterMatches.map((b, idx) => (
-                          <tr key={b.id || idx}><td style={{ padding: '8px' }}>{b.respondent || '—'}</td><td style={{ padding: '8px' }}><span className={`badge ${b.status === 'Resolved' ? 'g' : 'r'}`}>{b.status || 'Open'}</span></td></tr>
-                        )) : (
-                          <tr><td colSpan="2" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>{blotterVerifyQuery ? 'No derogatory records found.' : 'Type a name to verify.'}</td></tr>
-                        )}
-                      </tbody>
+  <tr>
+    <th style={{ padding: '8px', textAlign: 'left', color: 'var(--text)', fontSize: '11px' }}>Respondent</th>
+    <th style={{ padding: '8px', textAlign: 'left', color: 'var(--text)', fontSize: '11px' }}>Status</th>
+  </tr>
+</thead>
+<tbody>
+  {blotterMatches.length > 0 ? blotterMatches.map((b, idx) => (
+    <tr key={b.id || idx} style={{ borderBottom: '1px solid var(--border)' }}>
+      <td style={{ padding: '8px', color: 'var(--text)', fontSize: '12px' }}>{b.respondent || '—'}</td>
+      <td style={{ padding: '8px' }}>
+        <span className={`badge ${b.status === 'Resolved' ? 'g' : 'r'}`}>{b.status || 'Open'}</span>
+      </td>
+    </tr>
+  )) : (
+    <tr>
+      <td colSpan="2" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
+        {blotterVerifyQuery ? 'No derogatory records found.' : 'Type a name to verify.'}
+      </td>
+    </tr>
+  )}
+</tbody>
                     </table>
                   </div>
                   <label className="cert-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
@@ -531,7 +601,7 @@ export default function CertPrintScreen({
                 </div>
 
                 {/* 2. Receipt & CTC Details (Side-by-Side) */}
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' }}>
                   <div className="fp cert-panel" style={{ padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
                     <div className="fp-t accent" style={{ fontWeight: 600, marginBottom: '12px', fontSize: '13px' }}>🧾 Receipt Details</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
@@ -699,46 +769,247 @@ export default function CertPrintScreen({
       </div>
 
       {/* BOTTOM SECTION: Issued & Released History (Reprint Queue) */}
-      <div className="cert-section-card" style={{ flexShrink: 0 }}>
-        <div className="cert-section-header" style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div className="cert-section-title" style={{ fontWeight: 600, fontSize: '14px' }}> Issued & Released History (Reprint Queue)</div>
-          <input type="text" className="fc" placeholder="Search issued records..." value={issuedSearchQuery} onChange={(e) => setIssuedSearchQuery(e.target.value)} style={{ width: '200px', height: '32px', fontSize: '12px' }} />
-        </div>
-        <div className="cert-table-wrapper" style={{ maxHeight: '250px', overflowY: 'auto' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead style={{ position: 'sticky', top: 0, background: 'var(--surface2)', zIndex: 10 }}>
-              <tr>
-                <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)' }}>Request ID</th>
-                <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)' }}>Resident</th>
-                <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)' }}>Type</th>
-                <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)' }}>Status</th>
-                <th style={{ padding: '10px', textAlign: 'left', fontSize: '11px', color: 'var(--muted)' }}>Issued At</th>
-                <th style={{ padding: '10px', textAlign: 'right', fontSize: '11px', color: 'var(--muted)' }}>Action</th>
+<div 
+  className="cert-section-card" 
+  style={{ 
+    flex: '0 0 35%',
+    display: 'flex', 
+    flexDirection: 'column', 
+    overflow: 'hidden', 
+    minHeight: 0,
+    padding: 0,
+    maxWidth: '100%',
+    boxSizing: 'border-box',
+  }}
+>
+  {/* ── Header ── */}
+  <div 
+    className="cert-section-header" 
+    style={{ 
+      padding: '14px 20px', 
+      borderBottom: '1px solid var(--border)', 
+      display: 'flex', 
+      justifyContent: 'space-between', 
+      alignItems: 'center', 
+      gap: 12, 
+      flexWrap: 'wrap',
+    }}
+  >
+    <div 
+      className="cert-section-title" 
+      style={{ 
+        fontWeight: 700, 
+        fontSize: 14, 
+        display: 'flex', 
+        alignItems: 'center', 
+        gap: 8,
+      }}
+    >
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+        <polyline points="14 2 14 8 20 8" />
+        <line x1="16" y1="13" x2="8" y2="13" />
+        <line x1="16" y1="17" x2="8" y2="17" />
+      </svg>
+      Issued & Released History
+      <span 
+        style={{ 
+          fontSize: 10, 
+          fontWeight: 700, 
+          padding: '2px 8px', 
+          borderRadius: 10, 
+          background: 'var(--accent-bg)', 
+          color: 'var(--accent)', 
+          border: '1px solid rgba(79,142,247,0.25)',
+        }}
+      >
+        {filteredIssuedAndReleased.length}
+      </span>
+    </div>
+    <input 
+      type="text" 
+      className="fc" 
+      placeholder="Search issued records..." 
+      value={issuedSearchQuery} 
+      onChange={(e) => setIssuedSearchQuery(e.target.value)} 
+      style={{ 
+        width: 240, 
+        height: 34, 
+        fontSize: 12, 
+        padding: '6px 12px',
+      }} 
+    />
+  </div>
+
+  {/* ── Table Wrapper ── */}
+  <div 
+    className="cert-table-wrapper" 
+    style={{ 
+      flex: 1, 
+      minHeight: 0, 
+      overflowY: 'auto', 
+      overflowX: 'hidden',
+      width: '100%',              // ✅ Explicit width
+      boxSizing: 'border-box',    // ✅
+    }}
+  >
+    <table style={{ width: '100%', borderCollapse: 'collapse', tableLayout: 'fixed' }}>
+      <thead style={{ position: 'sticky', top: 0, background: 'var(--surface2)', zIndex: 10 }}>
+        <tr>
+          {/* Request ID — 20% */}
+          <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', width: '20%' }}>
+            Request ID
+          </th>
+          {/* Resident — 26% */}
+          <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', width: '26%' }}>
+            Resident
+          </th>
+          {/* Type — 18% */}
+          <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', width: '18%' }}>
+            Type
+          </th>
+          {/* Status — 10% */}
+          <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', width: '10%' }}>
+            Status
+          </th>
+          {/* Issued At — 14% */}
+          <th style={{ padding: '10px 16px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', width: '14%' }}>
+            Issued At
+          </th>
+          {/* Action — 12% */}
+          <th style={{ padding: '10px 16px', textAlign: 'right', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', width: '12%' }}>
+            Action
+          </th>
+        </tr>
+      </thead>
+      <tbody>
+        {filteredIssuedAndReleased.length === 0 ? (
+          <tr>
+            <td colSpan="6" style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--muted)' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.4 }}>
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                </svg>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>No issued certificates found.</span>
+              </div>
+            </td>
+          </tr>
+        ) : (
+          filteredIssuedAndReleased.map((cert, index) => {
+            const rawId = cert.requestId || cert._id?.replace('issued_cert_', '') || '—';
+            const displayId = rawId.length > 20 ? `${rawId.slice(0, 8)}…${rawId.slice(-6)}` : rawId;
+            
+            return (
+              <tr 
+                key={cert._id} 
+                style={{ 
+                  borderBottom: '1px solid var(--border)', 
+                  background: index % 2 === 0 ? 'transparent' : 'var(--surface2)',
+                  transition: 'background 0.15s ease',
+                }}
+                onMouseEnter={(e) => e.currentTarget.style.background = 'var(--accent-bg)'}
+                onMouseLeave={(e) => e.currentTarget.style.background = index % 2 === 0 ? 'transparent' : 'var(--surface2)'}
+              >
+                {/* Request ID — truncated */}
+                <td 
+                  className="mono" 
+                  style={{ 
+                    padding: '12px 16px', 
+                    fontSize: 11, 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis', 
+                    whiteSpace: 'nowrap',
+                  }} 
+                  title={rawId}
+                >
+                  {displayId}
+                </td>
+
+                {/* Resident — truncated */}
+                <td 
+                  style={{ 
+                    padding: '12px 16px', 
+                    fontWeight: 600, 
+                    fontSize: 13, 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis', 
+                    whiteSpace: 'nowrap',
+                  }} 
+                  title={getApplicantName(cert)}
+                >
+                  {getApplicantName(cert)}
+                </td>
+
+                {/* Type — truncated */}
+                <td 
+                  style={{ 
+                    padding: '12px 16px', 
+                    fontSize: 12, 
+                    overflow: 'hidden', 
+                    textOverflow: 'ellipsis', 
+                    whiteSpace: 'nowrap',
+                  }} 
+                  title={cert.certificateType || '—'}
+                >
+                  {cert.certificateType || '—'}
+                </td>
+
+                {/* Status */}
+                <td style={{ padding: '12px 16px' }}>
+                  <span className={`badge ${cert.status === 'Released' ? 'g' : 'a'}`} style={{ fontSize: 10 }}>
+                    {cert.status}
+                  </span>
+                </td>
+
+                {/* Issued At */}
+                <td 
+                  className="mono" 
+                  style={{ 
+                    padding: '12px 16px', 
+                    fontSize: 11, 
+                    color: 'var(--muted)', 
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  {formatDateTime(cert.issuedAt || cert.updatedAt || cert.createdAt)}
+                </td>
+
+                {/* Action */}
+                <td style={{ padding: '12px 16px', textAlign: 'right' }}>
+                  <button 
+                    type="button" 
+                    className="btn btn-g btn-sm" 
+                    disabled={printingId === cert._id} 
+                    onClick={() => { 
+                      setPrintingId(cert._id); 
+                      handleReprint(cert); 
+                    }} 
+                    title="Print duplicate copy" 
+                    style={{ 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      gap: 4, 
+                      fontSize: 11, 
+                      padding: '5px 10px',
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="6 9 6 2 18 2 18 9" />
+                      <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+                      <rect x="6" y="14" width="12" height="8" />
+                    </svg>
+                    {printingId === cert._id ? 'Printing...' : 'Reprint'}
+                  </button>
+                </td>
               </tr>
-            </thead>
-            <tbody>
-              {filteredIssuedAndReleased.length === 0 ? (
-                <tr><td colSpan="6" style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)' }}>No issued certificates found.</td></tr>
-              ) : (
-                filteredIssuedAndReleased.map((cert) => (
-                  <tr key={cert._id} style={{ borderBottom: '1px solid var(--border)' }}>
-                    <td className="mono" style={{ padding: '10px', fontSize: '11px' }}>{cert.requestId || cert._id?.replace('issued_cert_', '')}</td>
-                    <td style={{ padding: '10px', fontWeight: 600, fontSize: '13px' }}>{getApplicantName(cert)}</td>
-                    <td style={{ padding: '10px', fontSize: '12px' }}>{cert.certificateType || '—'}</td>
-                    <td style={{ padding: '10px' }}><span className={`badge ${cert.status === 'Released' ? 'g' : 'a'}`}>{cert.status}</span></td>
-                    <td className="mono" style={{ padding: '10px', fontSize: '11px', color: 'var(--muted)' }}>{formatDateTime(cert.issuedAt || cert.updatedAt || cert.createdAt)}</td>
-                    <td style={{ padding: '10px', textAlign: 'right' }}>
-                      <button type="button" className="btn btn-g btn-sm" disabled={printingId === cert._id} onClick={() => { setPrintingId(cert._id); handleReprint(cert); }} title="Print duplicate copy">
-                        {printingId === cert._id ? 'Printing...' : '🖨️ Reprint'}
-                      </button>
-                    </td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
+            );
+          })
+        )}
+      </tbody>
+    </table>
+  </div>
+</div>
 
     </div>
   );

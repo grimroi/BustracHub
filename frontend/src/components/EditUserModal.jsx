@@ -2,15 +2,7 @@
 import React, { useState } from 'react';
 import Swal from 'sweetalert2';
 import { createAuditLog } from '../utils/auditLog';
-
-export const hashPassword = async (password) => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((b) => b.toString(16).padStart(2, '0'))
-    .join('');
-};
+import { hashPassword } from '../utils/password';
 
 export default function EditUserModal({ user, onClose, onSave, db, currentUser }) {
   const [formData, setFormData] = useState({
@@ -287,9 +279,9 @@ export default function EditUserModal({ user, onClose, onSave, db, currentUser }
               onChange={(e) => setFormData({ ...formData, newPassword: e.target.value })}
               placeholder="Leave blank to keep existing password..."
             />
-            <span style={{ fontSize: '11px', color: 'var(--muted, #94a3b8)', marginTop: '4px', display: 'block' }}>
-              Minimum 6 characters. Automatically hashed with SHA-256 upon saving.
-            </span>
+<span style={{ fontSize: '11px', color: 'var(--muted, #94a3b8)', marginTop: '4px', display: 'block' }}>
+            Minimum 6 characters. Automatically hashed with bcrypt upon saving.
+          </span>
           </div>
 
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>

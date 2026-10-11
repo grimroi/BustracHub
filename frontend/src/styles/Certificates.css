@@ -429,6 +429,27 @@
     opacity: 0.25 !important;
     filter: grayscale(100%) contrast(300%) !important;
   }
+
+  /* Dashboard print modals (Barangay / Business) — flatten overlay + scroll
+     wrappers so only the certificate prints (no gray backdrop / padding). */
+  .clearance-print-overlay,
+  .business-print-portal,
+  .clearance-modal-content,
+  .business-print-modal-content,
+  .print-preview-wrapper,
+  .business-print-preview-wrapper {
+    background: transparent !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: none !important;
+    border-radius: 0 !important;
+    box-shadow: none !important;
+    overflow: visible !important;
+    max-width: none !important;
+    max-height: none !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
 }
 
 
@@ -1084,11 +1105,6 @@ html[data-theme="light"] {
   animation: spin 0.7s linear infinite;
 }
 
-.empty-state::before {
-  content: '📭';
-  font-size: 24px;
-  filter: grayscale(0.3);
-}
 
 @keyframes spin {
   to { transform: rotate(360deg); }
@@ -1455,4 +1471,40 @@ tr.row-selected {
 
 tr.row-selected td {
   font-weight: 600 !important;
+}
+/* CERT LIFECYCLE MISSING CLASSES */
+.cert-lifecycle-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-bottom:20px}@media (max-width:900px){.cert-lifecycle-stats{grid-template-columns:1fr}}.cert-stat-card{position:relative;padding:20px 22px;background:linear-gradient(180deg,var(--cl-surface) 0%,var(--cl-surface-2) 100%);border:1px solid var(--cl-border);border-radius:var(--cl-radius);box-shadow:var(--cl-shadow-md);overflow:hidden;transition:var(--cl-transition)}.cert-stat-card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:4px;background:var(--cl-primary)}.cert-stat-card--incoming::before{background:var(--cl-primary)}.cert-stat-card--pending::before{background:var(--cl-warning)}.cert-stat-card--total::before{background:var(--cl-purple)}.cert-stat-card:hover{border-color:var(--cl-border-strong);box-shadow:var(--cl-shadow-lg);transform:translateY(-2px)}.cert-stat-label{font-size:11px;font-weight:700;color:var(--cl-text-muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}.cert-stat-value{font-size:34px;font-weight:800;line-height:1.1;color:var(--cl-text);margin-bottom:4px;letter-spacing:-.5px}.cert-stat-hint{font-size:11.5px;color:var(--cl-text-muted);font-weight:500}.badge--count{background:rgba(59,130,246,.12);color:#60a5fa;border:1px solid rgba(59,130,246,.25);padding:3px 12px;border-radius:999px;font-size:11px;font-weight:800;min-width:28px;justify-content:center;text-transform:none;letter-spacing:0}.cert-table-wrapper--compact{max-height:420px}.empty-state-hint{font-size:11.5px;color:var(--cl-text-muted);opacity:.75;margin-top:4px}.empty-state svg{margin-bottom:6px;opacity:.4}.cert-cell-name{font-weight:600;color:var(--cl-text);font-size:13px;line-height:1.3;margin-bottom:2px}.cert-cell-id{font-family:var(--mono,'DM Mono',monospace);font-size:10.5px;color:var(--cl-text-muted);letter-spacing:.3px}.cert-cell-type{font-weight:600;color:var(--cl-text);font-size:12.5px;margin-bottom:2px}.cert-cell-purpose{font-size:11.5px;color:var(--cl-text-muted);line-height:1.4;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.cert-cell-returned{display:inline-flex;align-items:center;gap:5px;margin-top:6px;padding:3px 8px;border-radius:6px;background:rgba(245,158,11,.1);color:#fbbf24;font-size:10.5px;font-weight:600;border:1px solid rgba(245,158,11,.25)}.cert-link-badge{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border-radius:999px;background:rgba(16,185,129,.12);color:#34d399;border:1px solid rgba(16,185,129,.3);font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.4px}.fl--between{display:flex;align-items:center;justify-content:space-between;width:100%;gap:12px}.cert-modal--wide{max-width:720px}
+/* ═══ SPLIT VIEW — Equal Height Panels ═══ */
+.cert-split-view {
+  display: grid;
+  grid-template-columns: 2fr 3fr; /* 40% : 60% */
+  gap: 20px;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.cert-split-view > .cert-section-card {
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Scrollable areas inside panels */
+.cert-split-view .cert-table-wrapper,
+.cert-split-view .workspace-scrollable {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+/* Panel header — doesn't shrink */
+.cert-split-view .panel-header {
+  flex-shrink: 0;
+}
+
+/* Panel footer — doesn't shrink */
+.cert-split-view .panel-footer {
+  flex-shrink: 0;
 }

@@ -27,3 +27,26 @@ Bustrac Hub is a comprehensive, offline-first web application designed to digiti
 - [Your Name / Team Members]
 - Adviser: [Adviser Name]
 - Institution: Camarines Sur Polytechnic Colleges
+
+## Performance
+
+Last optimized: 2026-10-09
+
+### Core Web Vitals (Lighthouse)
+- LCP: 0.16s (Excellent)
+- CLS: 0.03 (Excellent)  
+- INP: 160ms (Good)
+
+### Optimizations Applied
+1. **Query optimization** — Mango indexes + `db.find()` instead of `db.allDocs()`
+2. **Consolidated PouchDB listeners** — 11 → 1 subscription
+3. **Component extraction** — Topbar, DashboardScreen, ResidentsScreen memoized
+4. **Filter memoization** — `useMemo` for derived state
+5. **GPU-friendly CSS** — Animations use `opacity`/`transform` only
+6. **React 18 features** — `startTransition` for non-urgent updates
+7. **Debounced live updates** — 500ms batch for listener flushes
+
+### Remaining Opportunities
+- Extract remaining screens (CertificatesScreen, BlotterScreen, etc.)
+- Consider `React.lazy` for code splitting
+- Consider React Router for route-based rendering

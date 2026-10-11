@@ -1,5 +1,19 @@
 import { useState } from 'react';
+import Swal from 'sweetalert2';
 import { getFeedbackStep, formatResidentDate } from '../../utils/residentUtils';
+
+const showToast = (type, message) => {
+  if (typeof Swal !== 'undefined' && Swal.fire) {
+    Swal.fire({
+      icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
+      toast: true,
+      position: 'top-end',
+      timer: 2500,
+      showConfirmButton: false,
+      title: message,
+    });
+  }
+};
 
 const feedbackSteps = ['Submitted', 'Under Review', 'Responded', 'Resolved'];
 

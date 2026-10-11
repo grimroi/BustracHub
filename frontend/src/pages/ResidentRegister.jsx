@@ -137,17 +137,22 @@ export default function ResidentRegister() {
               </select>
             </div>
 
-            <div className="input-group">
-              <label className="input-label">Contact Number *</label>
-              <input
-                className="custom-input"
-                required
-                type="tel"
-                placeholder="09XXXXXXXXX"
-                value={formData.contact}
-                onChange={(e) => setFormData({ ...formData, contact: e.target.value.replace(/\D/g, '').slice(0, 11) })}
-              />
-            </div>
+               <div className="input-group">
+  <label className="input-label">Contact Number *</label>
+  <input
+    type="tel"
+    inputMode="numeric"
+    className="custom-input"
+    required
+    placeholder="e.g. 09123456789"
+    maxLength={11}
+    value={formData.contact}
+    onChange={(e) => {
+      const cleaned = e.target.value.replace(/\D/g, '').slice(0, 11);
+      setFormData({ ...formData, contact: cleaned });
+    }}
+  />
+</div>
 
             <button type="submit" className="submit-btn" disabled={isSubmitting} style={{ marginTop: '8px' }}>
               {isSubmitting ? (

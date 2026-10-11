@@ -28,10 +28,12 @@ interface WrapperProps {
   type: CertificateType;
   mode?: 'original' | 'copy' | 'standard'; 
   data: CertificateData;
+  publicDomain?: string;
+  qrConfig?: Record<string, any>;
   onClose?: () => void;
 }
 
-export const CertificatePrintWrapper: React.FC<WrapperProps> = ({ type, mode,  data, onClose }) => {
+export const CertificatePrintWrapper: React.FC<WrapperProps> = ({ type, mode,  data, publicDomain, qrConfig, onClose }) => {
   const printRef = useRef<HTMLDivElement>(null);
 
   const handlePrint = () => {
@@ -41,7 +43,7 @@ export const CertificatePrintWrapper: React.FC<WrapperProps> = ({ type, mode,  d
   const renderTemplate = () => {
     switch (type) {
       case 'clearance':
-        return <BarangayClearance data={data} />;
+        return <BarangayClearance data={data} publicDomain={publicDomain} qrConfig={qrConfig} />;
       case 'indigency':
         return <IndigencyTemplate data={data} />;
       case 'business':

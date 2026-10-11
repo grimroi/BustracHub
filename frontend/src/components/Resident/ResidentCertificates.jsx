@@ -1,5 +1,19 @@
 import { useMemo } from 'react';
+import Swal from 'sweetalert2';
 import { getStepFromStatus } from '../../utils/residentUtils';
+
+const showToast = (type, message) => {
+  if (typeof Swal !== 'undefined' && Swal.fire) {
+    Swal.fire({
+      icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
+      toast: true,
+      position: 'top-end',
+      timer: 2500,
+      showConfirmButton: false,
+      title: message,
+    });
+  }
+};
 
 const certSteps = ['Submitted', 'Review', 'Approved', 'Ready', 'Issued'];
 
@@ -43,6 +57,7 @@ export default function ResidentCertificates({
   filterTab,
   setFilterTab,
   handleCancelRequest,
+  onRefresh,
 }) {
   const selectedType = (
   certForm?.certType || 
@@ -76,9 +91,11 @@ const handleCertTypeChange = (e) => {
 
   const pendingRequestCount = useMemo(() => {
     return myRequests.filter((r) => {
-      const status = r.status || 'Pending';
+      const status = (r.status || '').toLowerCase();
       const step = Number(r.step || 1);
-      return status !== 'Issued' && step < 5;
+      if (status === 'cancelled') return false;
+      if (['issued', 'released'].includes(status)) return false;
+      return step < 5;
     }).length;
   }, [myRequests]);
 
@@ -92,17 +109,15 @@ const handleCertTypeChange = (e) => {
   
     const handleRefreshRequests = async () => {
     try {
-      const result = await db.allDocs({ include_docs: true });
-      const userDocs = result.rows
-        .map(r => r.doc)
-        .filter(doc => doc.type === 'certificate_request' && (doc.residentId === loggedInUser?.residentId || doc.username === loggedInUser?.username))
-        .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
-      
-      setMyRequests(userDocs);
-      if (typeof showToast === 'function') showToast("Requests refreshed!", "success");
+      // The parent owns myRequests state and keeps it live via the PouchDB
+      // changes feed, so ask it to reload rather than querying locally.
+      if (typeof onRefresh === 'function') {
+        await onRefresh();
+      }
+      showToast('success', 'Requests refreshed!');
     } catch (err) {
       console.error("Refresh failed", err);
-     showToast('error', 'Failed to refresh. Please check your connection.');
+      showToast('error', 'Failed to refresh. Please check your connection.');
     }
   };
 
@@ -137,7 +152,10 @@ const handleCertTypeChange = (e) => {
             onClick={handleRefreshRequests}
             style={{ display: 'flex', alignItems: 'center', gap: 6 }}
           >
-            <span>🔄</span>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
             <span>Refresh Status</span>
           </button>
         </div>

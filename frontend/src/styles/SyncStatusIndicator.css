@@ -1,213 +1,275 @@
-/* --- SYNC STATUS INDICATOR COMPONENT --- */
+/* =========================================================
+   SYNC STATUS INDICATOR — Clean, Optimized, GPU-Friendly
+   ========================================================= */
 
-/* CSS Variables para madaling i-customize */
+/* =========================================
+   CSS VARIABLES — Light Mode (Default)
+   ========================================= */
 :root {
-  /* Success */
-  --sync-success-bg: #e6f4ea;
-  --sync-success-text: #137333;
-  --sync-success-border: #ceead6;
-  --sync-success-dot: #1e8e3e;
+  /* Synced (Success) */
+  --si-success-bg-1: rgba(16, 185, 129, 0.12);
+  --si-success-bg-2: rgba(16, 185, 129, 0.05);
+  --si-success-border: rgba(16, 185, 129, 0.25);
+  --si-success-text: #047857;
+  --si-success-dot: #10b981;
+  --si-success-glow: rgba(16, 185, 129, 0.18);
 
-  /* Offline / Checking */
-  --sync-neutral-bg: #f1f3f4;
-  --sync-neutral-text: #5f6368;
-  --sync-neutral-border: #dadce0;
-  --sync-neutral-dot: #80868b;
+  /* Syncing (Active) */
+  --si-active-bg-1: rgba(59, 130, 246, 0.12);
+  --si-active-bg-2: rgba(59, 130, 246, 0.05);
+  --si-active-border: rgba(59, 130, 246, 0.30);
+  --si-active-text: #1d4ed8;
+  --si-active-dot: #3b82f6;
+  --si-active-glow: rgba(59, 130, 246, 0.18);
 
-  /* Active / Syncing */
-  --sync-active-bg: #e8f0fe;
-  --sync-active-text: #1a73e8;
-  --sync-active-border: #d2e3fc;
-  --sync-active-dot: #1a73e8;
+  /* Offline (Neutral) */
+  --si-neutral-bg-1: rgba(100, 116, 139, 0.10);
+  --si-neutral-bg-2: rgba(100, 116, 139, 0.05);
+  --si-neutral-border: rgba(100, 116, 139, 0.22);
+  --si-neutral-text: #475569;
+  --si-neutral-dot: #64748b;
+  --si-neutral-glow: rgba(100, 116, 139, 0.15);
 
   /* Error */
-  --sync-error-bg: #fce8e6;
-  --sync-error-text: #c5221f;
-  --sync-error-border: #fad2cf;
-  --sync-error-dot: #d93025;
+  --si-error-bg-1: rgba(239, 68, 68, 0.12);
+  --si-error-bg-2: rgba(239, 68, 68, 0.05);
+  --si-error-border: rgba(239, 68, 68, 0.30);
+  --si-error-text: #b91c1c;
+  --si-error-dot: #ef4444;
+  --si-error-glow: rgba(239, 68, 68, 0.18);
+
+  /* Pending pill */
+  --si-pending-bg: rgba(245, 158, 11, 0.15);
+  --si-pending-text: #d97706;
+  --si-pending-border: rgba(245, 158, 11, 0.30);
 }
 
 /* =========================================
-   DARK MODE VARIABLES
+   DARK MODE
    ========================================= */
-.dark-theme,
-[data-theme="dark"] {
-  --sync-success-bg: rgba(30, 142, 62, 0.2);
-  --sync-success-text: #81c995;
-  --sync-success-border: rgba(129, 201, 149, 0.3);
-  --sync-success-dot: #81c995;
+[data-theme="dark"] .sync-indicator,
+.dark-theme .sync-indicator {
+  --si-success-bg-1: rgba(16, 185, 129, 0.18);
+  --si-success-bg-2: rgba(16, 185, 129, 0.08);
+  --si-success-border: rgba(16, 185, 129, 0.35);
+  --si-success-text: #6ee7b7;
+  --si-success-dot: #34d399;
 
-  --sync-neutral-bg: rgba(241, 243, 244, 0.1);
-  --sync-neutral-text: #bdc1c6;
-  --sync-neutral-border: rgba(218, 220, 224, 0.2);
-  --sync-neutral-dot: #bdc1c6;
+  --si-active-bg-1: rgba(59, 130, 246, 0.18);
+  --si-active-bg-2: rgba(59, 130, 246, 0.08);
+  --si-active-border: rgba(59, 130, 246, 0.40);
+  --si-active-text: #93c5fd;
+  --si-active-dot: #60a5fa;
 
-  --sync-active-bg: rgba(26, 115, 232, 0.2);
-  --sync-active-text: #8ab4f8;
-  --sync-active-border: rgba(138, 180, 248, 0.3);
-  --sync-active-dot: #8ab4f8;
+  --si-neutral-bg-1: rgba(148, 163, 184, 0.12);
+  --si-neutral-bg-2: rgba(148, 163, 184, 0.05);
+  --si-neutral-border: rgba(148, 163, 184, 0.25);
+  --si-neutral-text: #cbd5e1;
+  --si-neutral-dot: #94a3b8;
 
-  --sync-error-bg: rgba(217, 48, 38, 0.2);
-  --sync-error-text: #f28b82;
-  --sync-error-border: rgba(242, 139, 130, 0.3);
-  --sync-error-dot: #f28b82;
-}
+  --si-error-bg-1: rgba(239, 68, 68, 0.20);
+  --si-error-bg-2: rgba(239, 68, 68, 0.08);
+  --si-error-border: rgba(239, 68, 68, 0.40);
+  --si-error-text: #fca5a5;
+  --si-error-dot: #f87171;
 
-/* Fallback para sa system-level Dark Mode preference */
-@media (prefers-color-scheme: dark) {
-  html:not([data-theme="light"]) {
-    --sync-success-bg: rgba(30, 142, 62, 0.2);
-    --sync-success-text: #81c995;
-    --sync-success-border: rgba(129, 201, 149, 0.3);
-    --sync-success-dot: #81c995;
-
-    --sync-neutral-bg: rgba(241, 243, 244, 0.1);
-    --sync-neutral-text: #bdc1c6;
-    --sync-neutral-border: rgba(218, 220, 224, 0.2);
-    --sync-neutral-dot: #bdc1c6;
-
-    --sync-active-bg: rgba(26, 115, 232, 0.2);
-    --sync-active-text: #8ab4f8;
-    --sync-active-border: rgba(138, 180, 248, 0.3);
-    --sync-active-dot: #8ab4f8;
-
-    --sync-error-bg: rgba(217, 48, 38, 0.2);
-    --sync-error-text: #f28b82;
-    --sync-error-border: rgba(242, 139, 130, 0.3);
-    --sync-error-dot: #f28b82;
-  }
+  --si-pending-bg: rgba(245, 158, 11, 0.20);
+  --si-pending-text: #fcd34d;
+  --si-pending-border: rgba(245, 158, 11, 0.40);
 }
 
 /* =========================================
    BASE BADGE CONTAINER
    ========================================= */
-.sync-status-badge {
+.sync-indicator {
+  /* Defaults (overridden per-state) */
+  --si-bg-1: var(--si-neutral-bg-1);
+  --si-bg-2: var(--si-neutral-bg-2);
+  --si-border: var(--si-neutral-border);
+  --si-text: var(--si-neutral-text);
+  --si-dot: var(--si-neutral-dot);
+  --si-glow: var(--si-neutral-glow);
+
+  position: relative;
   display: inline-flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 14px;
-  border-radius: 20px;
-  font-size: 0.85rem;
+  padding: 6px 12px 6px 10px;
+  border-radius: 999px;
+  font-size: 12px;
   font-weight: 600;
-  letter-spacing: 0.3px;
-  transition: all 0.3s ease-in-out;
-  border: 1px solid transparent;
+  letter-spacing: 0.2px;
+  color: var(--si-text);
+  background: linear-gradient(135deg, var(--si-bg-1), var(--si-bg-2));
+  border: 1px solid var(--si-border);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
   user-select: none;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  cursor: default;
+  /* ✅ GPU-friendly: transition lang, walang box-shadow animation */
+  transition: color 0.3s ease, background 0.3s ease, border-color 0.3s ease, transform 0.2s ease;
+  will-change: auto;
 }
 
-.sync-status-badge .status-text {
-  display: inline-block;
-  line-height: 1;
+/* Subtle lift on hover — transform lang, GPU-friendly */
+.sync-indicator:hover {
+  transform: translateY(-1px);
 }
 
-.sync-status-badge .status-icon {
-  font-size: 0.9rem;
+/* Icon container */
+.sync-indicator__icon {
   display: inline-flex;
   align-items: center;
-}
-
-/* Status Dot via ::before pseudo-element */
-.sync-status-badge::before {
-  content: '';
-  display: inline-block;
-  width: 8px;
-  height: 8px;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
-  transition: background-color 0.3s ease;
+  background: var(--si-glow);
+  color: var(--si-dot);
   flex-shrink: 0;
+  transition: color 0.3s ease, background 0.3s ease;
+}
+
+/* Status label */
+.sync-indicator__label {
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Pending pill */
+.sync-indicator__pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  background: var(--si-pending-bg);
+  color: var(--si-pending-text);
+  border: 1px solid var(--si-pending-border);
+  animation: si-pill-fade 1.6s ease-in-out infinite;
+}
+
+/* ✅ GPU-friendly: opacity animation lang */
+@keyframes si-pill-fade {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+/* Spinning icon for syncing state */
+.sync-icon-spin {
+  animation: si-spin 1s linear infinite;
+  transform-origin: center;
+}
+
+@keyframes si-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
 }
 
 /* =========================================
-   STATE SPECIFIC STYLES (Using CSS Vars)
+   STATE: SYNCED (Green)
    ========================================= */
-
-/* 1. Online & Synced State */
-.sync-status-badge.sync-success {
-  background-color: var(--sync-success-bg);
-  color: var(--sync-success-text);
-  border-color: var(--sync-success-border);
-}
-.sync-status-badge.sync-success::before {
-  background-color: var(--sync-success-dot);
-  box-shadow: 0 0 0 2px rgba(30, 142, 62, 0.2);
+.sync-indicator[data-status="synced"] {
+  --si-bg-1: var(--si-success-bg-1);
+  --si-bg-2: var(--si-success-bg-2);
+  --si-border: var(--si-success-border);
+  --si-text: var(--si-success-text);
+  --si-dot: var(--si-success-dot);
+  --si-glow: var(--si-success-glow);
 }
 
-/* 2. Working Offline / Checking State */
-.sync-status-badge.sync-offline,
-.sync-status-badge.sync-checking {
-  background-color: var(--sync-neutral-bg);
-  color: var(--sync-neutral-text);
-  border-color: var(--sync-neutral-border);
-}
-.sync-status-badge.sync-offline::before,
-.sync-status-badge.sync-checking::before {
-  background-color: var(--sync-neutral-dot);
-}
-
-/* 3. Sync Active/Progress State */
-.sync-status-badge.sync-active {
-  background-color: var(--sync-active-bg);
-  color: var(--sync-active-text);
-  border-color: var(--sync-active-border);
-}
-.sync-status-badge.sync-active::before {
-  background-color: var(--sync-active-dot);
-  animation: pulse-active 1.2s infinite ease-in-out;
-}
-
-/* 4. Sync Error State */
-.sync-status-badge.sync-error {
-  background-color: var(--sync-error-bg);
-  color: var(--sync-error-text);
-  border-color: var(--sync-error-border);
-}
-.sync-status-badge.sync-error::before {
-  background-color: var(--sync-error-dot);
-  animation: pulse-error 1.5s infinite;
+.sync-indicator[data-status="synced"] .sync-indicator__icon {
+  box-shadow: 0 0 0 3px rgba(16, 185, 129, 0.12);
 }
 
 /* =========================================
-   ANIMATIONS
+   STATE: SYNCING (Blue)
    ========================================= */
-@keyframes pulse-active {
-  0% {
-    transform: scale(0.8);
-    opacity: 0.6;
-  }
-  50% {
-    transform: scale(1.2);
-    opacity: 1;
-    box-shadow: 0 0 6px rgba(26, 115, 232, 0.6);
-  }
-  100% {
-    transform: scale(0.8);
-    opacity: 0.6;
-  }
+.sync-indicator[data-status="syncing"] {
+  --si-bg-1: var(--si-active-bg-1);
+  --si-bg-2: var(--si-active-bg-2);
+  --si-border: var(--si-active-border);
+  --si-text: var(--si-active-text);
+  --si-dot: var(--si-active-dot);
+  --si-glow: var(--si-active-glow);
 }
 
-@keyframes pulse-error {
-  0%, 100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.3;
-  }
+.sync-indicator[data-status="syncing"] .sync-indicator__icon {
+  box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.12);
 }
 
-/* Dynamic Pulse Animation para sa Syncing status */
-@keyframes dp-sync-pulse {
-  0% {
-    opacity: 0.4;
-    transform: scale(0.8);
-  }
-  100% {
-    opacity: 1;
-    transform: scale(1.2);
-  }
+/* ✅ GPU-friendly pulse using ::before with opacity only */
+.sync-indicator[data-status="syncing"]::before {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: 999px;
+  background: radial-gradient(ellipse at center, rgba(59, 130, 246, 0.30), transparent 70%);
+  pointer-events: none;
+  z-index: -1;
+  animation: si-syncing-pulse 2s ease-in-out infinite;
+  will-change: opacity;
 }
 
-.sync-status-container {
-  user-select: none;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+@keyframes si-syncing-pulse {
+  0%, 100% { opacity: 0.4; }
+  50%      { opacity: 1; }
+}
+
+/* =========================================
+   STATE: OFFLINE (Gray)
+   ========================================= */
+.sync-indicator[data-status="offline"] {
+  --si-bg-1: var(--si-neutral-bg-1);
+  --si-bg-2: var(--si-neutral-bg-2);
+  --si-border: var(--si-neutral-border);
+  --si-text: var(--si-neutral-text);
+  --si-dot: var(--si-neutral-dot);
+  --si-glow: var(--si-neutral-glow);
+}
+
+/* =========================================
+   STATE: ERROR (Red)
+   ========================================= */
+.sync-indicator[data-status="error"] {
+  --si-bg-1: var(--si-error-bg-1);
+  --si-bg-2: var(--si-error-bg-2);
+  --si-border: var(--si-error-border);
+  --si-text: var(--si-error-text);
+  --si-dot: var(--si-error-dot);
+  --si-glow: var(--si-error-glow);
+}
+
+.sync-indicator[data-status="error"] .sync-indicator__icon {
+  box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.12);
+}
+
+/* ✅ Error pulse using opacity only (GPU-friendly) */
+.sync-indicator[data-status="error"] .sync-indicator__icon {
+  animation: si-error-pulse 1.5s ease-in-out infinite;
+  will-change: opacity;
+}
+
+@keyframes si-error-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.5; }
+}
+
+/* =========================================
+   ACCESSIBILITY: Reduce motion
+   ========================================= */
+@media (prefers-reduced-motion: reduce) {
+  .sync-indicator,
+  .sync-indicator__pill,
+  .sync-indicator__icon,
+  .sync-icon-spin,
+  .sync-indicator::before {
+    animation: none !important;
+    transition: none !important;
+  }
 }

@@ -1,7 +1,8 @@
 // src/components/SummonsPanel.jsx
 import React, { useState, useEffect } from 'react';
-import Swal from 'sweetalert2'; 
+import Swal from 'sweetalert2';
 import { createAuditLog } from '../utils/auditLog';
+import { apiFetch } from '../utils/api';
 import nabuaLogo from '../assets/nabua-logo.jpg';
 import bustracLogo from '../assets/bustrac-logo.png';
 
@@ -293,6 +294,7 @@ export function SummonsPanel({ currentCase, db, setBlotterList }) {
 
     try {
       const updatedStatus = 'Under Mediation';
+      const updatedCount = Math.min(currentCount + 1, 3);
 
       let updatedPayload = {
         ...currentCase,
@@ -328,7 +330,7 @@ export function SummonsPanel({ currentCase, db, setBlotterList }) {
       const targetEmail = currentCase.respondentEmail || currentCase.respondent?.email;
       if (targetEmail && targetEmail.trim() !== '') {
         try {
-          await fetch('http://localhost:5000/api/blotter/send-summons', {
+          await apiFetch('blotter/send-summons', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -341,7 +343,9 @@ export function SummonsPanel({ currentCase, db, setBlotterList }) {
             })
           });
         } catch (emailErr) {
-          console.warn('Backend email service offline:', emailErr);
+          // Network errors and 401/403 are handled by apiFetch; do not
+          // expose the token or upstream detail to the user.
+          console.warn('Backend email service offline:', emailErr?.message || emailErr);
         }
       }
 

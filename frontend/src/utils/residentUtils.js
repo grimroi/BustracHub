@@ -207,7 +207,8 @@ export const getStepFromStatus = (status, existingStep) => {
   if (s === 'released') return 6;
   if (s === 'issued') return 5;
   if (s === 'ready' || s === 'ready for pickup') return 4;
-  if (s === 'approved' || s === 'for approval') return 3;
+  if (s === 'approved') return 4;
+  if (s === 'for approval') return 3;
   if (s === 'under review' || s === 'review' || s === 'pending') return 2;
   if (s === 'submitted') return 1;
   return 1;

@@ -2,6 +2,9 @@ import React from 'react';
 import { QRCodeSVG } from 'qrcode.react'; 
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
+import { normalizeQrConfig, buildVerifyUrl } from '../../../utils/qrConfig';
+import { isVerifiableDocId } from '../../../utils/verifyDocument';
+import { validateCertificateData } from '../../../utils/certHelpers';
 
 export interface ClearanceData {
   _id?: string;
@@ -58,14 +61,32 @@ export interface ClearanceData {
 interface ClearanceProps {
   data: ClearanceData;
   publicDomain?: string;
+  qrConfig?: Record<string, any>;
 }
 
-export const BarangayClearance: React.FC<ClearanceProps> = ({ data, publicDomain }) => {
+export const BarangayClearance: React.FC<ClearanceProps> = ({ data, publicDomain, qrConfig }) => {
   if (!data) return null;
 
-  const verifyUrl = data._id
-    ? `https://${publicDomain || 'localhost:5173'}/verify?id=${encodeURIComponent(data._id)}`
-    : null;
+  const validation = validateCertificateData(data);
+  if (!validation.valid) {
+    return (
+      <div style={{ border: '2px solid #c00', padding: '24px', maxWidth: '210mm', margin: '0 auto', fontFamily: 'sans-serif' }}>
+        <h3 style={{ color: '#c00' }}>⚠️ Cannot Render Certificate</h3>
+        <p>The following required fields are missing. Please complete them before printing:</p>
+        <ul>
+          {validation.missing.map((m, i) => (
+            <li key={i}>{m}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
+  const qr = normalizeQrConfig({
+    ...(qrConfig || {}),
+    baseUrl: (qrConfig && qrConfig.baseUrl) || publicDomain || '',
+  });
+  const verifyUrl = qr.enabled && isVerifiableDocId(data._id) ? buildVerifyUrl(data._id, qr) : '';
   // ── Helper: safe uppercase ──
   const u = (s?: string) => (s || '').toUpperCase();
 
@@ -74,22 +95,22 @@ export const BarangayClearance: React.FC<ClearanceProps> = ({ data, publicDomain
     data.fullName ||
     data.applicantName ||
     `${data.firstName || ''} ${data.middleName || ''} ${data.lastName || ''}`.trim() ||
-    'MELY MONTEJO PRESADO';
+    '';
 
-  const lastName = data.lastName || 'PRESADO';
-  const firstName = data.firstName || 'MELY';
-  const middleName = data.middleName || 'MONTEJO';
+  const lastName = data.lastName || '';
+  const firstName = data.firstName || '';
+  const middleName = data.middleName || '';
 
   // ── Demographics ──
-  const sex = data.sex || 'F';
-  const birthdate = data.birthdate || '07/18/1961';
-  const age = data.age !== undefined ? String(data.age) : '65';
-  const civilStatus = data.civilStatus || 'Married';
-  const citizenship = data.citizenship || 'Filipino';
-  const purokZone = data.purok || data.zone || 'ZONE 4';
-  const address = data.address || 'BUSTRAC, NABUA, CAMARINES SUR';
-  const purpose = data.purpose || 'FOR MICRO FINANCE PURPOSE';
-  const remarks = data.remarks || 'No Derogatory Record';
+  const sex = data.sex || '';
+  const birthdate = data.birthdate || '';
+  const age = data.age !== undefined ? String(data.age) : '';
+  const civilStatus = data.civilStatus || '';
+  const citizenship = data.citizenship || '';
+  const purokZone = data.purok || data.zone || '';
+  const address = data.address || '';
+  const purpose = data.purpose || '';
+  const remarks = data.remarks || '';
 
   // ── Dates ──
   const certDate = data.dateIssued || data.issuedAt || data.issueDate || data.createdAt || new Date();
@@ -108,15 +129,15 @@ export const BarangayClearance: React.FC<ClearanceProps> = ({ data, publicDomain
   const datePrinted = data.datePrinted || `${monthNum}/${dayNum}/${yearNum}`;
 
   // ── Financial / Official Metadata ──
-  const orNo = data.orNumber || data.orNo || '8605032';
-  const clearanceAmount = data.clearanceAmount || data.amountPaid || '100.00';
+  const orNo = data.orNumber || data.orNo || '';
+  const clearanceAmount = data.clearanceAmount || data.amountPaid || '';
   const meta = data.issuanceMeta || {};
-  const ctcNo = meta.ctcNumber || data.ctcNumber || data.ctcNo || '---00---';
-  const validity = data.validity || '(6) Six Months Validity';
+  const ctcNo = meta.ctcNumber || data.ctcNumber || data.ctcNo || '';
+  const validity = data.validity || '';
 
   // ── Signatories ──
-  const punongBarangay = data.punongBarangay || 'HON. ANNABELLE E. RULL';
-  const barangaySecretary = data.barangaySecretary || 'MRS. MELY M. PRESADO';
+  const punongBarangay = data.punongBarangay || '';
+  const barangaySecretary = data.barangaySecretary || '';
 
   return (
     <div
@@ -260,6 +281,43 @@ export const BarangayClearance: React.FC<ClearanceProps> = ({ data, publicDomain
               {orNo}2022
             </div>
             <div>[BARCODE PLACEHOLDER]</div>
+          </div>
+
+          {/* QR CODE PLACEHOLDER — public verification link (no personal data) */}
+          <div style={{ textAlign: 'center', marginTop: '6px' }}>
+            {verifyUrl ? (
+              <>
+                <div style={{ display: 'flex', justifyContent: 'center' }}>
+                  <QRCodeSVG
+                    value={verifyUrl}
+                    size={qr.size}
+                    level={qr.level as any}
+                    includeMargin={qr.includeMargin}
+                    bgColor="#ffffff"
+                    fgColor="#000000"
+                  />
+                </div>
+                <div style={{ fontSize: '8px', marginTop: '2px', fontWeight: 'bold' }}>{qr.label}</div>
+              </>
+            ) : (
+              <div
+                style={{
+                  width: '72px',
+                  height: '72px',
+                  border: '1px dashed #666',
+                  margin: '0 auto',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: '8px',
+                  color: '#555',
+                  padding: '4px',
+                  boxSizing: 'border-box',
+                }}
+              >
+                [QR CODE PLACEHOLDER]
+              </div>
+            )}
           </div>
         </div>
 
@@ -411,12 +469,6 @@ export const BarangayClearance: React.FC<ClearanceProps> = ({ data, publicDomain
       >
         This file is a transcription/template based on the supplied image and is not an official government document.
       </div>
-  {verifyUrl && (
-  <div style={{ position: 'absolute', bottom: '56px', right: '40px', textAlign: 'center' }}>
-    <QRCodeSVG value={verifyUrl} size={80} level="H" bgColor="#ffffff" fgColor="#000000" />
-    <div style={{ fontSize: '8px', marginTop: '4px', fontWeight: 'bold' }}>Scan to Verify</div>
-  </div>
-)}
     </div>
     
   );

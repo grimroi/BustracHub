@@ -31,6 +31,7 @@ export default function App() {
         <Route path="/login" element={<LogIn />} />
         <Route path="/register" element={<Register />} />
         <Route path="/resident-register" element={<ResidentRegister />} />
+        <Route path="/verify" element={<VerifyDocument />} />
 
         <Route
           path="/resident"
@@ -57,7 +58,6 @@ export default function App() {
           }
         />
         <Route path="*" element={<LogIn />} />
-        <Route path="/verify" element={<VerifyDocument />} />
       </Routes>
     </Router>
   );

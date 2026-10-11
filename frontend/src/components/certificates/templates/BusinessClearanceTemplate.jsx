@@ -1,8 +1,26 @@
 import React from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import bustracLogo from '../../../assets/bustrac-logo.png';
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
+import { normalizeQrConfig, buildVerifyUrl } from '../../../utils/qrConfig';
+import { validateCertificateData } from '../../../utils/certHelpers';
 
-const BusinessClearanceTemplate = ({ data = {} }) => {
+const BusinessClearanceTemplate = ({ data = {}, publicDomain, qrConfig }) => {
+  const validation = validateCertificateData(data);
+  if (!validation.valid) {
+    return (
+      <div style={{ border: '2px solid #c00', padding: '24px', maxWidth: '210mm', margin: '0 auto', fontFamily: 'sans-serif' }}>
+        <h3 style={{ color: '#c00' }}>⚠️ Cannot Render Certificate</h3>
+        <p>The following required fields are missing. Please complete them before printing:</p>
+        <ul>
+          {validation.missing.map((m, i) => (
+            <li key={i}>{m}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
   // Kunin ang kumpletong pangalan ng applicant / owner
   const fullName = (
     data.fullName ||
@@ -12,6 +30,26 @@ const BusinessClearanceTemplate = ({ data = {} }) => {
   ).toUpperCase();
 
   const printedDate = new Date().toLocaleDateString('en-US');
+
+  // ── Configurable QR verification ──
+  const qr = normalizeQrConfig({
+    ...(qrConfig || {}),
+    baseUrl: qrConfig?.baseUrl || publicDomain || '',
+  });
+  const verifyUrl = qr.enabled ? buildVerifyUrl(data._id, qr) : '';
+
+  // Clearance year + expiry come from stored data when available; a missing
+  // expiry is rendered as a placeholder instead of a fabricated date.
+  const clearanceYear = String(data.clearanceYear || '').trim();
+  const formatExpiry = (value) => {
+    if (!value) return '';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return '';
+    return date
+      .toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })
+      .toUpperCase();
+  };
+  const expiryLabel = formatExpiry(data.expiryDate) || '[ EXPIRY NOT SET ]';
 
   return (
     <div style={{ 
@@ -138,41 +176,41 @@ const BusinessClearanceTemplate = ({ data = {} }) => {
           {/* APPLICANT INFO */}
           <div style={{ fontSize: '11px' }}>
             <div style={{ fontWeight: 'bold', fontSize: '13px', textTransform: 'uppercase' }}>
-              {fullName || 'JUANILLA S., RONALD, TORMES'}
+              {fullName || ''}
             </div>
             <div style={{ fontSize: '10px', color: '#333', marginBottom: '6px' }}>
               (Owner/Proprietor)
             </div>
             <div style={{ marginBottom: '2px' }}>
               <span style={{ fontWeight: 'bold' }}>
-                {data.applicantAddress || data.address || 'ZONE 5, BUSTRAC, NABUA, CAMARINES SUR'}
+                {data.applicantAddress || data.address || ''}
               </span>
             </div>
             <div style={{ marginTop: '4px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '10px' }}>Nationality:</div>
-              <div style={{ fontWeight: 'bold' }}>{(data.nationality || 'FILIPINO').toUpperCase()}</div>
+              <div style={{ fontWeight: 'bold' }}>{(data.nationality || '').toUpperCase()}</div>
             </div>
             <div style={{ marginTop: '4px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '10px' }}>Contact:</div>
-              <div style={{ fontWeight: 'bold' }}>{data.contactNo || '09083541942'}</div>
+              <div style={{ fontWeight: 'bold' }}>{data.contactNo || ''}</div>
             </div>
             <div style={{ marginTop: '4px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '10px' }}>Civil Status:</div>
-              <div style={{ fontWeight: 'bold' }}>{(data.civilStatus || 'MARRIED').toUpperCase()}</div>
+              <div style={{ fontWeight: 'bold' }}>{(data.civilStatus || '').toUpperCase()}</div>
             </div>
             <div style={{ marginTop: '4px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '10px' }}>Occupation:</div>
-              <div style={{ fontWeight: 'bold' }}>{(data.occupation || 'FOOD VENDOR').toUpperCase()}</div>
+              <div style={{ fontWeight: 'bold' }}>{(data.occupation || '').toUpperCase()}</div>
             </div>
           </div>
 
           {/* RIGHT SIDE METADATA */}
           <div style={{ textAlign: 'right', fontSize: '10px', lineHeight: '1.4' }}>
-            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{data.bcIdNo || '0157'}</div>
+            <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{data.bcIdNo || ''}</div>
             <div style={{ color: '#444' }}>Business ID No.:</div>
-            <div style={{ fontWeight: 'bold', marginTop: '4px' }}>{data.clearanceYear || '2026'}</div>
+            <div style={{ fontWeight: 'bold', marginTop: '4px' }}>{clearanceYear || '—'}</div>
             <div style={{ color: '#444' }}>Clearance Year</div>
-            <div style={{ fontWeight: 'bold', marginTop: '4px' }}>DECEMBER 31</div>
+            <div style={{ fontWeight: 'bold', marginTop: '4px' }}>{expiryLabel}</div>
             <div style={{ color: '#444' }}>Clearance Expires</div>
             <div style={{ fontWeight: 'bold', marginTop: '4px' }}>
               {data.kindOfTransaction || 'Renewal'}
@@ -218,17 +256,17 @@ const BusinessClearanceTemplate = ({ data = {} }) => {
                   letterSpacing: '0.5px',
                 }}
               >
-                {data.businessName || 'JUANILLA STREET FOOD ROLLING STORE'}
+                {data.businessName || ''}
               </div>
               <div style={{ fontSize: '11px', textTransform: 'uppercase', marginTop: '4px' }}>
-                {data.businessAddress || 'ZONE 5 BUSTRAC, NABUA, CAMARINES SUR'}
+                {data.businessAddress || ''}
               </div>
             </div>
 
             {/* APPLICANT SIGNATURE */}
             <div style={{ textAlign: 'center', marginTop: '25px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '12px', textTransform: 'uppercase' }}>
-                {fullName || 'JUANILLA S, RONALD, TORMES'}
+                {fullName || ''}
               </div>
               <div
                 style={{
@@ -246,7 +284,7 @@ const BusinessClearanceTemplate = ({ data = {} }) => {
             {/* PUNONG BARANGAY SIGNATURE */}
             <div style={{ textAlign: 'center', marginTop: '30px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '13px', textTransform: 'uppercase' }}>
-                {data.captain || data.punongBarangay || 'HON. ANNABELLE E. RULL'}
+                {data.captain || data.punongBarangay || ''}
               </div>
               <div style={{ fontSize: '11px', marginTop: '2px' }}>Punong Barangay</div>
             </div>
@@ -258,37 +296,65 @@ const BusinessClearanceTemplate = ({ data = {} }) => {
             <div style={{ marginBottom: '10px' }}>
               <div style={{ fontWeight: 'bold' }}>O.R. Details:</div>
               <div style={{ fontWeight: 'bold', fontSize: '11px', marginTop: '2px' }}>
-                {data.orNo || '5452377'}
+                {data.orNo || ''}
               </div>
               <div>OR. No.</div>
             </div>
             <div style={{ marginBottom: '10px' }}>
               <div style={{ fontWeight: 'bold', fontSize: '11px' }}>
-                {data.dateIssued || data.regDate || '08/25/2026'}
+                {data.dateIssued || data.regDate || ''}
               </div>
               <div>OR. Date Issued</div>
             </div>
             <div style={{ marginBottom: '25px' }}>
-              <div style={{ fontWeight: 'bold', fontSize: '11px' }}>{data.clearanceFee || '150.00'}</div>
-              <div>Amount Paid</div>
+              <div style={{ fontWeight: 'bold', fontSize: '11px' }}>
+                {(Number(data.clearanceFee || 0) + Number(data.garbageFee || 0)).toFixed(2)}
+              </div>
+              <div>Total Fees Due</div>
             </div>
 
-            {/* SEAL / BARCODE PLACEHOLDER */}
-            <div
-              style={{
-                border: '1px dashed #666',
-                height: '80px',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: '6px',
-                color: '#444',
-                fontWeight: 'bold',
-                fontSize: '9px',
-              }}
-            >
-              [ SEAL / OR / BARCODE PLACEHOLDER ]
-            </div>
+            {/* SEAL / QR VERIFICATION */}
+            {verifyUrl ? (
+              <div
+                style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  alignItems: 'center',
+                  gap: '4px',
+                  padding: '6px',
+                  border: '1px solid #000',
+                  background: '#ffffff',
+                }}
+              >
+                <QRCodeSVG
+                  value={verifyUrl}
+                  size={qr.size}
+                  level={qr.level}
+                  includeMargin={qr.includeMargin}
+                  bgColor="#ffffff"
+                  fgColor="#000000"
+                />
+                <div style={{ fontSize: '8px', fontWeight: 'bold', color: '#000', textAlign: 'center' }}>
+                  {qr.label}
+                </div>
+              </div>
+            ) : (
+              <div
+                style={{
+                  border: '1px dashed #666',
+                  height: '80px',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: '6px',
+                  color: '#444',
+                  fontWeight: 'bold',
+                  fontSize: '9px',
+                }}
+              >
+                [ SEAL / OR / BARCODE PLACEHOLDER ]
+              </div>
+            )}
           </div>
         </div>
       </div>

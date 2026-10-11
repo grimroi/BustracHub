@@ -154,31 +154,55 @@ export default function CertificateLifecycle({ onOpenDispatcher, onOpenIssuance 
   const updateRequest = useCallback(async (request, nextStep) => {
     try {
       const now = new Date().toISOString();
-      const updatedRequest = { ...request, step: nextStep, updatedAt: now };
-      if (nextStep === 1) updatedRequest.status = 'Submitted';
-      if (nextStep === 2) {
-        updatedRequest.status = 'Under Review';
-        updatedRequest.reviewedAt = now;
+      const applyStep = (doc) => {
+        const updated = { ...doc, step: nextStep, updatedAt: now };
+        if (nextStep === 1) updated.status = 'Submitted';
+        if (nextStep === 2) {
+          updated.status = 'Under Review';
+          updated.reviewedAt = now;
+        }
+        if (nextStep === 3) updated.status = 'Awaiting Approval';
+        if (nextStep === 4) {
+          updated.status = 'Approved';
+          updated.approvedAt = now;
+        }
+        if (nextStep === 5) {
+          updated.status = 'Issued';
+          updated.issuedAt = now;
+        }
+        if (nextStep === 6) {
+          updated.status = 'Released';
+          updated.releasedAt = now;
+        }
+        return updated;
+      };
+      let fresh = null;
+      try {
+        fresh = await db.get(request._id);
+      } catch (notFound) {
+        fresh = request;
       }
-      if (nextStep === 3) updatedRequest.status = 'Awaiting Approval';
-      if (nextStep === 4) {
-        updatedRequest.status = 'Approved';
-        updatedRequest.approvedAt = now;
+      const updatedRequest = applyStep(fresh);
+      try {
+        await db.put(updatedRequest);
+      } catch (conflictErr) {
+        if (conflictErr.status === 409 || conflictErr.name === 'conflict') {
+          const latest = await db.get(request._id);
+          const retryDoc = applyStep(latest);
+          await db.put(retryDoc);
+          setAllRequests((prev) =>
+            prev.map((r) => (r._id === retryDoc._id ? { ...retryDoc, ...r } : r))
+          );
+          return;
+        }
+        throw conflictErr;
       }
-      if (nextStep === 5) {
-        updatedRequest.status = 'Issued';
-        updatedRequest.issuedAt = now;
-      }
-      if (nextStep === 6) {
-        updatedRequest.status = 'Released';
-        updatedRequest.releasedAt = now;
-      }
-      await db.put(updatedRequest);
       setAllRequests((prev) =>
-        prev.map((r) => (r._id === updatedRequest._id ? updatedRequest : r))
+        prev.map((r) => (r._id === updatedRequest._id ? { ...updatedRequest } : r))
       );
     } catch (error) {
       console.error('Unable to update certificate request', error);
+      showToast('error', `Unable to update this request: ${error?.message || 'Database error'}`);
     }
   }, []);
 
@@ -1208,16 +1232,20 @@ export function CertificateIssuancePrint({
           <CertificatePrintWrapper
             type={normalizeCertType(printData.type || printData.certificateType)}
             data={{
+              _id: printData._id,
+              certificateType: printData.type || printData.certificateType,
               trackingCode: printData.trackingCode || printData._id || 'CERT-000000',
-              fullName: printData.residentName || (printData.firstName ? `${printData.firstName} ${printData.lastName}` : printData.fullName) || 'JUAN DELA CRUZ',
-              address: printData.address || printData.purok || 'Barangay Bustrac, Nabua, Camarines Sur',
-              purpose: printData.purpose || 'Local Employment',
+              fullName: printData.residentName || (printData.firstName ? `${printData.firstName} ${printData.lastName}` : printData.fullName) || '',
+              firstName: printData.firstName || '',
+              lastName: printData.lastName || '',
+              address: printData.address || printData.purok || '',
+              purpose: printData.purpose || '',
               issueDate: printData.issueDate || new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' }),
-              ctcNumber: printData.ctc?.number || printData.ctcNumber || 'N/A',
+              ctcNumber: printData.ctc?.number || printData.ctcNumber || '',
               amountPaid: printData.ctc?.amountPaid || printData.amountPaid || 0,
-              civilStatus: printData.civilStatus || 'Single',
-              age: printData.age || 'N/A',
-              punongBarangay: printData.punongBarangay || 'HON. ANNABELLE E. RULL',
+              civilStatus: printData.civilStatus || '',
+              age: printData.age || '',
+              punongBarangay: printData.punongBarangay || '',
             }}
             onClose={closePrint}
           />

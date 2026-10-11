@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import Swal from 'sweetalert2';
 import { FaUser, FaPhone, FaEnvelope, FaMapMarkerAlt, FaIdCard, FaCalendarAlt, FaVenusMars, FaHeart, FaEdit, FaSave, FaTimes, FaSignOutAlt, FaSync } from 'react-icons/fa';
 import { 
   calculateAge, 
@@ -7,6 +8,19 @@ import {
   validateProfileData, 
   getInitials 
 } from "../../utils/residentUtils";
+
+const showToast = (type, message) => {
+  if (typeof Swal !== 'undefined' && Swal.fire) {
+    Swal.fire({
+      icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
+      toast: true,
+      position: 'top-end',
+      timer: 2500,
+      showConfirmButton: false,
+      title: message,
+    });
+  }
+};
 
 export default function ResidentProfile({
   residentProfile,

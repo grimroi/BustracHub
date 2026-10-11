@@ -91,6 +91,114 @@ async function issueCertificate(req, res) {
   }
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Public QR verification (privacy-preserving). The public page only needs to
+// confirm authenticity, so this returns the MINIMUM set of non-sensitive fields.
+// ─────────────────────────────────────────────────────────────────────────────
+const { resolveDocumentStatus } = require('../utils/verifyStatus');
+
+const VERIFIABLE_ID_PREFIXES = ['bus_clearance_', 'brgy_clearance_', 'CERT-', 'issued_cert_'];
+const VERIFIABLE_TYPES = ['business_clearance', 'barangay_clearance', 'certificate_request', 'issued_certificate'];
+
+function isVerifiableId(id) {
+  if (typeof id !== 'string') return false;
+  const value = id.trim();
+  if (!value || value.length > 128 || value.startsWith('_')) return false;
+  return VERIFIABLE_ID_PREFIXES.some((prefix) => value.startsWith(prefix));
+}
+
+function documentTypeLabel(doc) {
+  const raw = String(doc.certificateType || doc.certType || doc.type || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ');
+  const map = {
+    'business clearance': 'Barangay Business Clearance',
+    'business permit': 'Barangay Business Permit',
+    'barangay clearance': 'Barangay Clearance',
+    'certificate request': 'Barangay Certificate',
+    indigency: 'Certificate of Indigency',
+    residency: 'Certificate of Residency',
+    'issued certificate': 'Barangay Certificate'
+  };
+  return map[raw] || (raw ? raw.replace(/\b\w/g, (c) => c.toUpperCase()) : 'Barangay Certificate');
+}
+
+function documentReference(doc) {
+  const ref = doc.bcIdNo || doc.clearanceNo || doc.refNumber || doc.referenceNo || doc.controlNo;
+  return ref ? String(ref).trim() : '';
+}
+
+function issuedToName(doc) {
+  const direct = [doc.fullName, doc.applicantName, doc.residentName, doc.ownerName];
+  for (const value of direct) {
+    if (value && String(value).trim()) return String(value).trim();
+  }
+  const person = `${doc.firstName || ''} ${doc.lastName || ''}`.trim();
+  const business = doc.businessName ? String(doc.businessName).trim() : '';
+  if (business && person) return `${business} (${person})`;
+  if (business) return business;
+  if (person) return person;
+  return '';
+}
+
+function safeDate(value) {
+  if (!value) return '';
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+}
+
+// @desc    Verify a certificate/document by id for the public QR page
+// @route   GET /api/certificates/verify/:id
+// @access  Public
+async function verifyCertificate(req, res) {
+  try {
+    const db = req.app.get('db');
+    if (!db) {
+      return res.status(503).json({ success: false, message: 'Database connection is not ready.' });
+    }
+
+    const id = String(req.params.id || '').trim();
+    if (!isVerifiableId(id)) {
+      return res.status(400).json({ success: false, message: 'Invalid document id.' });
+    }
+
+    let doc;
+    try {
+      doc = await db.get(id);
+    } catch (err) {
+      if (err.statusCode === 404 || err.status === 404) {
+        return res.status(404).json({ success: false, message: 'Document not found.' });
+      }
+      throw err;
+    }
+
+    const type = String(doc.type || '').toLowerCase();
+    if (!VERIFIABLE_TYPES.includes(type)) {
+      return res.status(404).json({ success: false, message: 'Document not found.' });
+    }
+
+    const status = resolveDocumentStatus(doc);
+
+    return res.status(200).json({
+      success: true,
+      data: {
+        valid: status.valid,
+        status: status.key,
+        statusLabel: status.label,
+        documentType: documentTypeLabel(doc),
+        referenceNo: documentReference(doc),
+        issuedTo: issuedToName(doc),
+        dateIssued: safeDate(doc.dateIssued || doc.issuedAt || doc.issuedDate || doc.createdAt)
+      }
+    });
+  } catch (error) {
+    console.error('Error in verifyCertificate:', error);
+    return res.status(500).json({ success: false, message: 'An error occurred while verifying the document.' });
+  }
+}
+
 // @desc    Get All Issued & Released Certificates (For the Reprint Queue)
 // @route   GET /api/certificates/issued
 // @access  Private / Public
@@ -120,5 +228,6 @@ async function getIssuedCertificates(req, res) {
 
 module.exports = {
   issueCertificate,
-  getIssuedCertificates
+  getIssuedCertificates,
+  verifyCertificate
 };

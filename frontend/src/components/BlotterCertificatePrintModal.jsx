@@ -1,9 +1,23 @@
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
 import { createPortal } from 'react-dom';
+import Swal from 'sweetalert2';
 import barangayLogo from '../assets/bustrac-logo.png';
 import nabuaLogo from '../assets/nabua-logo.jpg';
 import { localDb as db } from '../services/db';
 import { createAuditLog } from '../utils/auditLog';
+
+const showToast = (type, message) => {
+  if (typeof Swal !== 'undefined' && Swal.fire) {
+    Swal.fire({
+      icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
+      toast: true,
+      position: 'top-end',
+      timer: 2500,
+      showConfirmButton: false,
+      title: message,
+    });
+  }
+};
 
 export default function BlotterCertificatePrintModal({ isOpen, onClose, blotterData }) {
   const [showSuccess, setShowSuccess] = useState(false);

@@ -1,5 +1,19 @@
 import React, { useState } from 'react';
+import Swal from 'sweetalert2';
 import { createAuditLog } from '../utils/auditLog';
+
+const showToast = (type, message) => {
+  if (typeof Swal !== 'undefined' && Swal.fire) {
+    Swal.fire({
+      icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
+      toast: true,
+      position: 'top-end',
+      timer: 2500,
+      showConfirmButton: false,
+      title: message,
+    });
+  }
+};
 
 export function CaseStatusActions({ currentCase, db, setBlotterList, onPrintCFA }) {
   const [updating, setUpdating] = useState(false);

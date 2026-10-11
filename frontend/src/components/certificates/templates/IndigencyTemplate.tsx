@@ -2,6 +2,7 @@ import React from 'react';
 import { QRCodeSVG } from 'qrcode.react'; 
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
+import { validateCertificateData } from '../../../utils/certHelpers';
 
 export interface IndigencyData {
   _id?: string;
@@ -64,6 +65,21 @@ interface IndigencyProps {
 export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data, publicDomain }) => {
   if (!data) return null;
 
+  const validation = validateCertificateData(data);
+  if (!validation.valid) {
+    return (
+      <div style={{ border: '2px solid #c00', padding: '24px', maxWidth: '210mm', margin: '0 auto', fontFamily: 'sans-serif' }}>
+        <h3 style={{ color: '#c00' }}>⚠️ Cannot Render Certificate</h3>
+        <p>The following required fields are missing. Please complete them before printing:</p>
+        <ul>
+          {validation.missing.map((m, i) => (
+            <li key={i}>{m}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
   // 1. Safe Extraction ng Nested Issuance Metadata
   const meta = data.issuanceMeta || {};
 
@@ -72,12 +88,12 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data, publicDomain
     data.fullName ||
     data.applicantName ||
     `${data.firstName || ''} ${data.lastName || ''}`.trim() ||
-    'MARI VILMA ARROYO OJANO'
+    ''
   ).toUpperCase();
-  const age = data.age !== undefined ? String(data.age) : '47';
-  const civilStatus = (data.civilStatus || 'married').toLowerCase();
-  const address = data.address || (data.purok ? `${data.purok} Bustrac, Nabua, Camarines Sur` : 'Zone 2 Bustrac, Nabua, Camarines Sur');
-  const purpose = meta.purpose || data.purpose || 'applying for PHILHEALTH for indigent';
+  const age = data.age !== undefined ? String(data.age) : '';
+  const civilStatus = (data.civilStatus || '').toLowerCase();
+  const address = data.address || (data.purok ? `${data.purok} Bustrac, Nabua, Camarines Sur` : '');
+  const purpose = meta.purpose || data.purpose || '';
 
   // 3. Gender & Spouse Pronouns Logic
   const sexProp = data.gender || data.sex || '';
@@ -97,14 +113,14 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data, publicDomain
   };
   
   const dayOrdinal = data.dayIssued || getOrdinalSuffix(dayNum);
-  const monthName = !isNaN(dateObj.getTime()) ? dateObj.toLocaleDateString('en-US', { month: 'long' }) : 'September';
-  const currentYear = !isNaN(dateObj.getTime()) ? dateObj.getFullYear() : 2026;
+  const monthName = !isNaN(dateObj.getTime()) ? dateObj.toLocaleDateString('en-US', { month: 'long' }) : '';
+  const currentYear = !isNaN(dateObj.getTime()) ? dateObj.getFullYear() : new Date().getFullYear();
 
   // 5. CTC Details Extractions (Fallback sa issuanceMeta / Root)
-  const ctcNo = meta.ctcNumber || data.ctcNumber || data.ctcNo || '07545833';
-  const ctcDateIssued = meta.ctcDateIssued || data.ctcDateIssued || 'August 24, 2026';
-  const ctcPlaceIssued = data.ctcPlaceIssued || 'Nabua, Cam. Sur';
-  const rawAmt = meta.ctcAmountPaid !== undefined ? meta.ctcAmountPaid : (meta.amountPaid !== undefined ? meta.amountPaid : (data.amountPaid || '34.80'));
+  const ctcNo = meta.ctcNumber || data.ctcNumber || data.ctcNo || '';
+  const ctcDateIssued = meta.ctcDateIssued || data.ctcDateIssued || '';
+  const ctcPlaceIssued = data.ctcPlaceIssued || '';
+  const rawAmt = meta.ctcAmountPaid !== undefined ? meta.ctcAmountPaid : (meta.amountPaid !== undefined ? meta.amountPaid : (data.amountPaid || ''));
   const amountPaid = typeof rawAmt === 'number' ? rawAmt.toFixed(2) : String(rawAmt);
 
   // 6. Watermark Condition Check
@@ -217,7 +233,7 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data, publicDomain
         <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '40px' }}>
           <div style={{ textAlign: 'center', width: '260px' }}>
             <p style={{ margin: 0, fontWeight: 'bold', fontSize: '13px', textTransform: 'uppercase' }}>
-              {data.punongBarangay || 'HON. ANNABELLE E. RULL'}
+              {data.punongBarangay || ''}
             </p>
             <p style={{ margin: '2px 0 0 0', fontSize: '11px' }}>Punong Barangay</p>
           </div>

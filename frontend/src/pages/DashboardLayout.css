@@ -854,6 +854,86 @@ html[data-theme="light"] .dashboard-shell-container .sidebar {
 .dashboard-shell-container .fg  { margin-bottom: 14px; }
 .dashboard-shell-container .fg2 { display: grid; grid-template-columns: repeat(2, 1fr); gap: 14px; }
 .dashboard-shell-container .fg3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; }
+/* Top-level form layout: two columns on desktop, single column on narrow
+   screens. Inline grid styles are intentionally avoided so this stays
+   responsive (they previously prevented the media-query collapse). */
+.dashboard-shell-container .form-2col {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+  align-items: start;
+}
+
+/* ── Narrow, centered screen (simple forms) ── */
+.dashboard-shell-container .screen-narrow { max-width: 760px; margin: 0 auto; }
+
+/* ── Page header (back button + title/subtitle) ── */
+.dashboard-shell-container .page-head {
+  display: flex; align-items: center; gap: 14px;
+  margin-bottom: 20px; flex-wrap: wrap;
+}
+.dashboard-shell-container .page-head .page-head-txt { min-width: 0; }
+.dashboard-shell-container .page-head .pt {
+  font-size: 18px; font-weight: 800; letter-spacing: -0.3px;
+}
+.dashboard-shell-container .page-head .ps {
+  margin-top: 3px; font-size: 12.5px; color: var(--muted);
+}
+
+/* ── Form action bar (consistent button alignment) ── */
+.dashboard-shell-container .form-actions {
+  display: flex; justify-content: flex-end; align-items: center;
+  gap: 12px; flex-wrap: wrap;
+  padding: 16px 20px; margin-top: 8px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r);
+}
+
+/* ── Stepper (multi-page forms, e.g. Business Clearance) ── */
+.dashboard-shell-container .stepper {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 18px; flex-wrap: wrap;
+}
+.dashboard-shell-container .step {
+  display: flex; align-items: center; gap: 10px;
+  padding: 9px 16px; cursor: pointer;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--muted); font-family: var(--font);
+  font-size: 13px; font-weight: 600;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+.dashboard-shell-container .step:hover { border-color: var(--border2); background: var(--surface2); }
+.dashboard-shell-container .step.active {
+  border-color: var(--accent); color: var(--accent); background: var(--accent-bg);
+}
+.dashboard-shell-container .step .step-num {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; border-radius: 50%;
+  background: var(--surface2); color: var(--muted);
+  font-size: 12px; font-weight: 800;
+}
+.dashboard-shell-container .step.active .step-num { background: var(--accent); color: #fff; }
+.dashboard-shell-container .step-sep { color: var(--border2); font-weight: 700; }
+
+/* ── Inline field validation ── */
+.dashboard-shell-container .fc.is-invalid {
+  border-color: var(--red);
+  box-shadow: 0 0 0 3px rgba(248, 113, 113, 0.15);
+}
+.dashboard-shell-container .field-error {
+  display: block; margin-top: 4px;
+  font-size: 11px; font-weight: 600; color: var(--red);
+}
+
+/* ── Table cell overflow guards (long names / dates / ref numbers) ── */
+.dashboard-shell-container .cell-nowrap { white-space: nowrap; }
+.dashboard-shell-container .cell-clip {
+  max-width: 240px; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
 .dashboard-shell-container .fl {
   display: block; margin-bottom: 5px;
   font-size: 11px; font-weight: 600; text-transform: uppercase;
@@ -1044,10 +1124,15 @@ html[data-theme="light"] .dashboard-shell-container .sidebar {
 @media (max-width: 900px) {
   .dashboard-shell-container .tc,
   .dashboard-shell-container .thc { grid-template-columns: 1fr; }
+  .dashboard-shell-container .form-2col { grid-template-columns: 1fr; }
+  /* 3-col field groups drop to 2, then 1, as space tightens */
+  .dashboard-shell-container .fg3 { grid-template-columns: repeat(2, 1fr); }
 }
-@media (max-width: 768px) {
+@media (max-width: 600px) {
   .dashboard-shell-container .fg2,
   .dashboard-shell-container .fg3 { grid-template-columns: 1fr; }
+  .dashboard-shell-container .form-actions { justify-content: stretch; }
+  .dashboard-shell-container .form-actions > .btn { flex: 1 1 auto; justify-content: center; }
 }
 @media (max-width: 767px) {
   .dashboard-shell-container .sidebar {
@@ -2718,12 +2803,6 @@ html[data-theme="light"] .dashboard-shell-container .tw {
     transform: translateY(0);
   }
 }
-
-/* ═══════════════════════════════════════════════════════════════
-   CERT LAYOUT FIXES — Flex-to-Grid + Height Balancing
-   (Para sa cert-req / CertificateLifecycle.jsx at cert-print)
-   ═══════════════════════════════════════════════════════════════ */
-
 /* 1. Side-by-side columns: Flex → Grid para equal height */
 .cert-columns,
 .cert-top-panels {
@@ -5256,4 +5335,108 @@ html[data-theme="light"] .res-btn-restore {
   overflow: hidden;
   background: var(--surface);
   border: 1px solid var(--border);
+}
+/* Form input focus ring mas prominent */
+.dashboard-shell-container .fc:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-bg);
+}
+
+/* Smooth hover on form card */
+.dashboard-shell-container .screen form button.btn-p:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 4px 12px rgba(79, 142, 247, 0.35);
+}
+/* ═══════════════════════════════════════════════════════════════
+   SWEETALERT2 — GLOBAL THEME SUPPORT (works via html[data-theme])
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── DEFAULT (DARK MODE) ─────────────────────────── */
+.swal2-popup.swal-dark {
+  background: #1a1d24 !important;
+  color: #e8ecf4 !important;
+  border: 1px solid #2a2f3d !important;
+  border-radius: 12px !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6) !important;
+}
+
+.swal2-popup.swal-dark .swal2-title {
+  color: #e8ecf4 !important;
+  font-size: 18px !important;
+  font-weight: 700 !important;
+}
+
+.swal2-popup.swal-dark .swal2-html-container {
+  color: #7b83a0 !important;
+  font-size: 13px !important;
+}
+
+.swal2-popup.swal-dark .swal2-input,
+.swal2-popup.swal-dark .swal2-select,
+.swal2-popup.swal-dark .swal2-textarea {
+  background: #20242e !important;
+  color: #e8ecf4 !important;
+  border: 1px solid #2a2f3d !important;
+  border-radius: 8px !important;
+}
+
+.swal2-popup.swal-dark .swal2-input:focus,
+.swal2-popup.swal-dark .swal2-select:focus,
+.swal2-popup.swal-dark .swal2-textarea:focus {
+  border-color: #4f8ef7 !important;
+  box-shadow: 0 0 0 3px rgba(79, 142, 247, 0.15) !important;
+}
+
+/* ── DARK MODE CONFIRM / CANCEL BUTTONS ───────────── */
+.swal2-popup.swal-dark .swal2-confirm {
+  background: #4f8ef7 !important;
+  color: #ffffff !important;
+  border-radius: 8px !important;
+  font-weight: 600 !important;
+}
+
+.swal2-popup.swal-dark .swal2-cancel {
+  background: #252a36 !important;
+  color: #e8ecf4 !important;
+  border: 1px solid #323849 !important;
+  border-radius: 8px !important;
+}
+
+.swal2-popup.swal-dark .swal2-close {
+  color: #7b83a0 !important;
+}
+
+.swal2-popup.swal-dark .swal2-close:hover {
+  color: #f87171 !important;
+}
+
+/* ── LIGHT MODE OVERRIDE ─────────────────────────── */
+html[data-theme="light"] .swal2-popup.swal-light,
+html[data-theme="light"] .swal2-popup.swal-dark {
+  background: #ffffff !important;
+  color: #1f2937 !important;
+  border: 1px solid #e4e7ec !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.15) !important;
+}
+
+html[data-theme="light"] .swal2-popup .swal2-title {
+  color: #1f2937 !important;
+}
+
+html[data-theme="light"] .swal2-popup .swal2-html-container {
+  color: #6b7280 !important;
+}
+
+html[data-theme="light"] .swal2-popup .swal2-input,
+html[data-theme="light"] .swal2-popup .swal2-select,
+html[data-theme="light"] .swal2-popup .swal2-textarea {
+  background: #f5f7fa !important;
+  color: #1f2937 !important;
+  border: 1px solid #d1d9e6 !important;
+}
+
+html[data-theme="light"] .swal2-popup .swal2-cancel {
+  background: #f5f7fa !important;
+  color: #1f2937 !important;
+  border: 1px solid #d1d9e6 !important;
 }

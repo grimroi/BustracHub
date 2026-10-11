@@ -101,7 +101,7 @@ export default function BlotterForm({ onSuccess, onCancel }) {
             className="fc" 
             value={formData.incidentDate} 
             onChange={updateForm('incidentDate')}
-            max={new Date().toISOString().split('T')[0]} // 🔥 Prevents future dates
+            max={new Date().toISOString().split('T')[0]} 
           />
         </div>
         <div className="fg" style={{ margin: 0 }}>

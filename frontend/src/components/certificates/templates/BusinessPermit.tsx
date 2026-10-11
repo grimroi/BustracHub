@@ -2,6 +2,7 @@ import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
+import { validateCertificateData } from '../../../utils/certHelpers';
 
 export interface BusinessPermitData {
   _id?: string;
@@ -54,10 +55,25 @@ interface BusinessPermitProps {
 export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data, publicDomain }) => {
   if (!data) return null;
 
+  const validation = validateCertificateData(data);
+  if (!validation.valid) {
+    return (
+      <div style={{ border: '2px solid #c00', padding: '24px', maxWidth: '210mm', margin: '0 auto', fontFamily: 'sans-serif' }}>
+        <h3 style={{ color: '#c00' }}>⚠️ Cannot Render Certificate</h3>
+        <p>The following required fields are missing. Please complete them before printing:</p>
+        <ul>
+          {validation.missing.map((m, i) => (
+            <li key={i}>{m}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
   // Extract and format data with defaults
-  const bcIdNo = data.bcIdNo || data.orNo || '065012';
-  const orNo = data.orNo || data.orNumber || '065012';
-  const amount = data.clearanceFee || data.amountPaid || '100.00';
+  const bcIdNo = data.bcIdNo || data.orNo || '';
+  const orNo = data.orNo || data.orNumber || '';
+  const amount = data.clearanceFee || data.amountPaid || '';
   const dateIssued = data.dateIssued || data.regDate || new Date().toISOString().split('T')[0];
   
   const ownerName = (
@@ -66,27 +82,26 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data, publicDoma
     `${data.lastName || ''}, ${data.firstName || ''} ${data.middleName || ''}`.trim()
   ).toUpperCase();
 
-  const businessName = (data.businessName || 'N/A').toUpperCase();
-  const natureOfBusiness = (data.natureOfBusiness || 'N/A').toUpperCase();
+  const businessName = (data.businessName || '').toUpperCase();
+  const natureOfBusiness = (data.natureOfBusiness || '').toUpperCase();
   const businessAddress = (
     data.businessAddress || 
     data.address || 
     data.applicantAddress || 
-    'N/A'
+    ''
   ).toUpperCase();
   
-  const captain = data.captain || data.punongBarangay || 'HON. ANNABELLE E. RULL';
-  const secretary = data.secretary || 'MRS. MELY M. PRESADO';
-  
+  const captain = data.captain || data.punongBarangay || '';
+  const secretary = data.secretary || '';
   const isDuplicateMode = data.printMode === 'copy' || data.isDuplicate || data.status === 'Released';
 
   // Calculate age if birthdate provided
   const age = data.age || (data.birthdate || data.regDate ? 
-    new Date().getFullYear() - new Date(data.birthdate || data.regDate).getFullYear() : 'N/A');
+    new Date().getFullYear() - new Date(data.birthdate || data.regDate).getFullYear() : '');
   
-  const sex = data.sex || 'M';
-  const citizenship = (data.nationality || 'Filipino').toUpperCase();
-  const civilStatus = (data.civilStatus || 'Single').toUpperCase();
+  const sex = data.sex || '';
+  const citizenship = (data.nationality || '').toUpperCase();
+  const civilStatus = (data.civilStatus || '').toUpperCase();
 
   return (
     <div style={{
@@ -204,20 +219,20 @@ export const BusinessPermit: React.FC<BusinessPermitProps> = ({ data, publicDoma
           </div>
 
           <div style={{ fontSize: '10px', lineHeight: '1.6' }}>
-            <div><strong>Last Name:</strong> {data.lastName || 'PRESADO'}</div>
-            <div><strong>First Name:</strong> {data.firstName || 'MELY'}</div>
-            <div><strong>Middle Name:</strong> {data.middleName || 'MONTEJO'}</div>
+            <div><strong>Last Name:</strong> {data.lastName || ''}</div>
+            <div><strong>First Name:</strong> {data.firstName || ''}</div>
+            <div><strong>Middle Name:</strong> {data.middleName || ''}</div>
             <div><strong>Marital Status:</strong> {civilStatus} &nbsp;&nbsp;&nbsp; <strong>Sex:</strong> {sex}</div>
             <div><strong>Birthdate:</strong> {data.birthdate || data.regDate || dateIssued}</div>
             <div><strong>Age:</strong> {age}</div>
             <div><strong>Citizenship:</strong> {citizenship}</div>
-            <div><strong>Lot No. Subd. Purok/Zone:</strong> {data.purok || data.applicantAddress || 'ZONE 4'}</div>
-            <div><strong>Barangay/City-Municipality/Province:</strong> BUSTRAC, NABUA, CAMARINES SUR</div>
+            <div><strong>Lot No. Subd. Purok/Zone:</strong> {data.purok || data.applicantAddress || ''}</div>
+            <div><strong>Barangay/City-Municipality/Province:</strong> {data.barangayAddress || data.address || ''}</div>
           </div>
 
           <div style={{ clear: 'both', marginTop: '10px' }}>
-            <p style={{ margin: '10px 0 5px' }}><strong>PURPOSE:</strong> {data.purpose || 'FOR MICRO FINANCE PURPOSE'}</p>
-            <p style={{ margin: '0 0 10px' }}><strong>REMARKS:</strong> No Derogatory Record</p>
+            <p style={{ margin: '10px 0 5px' }}><strong>PURPOSE:</strong> {data.purpose || ''}</p>
+            <p style={{ margin: '0 0 10px' }}><strong>REMARKS:</strong> {data.remarks || ''}</p>
             <p style={{ margin: '10px 0', textAlign: 'justify', lineHeight: '1.4' }}>
               This certification is issued upon the request of the above subject for the purpose stated.
             </p>

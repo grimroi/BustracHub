@@ -2,6 +2,7 @@ import React from 'react';
 import { QRCodeSVG } from 'qrcode.react';
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
+import { validateCertificateData } from '../../../utils/certHelpers';
 
 export interface ResidencyData {
   _id?: string;
@@ -78,6 +79,21 @@ export interface ResidencyProps {
 export const ResidencyCertificate: React.FC<ResidencyProps> = ({ data, publicDomain }) => {
   if (!data) return null;
 
+  const validation = validateCertificateData(data);
+  if (!validation.valid) {
+    return (
+      <div style={{ border: '2px solid #c00', padding: '24px', maxWidth: '210mm', margin: '0 auto', fontFamily: 'sans-serif' }}>
+        <h3 style={{ color: '#c00' }}>⚠️ Cannot Render Certificate</h3>
+        <p>The following required fields are missing. Please complete them before printing:</p>
+        <ul>
+          {validation.missing.map((m, i) => (
+            <li key={i}>{m}</li>
+          ))}
+        </ul>
+      </div>
+    );
+  }
+
   // 1. Safe Extraction ng Nested Issuance Metadata
   const meta = data.issuanceMeta || {};
 
@@ -86,58 +102,58 @@ export const ResidencyCertificate: React.FC<ResidencyProps> = ({ data, publicDom
     data.fullName ||
     data.applicantName ||
     `${data.firstName || ''} ${data.lastName || ''}`.trim() ||
-    'JAYSON VILLAFLOR AZON'
+    ''
   ).toUpperCase();
 
-  const zone = (data.zone || data.purok || 'ZONE 1').toUpperCase();
-  const barangay = (data.barangay || 'BUSTRAC').toUpperCase();
-  const municipality = (data.municipality || 'NABUA').toUpperCase();
-  const province = (data.province || 'CAMARINES SUR').toUpperCase();
-  const fullAddress = `${zone}, ${barangay}, ${municipality}, ${province}`;
+  const zone = (data.zone || data.purok || '').toUpperCase();
+  const barangay = (data.barangay || '').toUpperCase();
+  const municipality = (data.municipality || '').toUpperCase();
+  const province = (data.province || '').toUpperCase();
+  const fullAddress = `${zone}, ${barangay}, ${municipality}, ${province}`.trim();
 
-  const maritalStatus = data.maritalStatus || data.civilStatus || 'Married';
-  const sexProp = data.sex || data.gender || 'M';
-  const sex = String(sexProp).toUpperCase().startsWith('M') ? 'M' : 'F';
-  const pronounHeShe = sex === 'M' ? 'He' : 'She';
+  const maritalStatus = data.maritalStatus || data.civilStatus || '';
+  const sexProp = data.sex || data.gender || '';
+  const sex = String(sexProp).toUpperCase().startsWith('M') ? 'M' : (sexProp ? 'F' : '');
+  const pronounHeShe = sex === 'M' ? 'He' : (sexProp ? 'She' : '');
 
-  const birthdate = data.birthdate || '09/28/1987';
-  const citizenship = data.citizenship || 'Filipino';
-  const age = data.age !== undefined ? String(data.age) : '38';
-  const yearsOfResidency = data.yearsOfResidency || '3';
-  const purpose = meta.purpose || data.purpose || 'Residency';
+  const birthdate = data.birthdate || '';
+  const citizenship = data.citizenship || '';
+  const age = data.age !== undefined ? String(data.age) : '';
+  const yearsOfResidency = data.yearsOfResidency || '';
+  const purpose = meta.purpose || data.purpose || '';
 
   // 3. Date Extractions & Formatting
   const certDate = meta.dateIssued || data.issuedAt || data.dateIssued || data.issueDate || data.createdAt || new Date();
   const dateObj = new Date(certDate);
   const isValidDate = !isNaN(dateObj.getTime());
 
-  const formattedDateIssued = isValidDate ? dateObj.toLocaleDateString('en-US') : '9/1/2026';
+  const formattedDateIssued = isValidDate ? dateObj.toLocaleDateString('en-US') : '';
 
-  const dayNum = isValidDate ? dateObj.getDate() : 18;
+  const dayNum = isValidDate ? dateObj.getDate() : 0;
   const getOrdinalSuffix = (n: number) => {
     const s = ['th', 'st', 'nd', 'rd'];
     const v = n % 100;
     return n + (s[(v - 20) % 10] || s[v] || s[0]);
   };
   const issuedDayOrdinal = data.issuedDayOrdinal || data.dayIssued || getOrdinalSuffix(dayNum);
-  const issuedMonthYear = data.issuedMonthYear || (isValidDate ? `${dateObj.toLocaleDateString('en-US', { month: 'long' })}, ${dateObj.getFullYear()}` : 'August, 2026');
+  const issuedMonthYear = data.issuedMonthYear || (isValidDate ? `${dateObj.toLocaleDateString('en-US', { month: 'long' })}, ${dateObj.getFullYear()}` : '');
 
   // Signatories
-  const secretaryName = data.secretaryName || 'MRS. MELY M. PRESADO';
-  const punongBarangayName = data.punongBarangayName || data.punongBarangay || 'HON. ANNABELLE E. RULL';
+  const secretaryName = data.secretaryName || '';
+  const punongBarangayName = data.punongBarangayName || data.punongBarangay || '';
 
   // O.R. Details
-  const orNumber = meta.orNumber || data.orNumber || data.orNo || '65452371';
+  const orNumber = meta.orNumber || data.orNumber || data.orNo || '';
   const orDate = meta.dateIssued ? new Date(meta.dateIssued).toLocaleDateString('en-US') : (data.orDate || formattedDateIssued);
-  const rawOrAmt = meta.amountPaid !== undefined ? meta.amountPaid : (data.orAmount || data.amountPaid || '100.00');
+  const rawOrAmt = meta.amountPaid !== undefined ? meta.amountPaid : (data.orAmount || data.amountPaid || '');
   const orAmount = typeof rawOrAmt === 'number' ? rawOrAmt.toFixed(2) : String(rawOrAmt);
 
   // CTC Details
-  const ctcNumber = meta.ctcNumber || data.ctcNumber || data.ctcNo || '26414445';
-  const ctcDateIssued = meta.ctcDateIssued || data.ctcDateIssued || '03/02/2026';
-  const rawCtcAmt = meta.ctcAmountPaid !== undefined ? meta.ctcAmountPaid : (data.ctcAmount || '35.00');
+  const ctcNumber = meta.ctcNumber || data.ctcNumber || data.ctcNo || '';
+  const ctcDateIssued = meta.ctcDateIssued || data.ctcDateIssued || '';
+  const rawCtcAmt = meta.ctcAmountPaid !== undefined ? meta.ctcAmountPaid : (data.ctcAmount || '');
   const ctcAmount = typeof rawCtcAmt === 'number' ? rawCtcAmt.toFixed(2) : String(rawCtcAmt);
-  const ctcPlaceIssued = data.ctcPlaceIssued || 'NABUA, CAMARINES SUR';
+  const ctcPlaceIssued = data.ctcPlaceIssued || '';
 
   const datePrinted = data.datePrinted || new Date().toLocaleDateString('en-US');
 

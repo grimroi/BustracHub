@@ -1361,23 +1361,6 @@ html, body, #root {
   box-sizing: border-box;
 }
 
-/* Mobile Modal Bottom-Sheet Style (Kapag nag-o-open ng Request/Edit Form) */
-@media (max-width: 640px) {
-  .resident-modal-content {
-    width: 100% !important;
-    max-width: 100% !important;
-    border-bottom-left-radius: 0 !important;
-    border-bottom-right-radius: 0 !important;
-    border-top-left-radius: 20px !important;
-    border-top-right-radius: 20px !important;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    max-height: 90vh;
-    overflow-y: auto;
-    animation: slideUp 0.3s ease-out;
-  }
-}
 
 @keyframes slideUp {
   from { transform: translateY(100%); }

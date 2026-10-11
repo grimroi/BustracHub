@@ -3,24 +3,10 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
 import { localDb as db } from '../services/db';
 import { createAuditLog } from '../utils/auditLog';
+import { hashPassword, verifyPassword, isSha256Hash } from '../utils/password';
+import { apiFetch } from '../utils/api';
+import { setToken } from '../utils/tokenStore';
 import './LogIn.css';
-
-const getApiBaseUrl = () => {
-  if (import.meta.env.VITE_API_URL) return import.meta.env.VITE_API_URL;
-  const currentHost = typeof window !== 'undefined' ? window.location.hostname : 'localhost';
-  return `http://${currentHost}:5000`;
-};
-
-const API_BASE_URL = getApiBaseUrl();
-
-const hashPasswordForOffline = async (password) => {
-  const encoder = new TextEncoder();
-  const data = encoder.encode(password);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', data);
-  return Array.from(new Uint8Array(hashBuffer))
-    .map((byte) => byte.toString(16).padStart(2, '0'))
-    .join('');
-};
 
 const isAccountActive = (status) => {
   if (!status) return true;
@@ -44,45 +30,44 @@ export default function LogIn() {
       const lowerUsername = trimmedUsername.toLowerCase();
       const storedOfflineAuth = localStorage.getItem('bustrac_offline_auth');
       let allOfflineAuth = storedOfflineAuth ? JSON.parse(storedOfflineAuth) : {};
-      const inputHash = await hashPasswordForOffline(inputPassword);
-
-      if (lowerUsername === 'admin' && inputPassword === 'capstone2026') {
-        const defaultAdminObj = {
-          username: 'admin',
-          passwordHash: inputHash,
-          role: 'admin',
-          user: { id: 'admin_default', username: 'admin', role: 'admin', name: 'System Administrator', status: 'Active' }
-        };
-        allOfflineAuth['admin'] = defaultAdminObj;
-        localStorage.setItem('bustrac_offline_auth', JSON.stringify(allOfflineAuth));
-        return defaultAdminObj;
-      }
 
       const offlineAuth = allOfflineAuth[lowerUsername];
-      if (offlineAuth && inputHash === offlineAuth.passwordHash) {
-        const cachedStatus = offlineAuth.user?.status || offlineAuth.status;
-        if (!isAccountActive(cachedStatus)) return { inactive: true, status: cachedStatus };
-        return offlineAuth;
+      if (offlineAuth && offlineAuth.passwordHash) {
+        const matches = await verifyPassword(inputPassword, offlineAuth.passwordHash);
+        if (matches) {
+          const cachedStatus = offlineAuth.user?.status || offlineAuth.status;
+          if (!isAccountActive(cachedStatus)) return { inactive: true, status: cachedStatus };
+          // Upgrade legacy SHA-256 cache entries to bcrypt.
+          if (isSha256Hash(offlineAuth.passwordHash)) {
+            offlineAuth.passwordHash = await hashPassword(inputPassword);
+            allOfflineAuth[lowerUsername] = offlineAuth;
+            localStorage.setItem('bustrac_offline_auth', JSON.stringify(allOfflineAuth));
+          }
+          return offlineAuth;
+        }
       }
 
       try {
         const localUserDoc = await db.get(`user_${lowerUsername}`);
-        if (localUserDoc && (localUserDoc.passwordHash === inputHash || localUserDoc.password === inputPassword)) {
-          if (!isAccountActive(localUserDoc.status)) return { inactive: true, status: localUserDoc.status };
-          return {
-            username: localUserDoc.username,
-            passwordHash: localUserDoc.passwordHash || inputHash,
-            role: localUserDoc.role,
-            user: {
-              id: localUserDoc._id,
+        if (localUserDoc && localUserDoc.passwordHash) {
+          const matches = await verifyPassword(inputPassword, localUserDoc.passwordHash);
+          if (matches) {
+            if (!isAccountActive(localUserDoc.status)) return { inactive: true, status: localUserDoc.status };
+            return {
               username: localUserDoc.username,
+              passwordHash: localUserDoc.passwordHash,
               role: localUserDoc.role,
-              fullName: localUserDoc.fullName || localUserDoc.name,
-              status: localUserDoc.status
-            }
-          };
+              user: {
+                id: localUserDoc._id,
+                username: localUserDoc.username,
+                role: localUserDoc.role,
+                fullName: localUserDoc.fullName || localUserDoc.name,
+                status: localUserDoc.status
+              }
+            };
+          }
         }
-      } catch (pouchErr) {
+      } catch {
         // Continue if doc not found
       }
       return null;
@@ -100,7 +85,7 @@ export default function LogIn() {
     const lowerUsername = trimmedUsername.toLowerCase();
 
     try {
-      const response = await fetch(`${API_BASE_URL}/api/login`, {
+      const response = await apiFetch('login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username: trimmedUsername, password }),
@@ -110,7 +95,7 @@ export default function LogIn() {
         const data = await response.json();
         if (data.success) {
           const userRole = String(data.user?.role || data.role || '').trim().toLowerCase();
-          
+
           if (!isAccountActive(data.user?.status)) {
             setErrorMessage('Ang iyong account ay hindi aktibo. Makipag-ugnayan sa Administrator.');
             setShowError(true);
@@ -118,12 +103,19 @@ export default function LogIn() {
             return;
           }
 
+          // Store the server-issued session token ONLY for a successful
+          // online login. A missing or empty token is never stored, so a
+          // failed or partial response cannot leave a stale token behind.
+          if (data.sessionToken && String(data.sessionToken).trim()) {
+            setToken(data.sessionToken);
+          }
+
           localStorage.setItem('bustrac_role', userRole);
           localStorage.setItem('bustrac_user', JSON.stringify(data.user));
           localStorage.setItem('bustrac_loginTime', new Date().toISOString());
 
           try {
-            const passwordHash = await hashPasswordForOffline(password);
+            const passwordHash = await hashPassword(password);
             const existingOfflineAuth = JSON.parse(localStorage.getItem('bustrac_offline_auth') || '{}');
             existingOfflineAuth[lowerUsername] = {
               username: trimmedUsername,
@@ -244,7 +236,7 @@ export default function LogIn() {
             </div>
             <div>
               <div className="feature-title">Encrypted</div>
-              <div className="feature-sub">Local SHA-256 Auth</div>
+              <div className="feature-sub">Bcrypt Password Hashing</div>
             </div>
             <div>
               <div className="feature-title">Audit Ready</div>

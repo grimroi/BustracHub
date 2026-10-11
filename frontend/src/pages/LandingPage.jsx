@@ -26,6 +26,7 @@ export default function LandingPage() {
     if (!Array.isArray(rawList)) return [];
     return rawList
       .filter((item) => item && (item.type === 'announcement' || String(item._id || '').startsWith('announcement_')))
+      .filter((item) => (item.status || 'Published').toLowerCase() !== 'draft')
       .map((item) => ({
         id: item._id || item.id || Math.random().toString(36).slice(2),
         title: item.title || 'Untitled',
@@ -242,21 +243,6 @@ export default function LandingPage() {
         ...(activeTab ? { activeTab } : {}),
       },
     });
-  };
-
-  const scrollTo = (id) => {
-    const element = document.getElementById(id);
-    const header = document.querySelector('header');
-    if (element && header) {
-      const headerHeight = header.offsetHeight;
-      const elementPosition = element.getBoundingClientRect().top + window.pageYOffset;
-      const offsetPosition = elementPosition - headerHeight - 24;
-
-      window.scrollTo({
-        top: offsetPosition,
-        behavior: 'smooth',
-      });
-    }
   };
 
   return (

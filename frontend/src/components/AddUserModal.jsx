@@ -1,8 +1,8 @@
 // src/components/AddUserModal.jsx
-import React, { useState } from 'react';
+import { useState } from 'react';
 import Swal from 'sweetalert2';
 import { createAuditLog } from '../utils/auditLog';
-import { hashPassword } from './EditUserModal';
+import { hashPassword } from '../utils/password';
 
 export default function AddUserModal({ isOpen, onClose, onSave, db, currentUser }) {
   const [formData, setFormData] = useState({
@@ -56,7 +56,7 @@ export default function AddUserModal({ isOpen, onClose, onSave, db, currentUser 
           setIsSubmitting(false);
           return;
         }
-      } catch (notFound) {
+      } catch {
         // Doc doesn't exist, proceed
       }
 
@@ -289,7 +289,10 @@ export default function AddUserModal({ isOpen, onClose, onSave, db, currentUser 
                   onClick={handleGeneratePassword}
                   style={{ background: 'none', border: 'none', color: '#10b981', fontSize: '11px', cursor: 'pointer', padding: 0, fontWeight: 600 }}
                 >
-                  ⚡ Generate Secure
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 4 }}>
+                    <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+                  </svg>
+                  Generate Secure
                 </button>
                 <span style={{ color: 'var(--border)' }}>|</span>
                 <button
@@ -310,7 +313,7 @@ export default function AddUserModal({ isOpen, onClose, onSave, db, currentUser 
               placeholder="Enter initial password (min 6 characters)..."
             />
             <span style={{ fontSize: '11px', color: 'var(--muted, #94a3b8)', marginTop: '4px', display: 'block' }}>
-              Minimum 6 characters. Will be encrypted with SHA-256 before saving to database.
+              Minimum 6 characters. Encrypted with bcrypt before saving to database.
             </span>
           </div>
 
