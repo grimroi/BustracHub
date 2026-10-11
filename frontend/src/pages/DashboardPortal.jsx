@@ -5654,6 +5654,74 @@ const handleResolveAllKeepLatest = async () => {
   }
 };
 
+// ── FEATURE A2: Bulk Resolution — Keep Server/Cloud Version ──
+const handleResolveAllKeepServer = async () => {
+  if (!conflictsList.length) {
+    showToast('No conflicts to resolve.', 'info');
+    return;
+  }
+
+  const result = await Swal.fire({
+    icon: 'warning',
+    title: 'Resolve All — Keep Server Version?',
+    html: 'This will KEEP the server-side conflicting version for every conflict and OVERWRITE the local winning version. Continue?',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Keep Server',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#3b82f6',
+    cancelButtonColor: '#64748b',
+  });
+
+  if (!result.isConfirmed) return;
+
+  setLoadingConflicts(true);
+  let resolvedCount = 0;
+  let errorCount = 0;
+
+  for (const c of conflictsList) {
+    try {
+      const docB = await db.get(c.docId, { rev: c.conflictRev });
+      const currentDoc = await db.get(c.docId);
+      await db.put({ ...docB, _id: c.docId, _rev: currentDoc._rev });
+      await db.remove(c.docId, c.conflictRev);
+      resolvedCount += 1;
+
+      try {
+        await logConflictResolution({
+          docId: c.docId,
+          module: c.moduleLabel || 'CONFLICTS',
+          strategy: 'keep-server',
+          winnerRev: c.conflictRev,
+          loserRevs: [c.winningRev],
+          mergedFields: c.changedFields || [],
+          residentName: c.residentName,
+          details: `Bulk resolution kept SERVER version for ${c.residentName}`,
+        });
+      } catch (auditErr) {
+        console.warn('Bulk keep-server audit log failed:', auditErr);
+      }
+    } catch (err) {
+      if (err.status === 404 || err.status === 409) {
+        resolvedCount += 1;
+      } else {
+        console.warn(`Failed to keep server for ${c.docId}:`, err);
+        errorCount += 1;
+      }
+    }
+  }
+
+  setLoadingConflicts(false);
+
+  showToast(
+    `Bulk resolve (Server) — Resolved: ${resolvedCount}, Errors: ${errorCount}`,
+    'success'
+  );
+
+  if (typeof fetchDatabaseConflicts === 'function') {
+    await fetchDatabaseConflicts();
+  }
+};
+
 // Resolve Conflict: Keep Version B (Override current doc with revision B's data)
 const handleKeepVersionB = async (conflict) => {
   try {
@@ -14174,6 +14242,18 @@ const handleGenerateCredentials = async (resident) => {
                             style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: loadingConflicts ? 0.6 : 1 }}
                           >
                             {loadingConflicts ? 'Resolving...' : '⏳ Resolve All (Keep Latest)'}
+                          </button>
+                        )}
+                        {conflictsList.length > 0 && (
+                          <button
+                            type="button"
+                            className="btn btn-g"
+                            onClick={handleResolveAllKeepServer}
+                            disabled={loadingConflicts}
+                            title="Keep the SERVER version for every conflict. Overwrites local changes."
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: loadingConflicts ? 0.6 : 1 }}
+                          >
+                            {loadingConflicts ? 'Resolving...' : '☁️ Resolve All (Keep Server)'}
                           </button>
                         )}
                         {conflictsList.length > 0 && (
