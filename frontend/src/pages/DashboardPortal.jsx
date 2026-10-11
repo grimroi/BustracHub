@@ -2258,9 +2258,40 @@ const handleCancelResidentForm = () => {
   nav('residents');
 };
 
+// ── FEATURE C2: Pre-Transaction Sync Warning ──
+const confirmSyncBeforeSubmit = async (count) => {
+  if (!count || count <= 0) return true;
+  const result = await Swal.fire({
+    icon: 'warning',
+    title: 'Unsaved Changes Detected',
+    html: `May <strong>${count}</strong> unsynced change(s) pa. Kung mag-submit ka ngayon, posibleng mag-conflict sa server.<br><br>Gusto mo bang i-force sync muna?`,
+    showDenyButton: true,
+    showCancelButton: true,
+    confirmButtonText: 'Force Sync First',
+    denyButtonText: 'Submit Anyway',
+    cancelButtonText: 'Cancel',
+    confirmButtonColor: '#3b82f6',
+    denyButtonColor: '#f59e0b',
+    cancelButtonColor: '#64748b',
+  });
+  if (result.isConfirmed) {
+    try {
+      await forceSyncToRemote();
+      await new Promise((r) => setTimeout(r, 800));
+      return true;
+    } catch (err) {
+      console.warn('Force sync before submit failed:', err);
+      return false;
+    }
+  }
+  if (result.isDenied) return true;
+  return false;
+};
 
 const submitAddResident = async (e) => {
   e.preventDefault();
+  const ok = await confirmSyncBeforeSubmit(pendingCount); 
+  if (!ok) return false;
 
   const { rbiNo, householdNo, lastName, firstName, middleName, birthdate, sex, civilStatus, contactNo, purokZoneAddress, isHouseholdHead, isRegisteredVoter } = residentForm;
 
@@ -3437,6 +3468,8 @@ const peekNextBusinessSequence = async () => {
 // Save or Update Clearance Record
   const handleSaveClearance = async (e) => {
   e.preventDefault();
+  const ok = await confirmSyncBeforeSubmit(pendingCount); 
+  if (!ok) return; 
 
   if (!clearanceForm.selectedResidentId) {
     showToast('Please select a registered resident from the registry.', 'error');
@@ -3596,6 +3629,8 @@ const handlePrintClearance = (rec) => {
 
 // ── NEW STANDARD CERTIFICATE REQUEST SUBMIT ──
 const handleSubmitStandardCert = async () => {
+  const ok = await confirmSyncBeforeSubmit(pendingCount); 
+  if (!ok) return;  
   if (!standardCertForm.residentId || !standardCertForm.purpose.trim()) {
     showToast('Please select a resident and enter the purpose.', 'error');
     return;
@@ -6170,6 +6205,8 @@ useEffect(() => {
 // ── POUCHDB SAVE / UPDATE HANDLER ──
 const handleSaveBusinessClearance = async (e) => {
   e.preventDefault();
+  const ok = await confirmSyncBeforeSubmit(pendingCount);
+  if (!ok) return;
 
   // Validate in the save handler (not only the UI) so hidden-page fields and
   // programmatic submits are still checked. Collect all errors, then focus the
@@ -8081,6 +8118,8 @@ const clearSelectedCert = useCallback(() => {
 
 const handleSaveBlotter = async (e) => {
   if (e) e.preventDefault();
+  const ok = await confirmSyncBeforeSubmit(pendingCount);
+  if (!ok) return; 
 
   const compName = typeof blotterForm.complainant === 'object' 
     ? blotterForm.complainant.name || blotterForm.complainant.displayName 
