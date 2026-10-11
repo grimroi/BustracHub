@@ -1,6 +1,20 @@
 import React, { useState, useEffect } from 'react';
+import Swal from 'sweetalert2';
 import { localDb as db } from '../services/db';
 import { exportToExcel } from '../utils/excelExporter';
+
+const showToast = (type, message) => {
+  if (typeof Swal !== 'undefined' && Swal.fire) {
+    Swal.fire({
+      icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
+      toast: true,
+      position: 'top-end',
+      timer: 2500,
+      showConfirmButton: false,
+      title: message,
+    });
+  }
+};
 
 const ActionIcon = ({ type }) => {
   const paths = {
@@ -197,6 +211,15 @@ export default function AuditLogView() {
                   <div className="al-d" style={{ wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: '1.4', marginTop: '4px', fontSize: '12px', color: 'var(--muted)' }}>
                     User: {userDisplay} {log.details ? ` · ${log.details}` : ''}
                   </div>
+                  {log.meta && log.meta.conflict && (
+                    <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px', fontFamily: 'var(--mono)' }}>
+                      strategy: {log.meta.strategy || 'n/a'}
+                      {log.meta.winnerRev ? ` · winner: ${log.meta.winnerRev}` : ''}
+                      {Array.isArray(log.meta.loserRevs) && log.meta.loserRevs.length
+                        ? ` · discarded: ${log.meta.loserRevs.join(', ')}`
+                        : ''}
+                    </div>
+                  )}
                 </div>
                 <div style={{ textAlign: 'right', flexShrink: 0 }}>
                   <span className={`badge ${meta.bClass}`} style={{ fontSize: '9px', marginBottom: '3px', display: 'inline-flex' }}>

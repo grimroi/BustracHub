@@ -1,4 +1,5 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, startTransition } from 'react';
+import ResidentsScreen from '../components/screens/ResidentsScreen';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
@@ -19,22 +20,37 @@ import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import BlotterForm from '../components/BlotterForm';
 import { SummonsPanel } from '../components/SummonsPanel';
 import { CaseStatusActions } from '../components/CaseStatusActions';
-import A4PreviewWrapper from '../components/A4PreviewWrapper';
 import BlotterCertificatePrintModal from '../components/BlotterCertificatePrintModal';
 import { localDb as db, forceSyncToRemote } from '../services/db';
-import { createAuditLog } from '../utils/auditLog';
+import { createAuditLog, logConflictResolution } from '../utils/auditLog';
+import { clearToken } from '../utils/tokenStore';
 import { exportToExcel } from '../utils/excelExporter';
+import { calculateAge, isValidPHMobile } from '../utils/residentUtils';
 import "../styles/lightmode-fix.css";
 import { setupPouchDBSync, onSyncStatusChange } from '../services/db';
 import '../styles/Announcements.css';
 import '../styles/ConflictManagement.css';
 import  ResidentForm from '../components/Resident/ResidentForm';
 import Swal from 'sweetalert2';
-import EditUserModal, { hashPassword } from '../components/EditUserModal';
+import EditUserModal from '../components/EditUserModal';
 import AddUserModal from '../components/AddUserModal';
 import LinkResidentModal from '../components/LinkResidentModal';
 import { generateRbiId } from '../utils/generateRbiId';
+import { parseMoney, formatCurrency } from '../utils/money';
+import { matchActiveBlotterCases } from '../utils/blotterMatch';
+import { hashPassword } from '../utils/password';
+import {
+  formatClearanceNo,
+  nextAvailableClearanceNo,
+  nextAvailableBusinessId,
+  collisionSafeId,
+} from '../utils/clearanceNumber';
+import { computeExpiry, resolveDocumentStatus } from '../utils/verifyDocument';
 import CertificatePrintWrapper from "../components/certificates/CertificatePrintWrapper";
+import Sidebar from '../components/Layout/Sidebar';
+import Topbar from '../components/Layout/Topbar';
+import DashboardScreen from '../components/screens/DashboardScreen';
+import EventsManagerScreen from '../components/screens/EventsManagerScreen';
 import {
   generateUUID,
   addDays,
@@ -44,8 +60,16 @@ import {
 } from '../utils/helpers';
 import "../styles/Certificates.css";
 import { getApplicantName, normalizeCertType } from '../utils/certHelpers';
-
-const remoteCouchDB = import.meta.env.VITE_COUCHDB_URL;
+import { QRCodeSVG } from 'qrcode.react';
+import {
+  loadBusinessQrConfig,
+  saveBusinessQrConfig,
+  normalizeQrConfig,
+  buildVerifyUrl,
+  validateBaseUrl,
+  isLoopbackOrigin,
+  resolveVerifyOrigin,
+} from '../utils/qrConfig';
 
 const SESSION_TIMEOUT_MIN = Number(import.meta.env.VITE_SESSION_TIMEOUT_MIN) || 15;
 
@@ -55,6 +79,7 @@ const SESSION_TIMEOUT_MIN = Number(import.meta.env.VITE_SESSION_TIMEOUT_MIN) || 
 
 const SCREEN_META = {
   dashboard:            ['Dashboard',                  ''], 
+  'events-manage': ['Events Management', 'Community Module'],
   residents:            ['Manage Residents',           'Resident Registry Module'],
   'add-resident':       ['Add New Resident',          'Resident Registry'],
   households:           ['Manage Households',          'Resident Registry'],
@@ -198,6 +223,9 @@ const INITIAL_BUSINESS_STATE = {
   orDateIssued: new Date().toISOString().split('T')[0],
   clearanceFee: '',
   garbageFee: '',
+  status: '',
+  clearanceIssueDate: '',
+  expiryDate: '',
   _id: null,
   _rev: null
 };
@@ -568,26 +596,31 @@ export const mapDocToBlotter = (doc) => {
 
 // ── Helper: Kunin ang next Business ID at i-increment ang sequence (TOTOONG SAVE) ──
 const getNextBusinessSequence = async () => {
-  try {
-    let seqDoc;
+  const existing = businessMasterlist.map((r) => r.bcIdNo);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      seqDoc = await db.get('seq_business_clearance');
-    } catch (err) {
-      if (err.name === 'not_found') {
-        // Start at 155 para ang next ay maging 0156
-        seqDoc = { _id: 'seq_business_clearance', lastNumber: 155 }; 
-      } else {
-        throw err;
+      let seqDoc;
+      try {
+        seqDoc = await db.get('seq_business_clearance');
+      } catch (err) {
+        if (err.name === 'not_found') {
+          // Start at 155 para ang next ay maging 0156
+          seqDoc = { _id: 'seq_business_clearance', lastNumber: 155 };
+        } else {
+          throw err;
+        }
       }
+      const nextNumber = (seqDoc.lastNumber || 155) + 1;
+      await db.put({ ...seqDoc, lastNumber: nextNumber });
+      return nextAvailableBusinessId(existing, String(nextNumber).padStart(4, '0'));
+    } catch (err) {
+      if (err && (err.status === 409 || err.name === 'conflict')) continue;
+      console.error('Failed to get business sequence:', err);
+      break;
     }
-    const nextNumber = (seqDoc.lastNumber || 155) + 1;
-    await db.put({ ...seqDoc, lastNumber: nextNumber });
-    return String(nextNumber).padStart(4, '0');
-  } catch (err) {
-    console.error('Failed to get business sequence:', err);
-    // Fallback kung may error sa DB
-    return String(Date.now()).slice(-4); 
   }
+  // Fallback kung may error sa DB
+  return nextAvailableBusinessId(existing, String(Date.now()).slice(-4));
 };
 
 // ── HELPER: Convert Base64 Data URL to Blob for PouchDB Native Attachments ──
@@ -619,22 +652,67 @@ const Toast = Swal.mixin({
   }
 });
 
+// Shared status badge used by the clearance masterlists. Derived from the same
+// resolver the public verification page uses, so it cannot drift from it.
+const STATUS_BADGE_STYLES = {
+  valid: { bg: 'rgba(52, 211, 153, 0.15)', fg: '#34d399' },
+  invalid: { bg: 'rgba(248, 113, 113, 0.15)', fg: '#f87171' },
+  expired: { bg: 'rgba(248, 113, 113, 0.15)', fg: '#f87171' },
+  pending: { bg: 'rgba(251, 191, 36, 0.15)', fg: '#fbbf24' },
+  unverified: { bg: 'rgba(148, 163, 184, 0.18)', fg: '#94a3b8' },
+};
+
+const StatusBadge = ({ doc }) => {
+  const result = resolveDocumentStatus(doc);
+  const styles = STATUS_BADGE_STYLES[result.key] || STATUS_BADGE_STYLES.unverified;
+  return (
+    <span
+      style={{
+        display: 'inline-block',
+        padding: '3px 10px',
+        borderRadius: '20px',
+        fontSize: '11px',
+        fontWeight: 700,
+        whiteSpace: 'nowrap',
+        background: styles.bg,
+        color: styles.fg,
+      }}
+    >
+      {result.label}
+    </span>
+  );
+};
+
+const MASTERLIST_PAGE_SIZE = 10;
+
 // ─────────────────────────────────────────────
 // COMPONENT
 // ─────────────────────────────────────────────
 export default function DashboardPortal({ role = 'staff' }) {
   
   const [viewMode, setViewMode] = useState('active'); 
+const hasMountedRef = useRef(false);
 const [isBusinessModalOpen, setIsBusinessModalOpen] = useState(false);
 const [businessModalMode, setBusinessModalMode] = useState('edit');
 const [showBlotterModal, setShowBlotterModal] = useState(false);
 const [credentialsModal, setCredentialsModal] = useState(null);
 const [showAddResidentModal, setShowAddResidentModal] = useState(false);
 const businessFormRef = useRef(null);
+const businessFieldRefs = useRef({});
+const navRef = useRef(null);  
 const [isSavingClearance, setIsSavingClearance] = useState(false);
 const [isSavingBusiness, setIsSavingBusiness] = useState(false);
+const [businessErrors, setBusinessErrors] = useState({});
+const [isSavingStandardCert, setIsSavingStandardCert] = useState(false);
 const [showBusinessPrintModal, setShowBusinessPrintModal] = useState(false);
 const [selectedBusinessCert, setSelectedBusinessCert] = useState(null);
+const [businessQrConfig, setBusinessQrConfig] = useState(() => normalizeQrConfig());
+const [qrConfigForm, setQrConfigForm] = useState(() => normalizeQrConfig());
+const [isSavingQrConfig, setIsSavingQrConfig] = useState(false);
+
+const qrBaseUrlValidation = useMemo(() => validateBaseUrl(qrConfigForm.baseUrl), [qrConfigForm.baseUrl]);
+const qrResolvedOrigin = useMemo(() => resolveVerifyOrigin(qrConfigForm), [qrConfigForm]);
+const qrPointsToLoopback = useMemo(() => isLoopbackOrigin(qrResolvedOrigin), [qrResolvedOrigin]);
  const [showCertDispatcher, setShowCertDispatcher] = useState(false);
  const [pendingStandardCert, setPendingStandardCert] = useState(false);
 const handlePrintBusinessClearance = (record) => {
@@ -878,17 +956,51 @@ const initials = displayName
 
   const [syncState, setSyncState] = useState(navigator.onLine ? 'synced' : 'offline');
   const [isDbProcessing, setIsDbProcessing] = useState(false);
+  const [lastSynced, setLastSynced] = useState(null);     
+const [pendingCount, setPendingCount] = useState(0);  
     const [toasts, setToasts] = useState([]);
 
-  const showToast = (message, type = 'success') => {
-    const id = Date.now();
-    setToasts((prev) => [...prev, { id, message, type }]);
-    
-    // Auto-dismiss after 4 seconds
-    setTimeout(() => {
-      setToasts((prev) => prev.filter((t) => t.id !== id));
-    }, 4000);
-  };
+  const showToast = useCallback((message, type = 'success') => {
+  const VALID_TYPES = ['success', 'error', 'warning', 'info'];
+  if (typeof message === 'string' && VALID_TYPES.includes(message.toLowerCase()) && typeof type === 'string' && !VALID_TYPES.includes(type.toLowerCase())) {
+    const swapped = type;
+    type = message;
+    message = swapped;
+  }
+  const id = Date.now();
+  setToasts((prev) => [...prev, { id, message, type }]);
+  setTimeout(() => {
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, 4000);
+}, []);   // ← walang external deps, kaya stable
+
+
+  const notifyDesktop = useCallback((title, body, options = {}) => {
+  if (typeof Notification === 'undefined') return;
+  if (Notification.permission !== 'granted') return;
+
+  const isTabActive = document.visibilityState === 'visible' && document.hasFocus();
+  if (isTabActive && !options.force) return;
+
+  try {
+    const n = new Notification(title, {
+      body,
+      icon: logo,
+      badge: logo,
+      tag: options.tag || 'bustrac-general',
+      requireInteraction: options.requireInteraction || false,
+      silent: options.silent || false,
+    });
+    n.onclick = () => {
+      window.focus();
+      if (options.onClick) options.onClick();
+      n.close();
+    };
+    if (!options.requireInteraction) setTimeout(() => n.close(), 6000);
+  } catch (err) {
+    console.warn('Desktop notification failed:', err);
+  }
+}, []);
 
   // ── DESKTOP NOTIFICATION PERMISSION HANDLER ──
 const requestNotificationPermission = useCallback(() => {
@@ -925,21 +1037,183 @@ const requestNotificationPermission = useCallback(() => {
   // ── POUCHDB PERFORMANCE INDEXING ──
 useEffect(() => {
   const setupIndexes = async () => {
+    if (!db?.createIndex) return;
     try {
-      // Check kung may function na createIndex bago tawagin
-      if (typeof db?.createIndex === 'function') {
-        await db.createIndex({ index: { fields: ['type', 'status', 'createdAt'] } });
-        await db.createIndex({ index: { fields: ['clearanceNo', 'type'] } });
-      }
+      await db.createIndex({ index: { fields: ['type', 'status'] } });
+      await db.createIndex({ index: { fields: ['type', 'createdAt'] } });
+      await db.createIndex({ index: { fields: ['type', 'residentId'] } });
+      await db.createIndex({ index: { fields: ['type', 'updatedAt'] } });
+      await db.createIndex({ index: { fields: ['type', 'timestamp'] } });
+      console.log('✅ Mango indexes ready');
     } catch (err) {
-      // Silent fail lang, hindi ito critical dahil gumagana ang allDocs
-      console.warn('PouchDB index creation skipped:', err.message);
+      console.warn('Index creation skipped:', err.message);
     }
   };
   setupIndexes();
 }, []);
   
+// ═══════════════════════════════════════════════════════════
+// CONSOLIDATED POUCHDB LIVE LISTENER
+// Isang listener para sa lahat ng real-time updates
+// ═══════════════════════════════════════════════════════════
+useEffect(() => {
+  if (!db || typeof db.changes !== 'function') return;
+  let isMounted = true;
+  let debounceTimer = null;
+  const pendingUpdates = new Map(); // docId → doc
 
+  const flushUpdates = () => {
+  if (!isMounted || pendingUpdates.size === 0) return;
+
+  const byType = new Map();
+  pendingUpdates.forEach((doc) => {
+    const type = doc.type || doc.docType || 'unknown';
+    if (!byType.has(type)) byType.set(type, []);
+    byType.get(type).push(doc);
+  });
+  pendingUpdates.clear();
+
+  byType.forEach((docs, type) => {
+    switch (type) {
+      case 'certificate_request':
+        startTransition(() => {  // ✅ IDAGDAG
+          setIssuedCertificates((prev) => {
+            const map = new Map(prev.map((c) => [c._id, c]));
+            docs.forEach((d) => map.set(d._id, d));
+            return Array.from(map.values());
+          });
+        });
+        break;
+
+      case 'blotter':
+      case 'blotter_record':
+      case 'blotter_report':
+        startTransition(() => {  // ✅ IDAGDAG
+          setBlotterList((prev) => {
+            const mapped = docs.map(mapDocToBlotter).filter(Boolean);
+            const map = new Map(prev.map((b) => [b._id || b.id, b]));
+            mapped.forEach((b) => map.set(b._id || b.id, b));
+            return Array.from(map.values());
+          });
+        });
+        break;
+
+      case 'feedback':
+      case 'feedback_report':
+        startTransition(() => {  // ✅ IDAGDAG
+          setFeedbackList((prev) => {
+            const mapped = docs.map(mapDocToFeedback);
+            const map = new Map(prev.map((f) => [f._id || f.id, f]));
+            mapped.forEach((f) => map.set(f._id || f.id, f));
+            return Array.from(map.values());
+          });
+        });
+        break;
+
+      case 'aid_distribution':
+        startTransition(() => {  // ✅ IDAGDAG
+          setAidLogs((prev) => {
+            const map = new Map(prev.map((l) => [l._id || l.id, l]));
+            docs.forEach((d) => map.set(d._id, d));
+            return Array.from(map.values());
+          });
+        });
+        break;
+
+      case 'announcement':
+        startTransition(() => {  // ✅ IDAGDAG
+          setAnnouncementsList((prev) => {
+            const map = new Map(prev.map((a) => [a._id || a.id, a]));
+            docs.forEach((d) => map.set(d._id, d));
+            return Array.from(map.values());
+          });
+        });
+        break;
+
+      case 'barangay_clearance':
+        startTransition(() => {  // ✅ IDAGDAG
+          setClearanceList((prev) => {
+            const map = new Map(prev.map((c) => [c._id, c]));
+            docs.forEach((d) => map.set(d._id, d));
+            return Array.from(map.values());
+          });
+        });
+        break;
+
+      case 'business_clearance':
+        startTransition(() => {  // ✅ IDAGDAG
+          setBusinessMasterlist((prev) => {
+            const map = new Map(prev.map((c) => [c._id, c]));
+            docs.forEach((d) => map.set(d._id, d));
+            return Array.from(map.values());
+          });
+        });
+        break;
+
+      case 'audit_log':
+        startTransition(() => {  // ✅ IDAGDAG
+          setRecentLogs((prev) => {
+            const map = new Map(prev.map((l) => [l._id, l]));
+            docs.forEach((d) => map.set(d._id, d));
+            return Array.from(map.values())
+              .sort((a, b) => new Date(b.timestamp || b.createdAt || 0) - new Date(a.timestamp || a.createdAt || 0))
+              .slice(0, 5);
+          });
+        });
+        break;
+
+        case 'event_registration':
+case 'barangay_event':
+  window.dispatchEvent(new CustomEvent('bustrac-events-updated'));
+  break;
+
+      default:
+        docs.forEach((doc) => {
+          if (doc._id?.startsWith('BLT-')) {
+            startTransition(() => {  // ✅ IDAGDAG
+              setBlotterList((prev) => {
+                const map = new Map(prev.map((b) => [b._id || b.id, b]));
+                map.set(doc._id, mapDocToBlotter(doc));
+                return Array.from(map.values());
+              });
+            });
+          }
+        });
+        break;
+    }
+  });
+};
+
+  const changes = db.changes({
+    since: 'now',
+    live: true,
+    include_docs: true,
+  })
+    .on('change', (change) => {
+      if (!isMounted || !change.doc) return;
+
+      // I-queue ang update
+      if (change.deleted) {
+        // Handle deletion — remove from pending
+        pendingUpdates.delete(change.id);
+      } else {
+        pendingUpdates.set(change.id, change.doc);
+      }
+
+      // ✅ Debounce: i-flush pagkatapos ng 150ms ng katahimikan
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(flushUpdates, 500);
+    })
+    .on('error', (err) => {
+      console.error('❌ Consolidated listener error:', err);
+    });
+
+  return () => {
+    isMounted = false;
+    if (debounceTimer) clearTimeout(debounceTimer);
+    changes.cancel();
+  };
+}, []);
   // ── Staff: Blotter Case / Summons State ──
   const [staffCase, setStaffCase] = useState({
     caseNum:      'BLT-2024-041',
@@ -1074,64 +1348,80 @@ const minDateTime = now.toISOString().slice(0, 16);
   const [isResidentsLoading, setIsResidentsLoading] = useState(true);
   const [isHouseholdsLoading, setIsHouseholdsLoading] = useState(true);
    
-    const fetchResidents = useCallback(async () => {
-    if (typeof db === 'undefined') return;
-    setIsResidentsLoading(true); // ✅ Set to true BEFORE fetch
-    try {
-      const result = await db.allDocs({ include_docs: true, conflicts: true });
-      const allDocs = result.rows
-        .filter(row => row.doc && (row.doc.type === 'residents' || row.doc.type === 'resident' || row.doc.type === 'profile' || row.id.startsWith('RES-')))
-        .map(row => row.doc);
-      
-      const filteredDocs = allDocs.filter(doc => {
-        if (viewMode === 'active') return !doc.isArchived;
-        if (viewMode === 'archived') return doc.isArchived === true;
-        return true;
-      });
+ const fetchResidents = useCallback(async () => {
+  if (typeof db === 'undefined') return;
+  setIsResidentsLoading(true);
+  try {
+    // ✅ Optimized: Mango indexed query instead of full DB scan
+    const result = await db.find({
+      selector: {
+        $or: [
+          { type: 'residents' },
+          { type: 'resident' },
+          { type: 'profile' },
+          { _id: { $gte: 'RES-', $lt: 'RES-\uffff' } },
+        ],
+      },
+      limit: 2000,
+    });
+    const allDocs = result.docs;
 
-      const formattedResidents = filteredDocs.map((doc) => {
-        const residentFormFields = Object.fromEntries(
-          Object.keys(EMPTY_RESIDENT).map((field) => [field, doc[field] ?? EMPTY_RESIDENT[field]])
-        );
-        return {
-          ...residentFormFields,
-          id: doc._id || doc.id,
-          rbiId: doc.rbiId || doc.rbiNo || '—',
-          rbiNo: doc.rbiNo || doc.rbiId || '',
-          name: doc.name || `${doc.firstName || ''} ${doc.lastName || ''}`.trim(),
-          purok: doc.purok || doc.purokZoneAddress || 'Unassigned',
-          purokZoneAddress: doc.purokZoneAddress || doc.purok || '',
-          age: doc.age || '—',
-          civilStatus: doc.civilStatus || 'Single',
-          voter: doc.voter !== undefined ? doc.voter : Boolean(doc.isRegisteredVoter),
-          household: doc.household || doc.householdNo || '—',
-          householdNo: doc.householdNo || doc.household || '',
-          isHouseholdHead: doc.isHouseholdHead ?? doc.householdHead ?? false,
-          contactNo: doc.contactNo || doc.contact || '',
-          purokClass: doc.purokClass || 'g',
-          conflict: Boolean(doc._conflicts && doc._conflicts.length > 0),
-          hasAccount: doc.hasAccount || false,
-          isArchived: doc.isArchived || false,
-          createdAt: doc.createdAt || '',
-        };
+    // ✅ Lightweight conflict check (metadata only, no docs loaded)
+    let conflictedIds = new Set();
+    try {
+      const conflictResult = await db.allDocs({ conflicts: true });
+      conflictResult.rows.forEach((row) => {
+        if (row.value?.conflicts?.length > 0) {
+          conflictedIds.add(row.id);
+        }
       });
-      setResidentsList(formattedResidents);
-    } catch (err) {
-      console.error('Error fetching residents:', err);
-    } finally {
-      setIsResidentsLoading(false); 
+    } catch (conflictErr) {
+      console.warn('Conflict check skipped:', conflictErr.message);
     }
-  }, [viewMode]);
+
+    const formattedResidents = allDocs.map((doc) => {
+      const residentFormFields = Object.fromEntries(
+        Object.keys(EMPTY_RESIDENT).map((field) => [field, doc[field] ?? EMPTY_RESIDENT[field]])
+      );
+      return {
+        ...residentFormFields,
+        id: doc._id || doc.id,
+        rbiId: doc.rbiId || doc.rbiNo || '—',
+        rbiNo: doc.rbiNo || doc.rbiId || '',
+        name: doc.name || `${doc.firstName || ''} ${doc.lastName || ''}`.trim(),
+        purok: doc.purok || doc.purokZoneAddress || 'Unassigned',
+        purokZoneAddress: doc.purokZoneAddress || doc.purok || '',
+        age: doc.age || '—',
+        civilStatus: doc.civilStatus || 'Single',
+        voter: doc.voter !== undefined ? doc.voter : Boolean(doc.isRegisteredVoter),
+        household: doc.household || doc.householdNo || '—',
+        householdNo: doc.householdNo || doc.household || '',
+        isHouseholdHead: doc.isHouseholdHead ?? doc.householdHead ?? false,
+        contactNo: doc.contactNo || doc.contact || '',
+        purokClass: doc.purokClass || 'g',
+        conflict: conflictedIds.has(doc._id), // ✅ Uses pre-computed Set, walang `.includes()` sa loob ng loop
+        hasAccount: doc.hasAccount || false,
+        isArchived: doc.isArchived || false,
+        createdAt: doc.createdAt || '',
+      };
+    });
+    setResidentsList(formattedResidents);
+  } catch (err) {
+    console.error('Error fetching residents:', err);
+  } finally {
+    setIsResidentsLoading(false);
+  }
+}, []);
 
 useEffect(() => {
   fetchResidents();
-}, [fetchResidents]);
+}, [fetchResidents, viewMode]);   
 
   // ── DYNAMIC AID PROGRAMS STATE (2026 REALISTIC INITIAL DATA WITH V2 CACHE) ──
   const [programsList, setProgramsList] = useState([]);
   
 
-  useEffect(() => {
+useEffect(() => {
   const loadProgramsFromDB = async () => {
     try {
       const result = await db.allDocs({ include_docs: true });
@@ -1145,7 +1435,6 @@ useEffect(() => {
           title: p.title,
           status: p.status,
           dateLabel: p.dateLabel,
-          current: p.current || 0,
           target: p.target,
           note: p.note,
           createdAt: p.createdAt,
@@ -1157,7 +1446,8 @@ useEffect(() => {
       console.warn('Failed to load programs from PouchDB:', err);
     }
   };
-  loadProgramsFromDB();
+  const timer = setTimeout(loadProgramsFromDB, 1000);
+  return () => clearTimeout(timer);
 }, []);
 
   useEffect(() => {
@@ -1205,7 +1495,8 @@ useEffect(() => {
       console.warn('Failed to load advisories from PouchDB:', err);
     }
   };
-  loadAdvisoriesFromDB();
+  const timer = setTimeout(loadAdvisoriesFromDB, 1000);
+  return () => clearTimeout(timer);
 }, []);
 
 
@@ -1270,7 +1561,6 @@ const handleCreateProgram = async (e) => {
     title: newProgramTitle,
     status: newProgramStatus,
     dateLabel: currentDateLabel,
-    current: 0,
     target: Number(newProgramTarget),
     note: newProgramStatus === 'Upcoming' ? `Scheduled ${months[new Date().getMonth() + 1]} 15` : ''
   };
@@ -1444,49 +1734,66 @@ const handleReleaseDocument = async (cert) => {
 // ════════════════════════════════════════════════════════════════
 // SINGLE SOURCE OF TRUTH: CERTIFICATE REAL-TIME LISTENER
 // ════════════════════════════════════════════════════════════════
+
 useEffect(() => {
   if (!db || typeof db.allDocs !== 'function') return;
   let isMounted = true;
 
   const fetchInitialCerts = async () => {
   try {
-    const result = await db.allDocs({ include_docs: true });
-    
-    if (isMounted) {
-      const certs = result.rows
-        .map(row => row.doc)
-        .filter(doc => doc && doc.type === 'certificate_request');
-      
-      setIssuedCertificates(certs);
-    }
+    const result = await db.find({
+      selector: { type: 'certificate_request' },
+      limit: 1000,
+    });
+    if (!isMounted) return;
+    setIssuedCertificates(result.docs);
   } catch (err) {
     console.error("Error loading initial certs:", err);
   }
 };
-
   fetchInitialCerts();
 
+  /*
   const changes = db.changes({
     since: 'now',
     live: true,
     include_docs: true,
     filter: (doc) => doc.type === 'certificate_request'
-  }).on('change', (change) => {
-    if (isMounted && change.doc) {
-      setIssuedCertificates((prevCerts) => {
-        const filtered = (prevCerts || []).filter(c => c?._id !== change.doc._id);
-        return [change.doc, ...filtered];
-      });
+  })
+  .on('change', (change) => {
+    if (!isMounted || !change.doc) return;
+    const doc = change.doc;
+
+    // ─── Notify only for BRAND-NEW requests ───
+    const isNewRequest =
+      doc.step === 1 &&
+      ['Under Review', 'Pending', 'Proceeding'].includes(doc.status);
+
+    // Guard: huwag i-notify kung self-created (optional but recommended)
+    const isSelfCreated = doc.createdBy && doc.createdBy === currentUser?.username;
+
+    if (isNewRequest && !isSelfCreated) {
+      const applicant = `${doc.firstName || ''} ${doc.lastName || ''}`.trim() || 'Resident';
+      notifyDesktop(
+        '📄 New Certificate Request',
+        `${applicant} — ${doc.certificateType || 'Certificate'}`,
+        {
+          tag: `cert-${doc._id}`,
+          onClick: () => navRef.current?.('cert-approve'),
+        }
+      );
     }
-  }).on('error', (err) => {
-    console.error("PouchDB cert changes listener error:", err);
+  })
+  .on('error', (err) => {
+    console.error('PouchDB cert changes listener error:', err);
   });
 
   return () => {
     isMounted = false;
     changes.cancel();
   };
-}, []);
+  */
+}, [notifyDesktop]); 
 
   const deleteResident = (id) => {
     if (window.confirm("Are you sure you want to delete this resident?")) {
@@ -1614,11 +1921,13 @@ useEffect(() => {
   const [isBlottersLoading, setIsBlottersLoading] = useState(true);
 
 // 2. Derived array for dynamic sorting based on active sort order state
-const sortedHouseholds = [...householdsList].sort((a, b) => {
-  if (addressSortOrder === 'asc') return a.address.localeCompare(b.address);
-  if (addressSortOrder === 'desc') return b.address.localeCompare(a.address);
-  return 0; // 'none' — will return to default/original order
-});
+const sortedHouseholds = useMemo(() => {
+  return [...householdsList].sort((a, b) => {
+    if (addressSortOrder === 'asc') return a.address.localeCompare(b.address);
+    if (addressSortOrder === 'desc') return b.address.localeCompare(a.address);
+    return 0;
+  });
+}, [householdsList, addressSortOrder]);
 // ──────────────────────────────────────────────────────────────────────
 // 3. DYNAMIC DROPDOWN GENERATOR (Extracts unique puroks from active list)
 // ──────────────────────────────────────────────────────────────────────
@@ -1646,7 +1955,7 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   // ─────────────────────────────────────────────
   // HANDLERS — SHARED
   // ─────────────────────────────────────────────
-  const nav = (id) => {
+  const nav = useCallback((id) => {
   if (ADMIN_ONLY_SCREENS.includes(id) && role !== 'admin') {
     showToast('Access denied. Admin-only module.', 'error');
     return;
@@ -1654,12 +1963,32 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   setScreen(id);
   navigate(`?page=${id}`);
   window.history.pushState({ internalScreen: id }, '', '');
-};
-  const logout = () => {
+}, [navigate, role, showToast]);
+
+const handleNav = useCallback((target) => {
+  if (target === 'add-resident') {
+    setShowAddResidentModal(true);
+    setScreen('residents');
+    navigate('?page=residents');
+    window.history.pushState({ internalScreen: 'residents' }, '', '');
+    return;
+  }
+  
+  nav(target);
+}, [nav, navigate]);
+
+  const logout = useCallback(() => {
   localStorage.removeItem('bustrac_user');
+  localStorage.removeItem('bustrac_role');
+  localStorage.removeItem('bustrac_offline_auth');
+  localStorage.removeItem('bustrac_loginTime');
   sessionStorage.removeItem('bustrac_user');
+  // Clear the online session token. Note: deleting the client-side
+  // token does NOT revoke the server session (in-memory SESSIONS Map,
+  // 8h TTL). A server logout endpoint is planned for a later phase.
+  clearToken();
   navigate('/login');
-};
+}, [navigate]);
 
   // ─────────────────────────────────────────────
   // HANDLERS — STAFF BLOTTER / SUMMONS
@@ -1801,7 +2130,7 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
     fileDateUpdated: res.fileDateUpdated || new Date().toISOString().split('T')[0],
     lastName: lName, firstName: fName, middleName: mName,
     suffix: res.suffix || '', alias: res.alias || '',
-    birthdate: res.birthdate || '', age: res.age || 0,
+    birthdate: res.birthdate || '', age: res.birthdate ? calculateAge(res.birthdate) : (res.age || 0),
     birthPlace: res.birthPlace || '', sex: res.gender || res.sex || 'Male',
     isLgbtqia: res.isLgbtqia || false, lgbtqiaSpecification: res.lgbtqiaSpecification || '',
     civilStatus: res.civilStatus || 'Single', citizenship: res.citizenship || 'Filipino',
@@ -1942,6 +2271,7 @@ const submitAddResident = async (e) => {
   if (!sex) { showToast('Sex is required.', 'error'); return false; }
   if (!civilStatus) { showToast('Civil Status is required.', 'error'); return false; }
   if (!contactNo?.trim()) { showToast('Contact Number is required.', 'error'); return false; }
+  if (!isValidPHMobile(contactNo)) { showToast('Invalid contact number. Use 09XXXXXXXXX format.', 'error'); return false; }
   if (!purokZoneAddress?.trim()) { showToast('Purok/Zone Address is required.', 'error'); return false; }
   if (!rbiNo?.trim()) { showToast('RBI ID No. is required.', 'error'); return false; }
 
@@ -2072,7 +2402,7 @@ if (editingResidentId) {
       contact: contactNo.trim(),
       purok: purokZoneAddress,
       purokClass: dynamicPurokClass,
-      age: new Date().getFullYear() - new Date(birthdate).getFullYear(),
+      age: calculateAge(birthdate),
       household: assignedHouseholdId,
       householdNo: assignedHouseholdId,
       householdHead: Boolean(isHouseholdHead),
@@ -2101,6 +2431,7 @@ if (editingResidentId) {
       householdNo: assignedHouseholdId,
       householdHead: Boolean(isHouseholdHead),
       voter: Boolean(isRegisteredVoter),
+      age: calculateAge(birthdate),
       photoUrl: residentForm.photoUrl || existingDoc.photoUrl || '',
       email: residentForm.email || existingDoc.email || '', 
       updatedAt: new Date().toISOString(),
@@ -2124,6 +2455,42 @@ if (editingResidentId) {
   return true;
 }
 
+// ✅ DUPLICATE DETECTION CHECK
+const normalizedFirstName = firstName.trim().toLowerCase();
+const normalizedLastName = lastName.trim().toLowerCase();
+const normalizedBirthdate = birthdate;
+
+const possibleDuplicate = residentsList.find(res => {
+  const resFirst = (res.firstName || '').toLowerCase();
+  const resLast = (res.lastName || '').toLowerCase();
+  const resBirth = res.birthdate;
+  
+  // Match kung pareho ang First Name, Last Name, AT Birthdate
+  return resFirst === normalizedFirstName && 
+         resLast === normalizedLastName && 
+         resBirth === normalizedBirthdate;
+});
+
+if (possibleDuplicate && !editingResidentId) {
+  // Huwag agad mag-block, magbigay ng warning para i-review ng admin
+  const confirmDuplicate = await Swal.fire({
+    title: 'Possible Duplicate Detected!',
+    html: `May existing record na for <strong>${firstName} ${lastName}</strong> born on <strong>${birthdate}</strong>.<br><br>Gusto mo bang ituloy ang pag-add bilang bagong record, o i-review muna ang existing record?`,
+    icon: 'warning',
+    showCancelButton: true,
+    confirmButtonText: 'Continue Anyway (Different Person)',
+    cancelButtonText: 'Review Existing Record',
+    confirmButtonColor: '#3b82f6',
+    cancelButtonColor: '#ef4444'
+  });
+
+  if (!confirmDuplicate.isConfirmed) {
+    // I-redirect sa view ng existing resident
+    setSelectedResidentId(possibleDuplicate.id);
+    nav('view-resident');
+    return false; // Stop the submission
+  }
+}
   // =========================================================
   // SCENARIO B: CREATE NEW RESIDENT
   // =========================================================
@@ -2143,7 +2510,7 @@ const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()
     contact: contactNo.trim(),
     purok: purokZoneAddress,
     purokClass: dynamicPurokClass,
-    age: new Date().getFullYear() - new Date(birthdate).getFullYear(),
+    age: calculateAge(birthdate),
     household: assignedHouseholdId,
     householdHead: Boolean(isHouseholdHead),
     voter: Boolean(isRegisteredVoter),
@@ -2169,6 +2536,7 @@ setResidentsList(updatedList);
   householdNo: assignedHouseholdId,
   householdHead: Boolean(isHouseholdHead),
   voter: Boolean(isRegisteredVoter),
+  age: calculateAge(birthdate),
   conflict: false,
   createdAt: new Date().toISOString(),
   updatedAt: new Date().toISOString(),
@@ -2635,7 +3003,8 @@ const handleStatusDropdownChange = async (newStatus) => {
   const targetProgram = programsList.find(p => p.id === currentProgramId);
 
   if (targetProgram) {
-    const remainingCapacity = (targetProgram.target || 0) - (targetProgram.current || 0);
+    const existingCount = programAidCount(targetProgram);
+    const remainingCapacity = (targetProgram.target || 0) - existingCount;
 
     if (totalItems > remainingCapacity) {
       if (typeof showToast === 'function') {
@@ -2678,28 +3047,6 @@ const handleStatusDropdownChange = async (newStatus) => {
     if (errors.length > 0) {
       console.error('Some documents failed to save:', errors);
       throw new Error('Partial save failure');
-    }
-
-    if (targetProgram) {
-      const updatedPrograms = programsList.map(p =>
-        p.id === currentProgramId
-          ? { ...p, current: (p.current || 0) + totalItems }
-          : p
-      );
-
-      setProgramsList(updatedPrograms);
-
-      try {
-        const progDoc = await db.get(`program_${currentProgramId}`);
-
-        await db.put({
-          ...progDoc,
-          current: (progDoc.current || 0) + totalItems,
-          updatedAt: now
-        });
-      } catch (e) {
-        console.warn('Failed to update program doc in DB (non-critical):', e);
-      }
     }
 
     if (typeof createAuditLog === 'function') {
@@ -2923,15 +3270,43 @@ const [aidType, setAidType] = useState('Rice — 5kg');
 const [remarks, setRemarks] = useState('');
 const [duplicateAlert, setDuplicateAlert] = useState('');
 const [successMessage, setSuccessMessage] = useState('');
-// NEW: Dedicated state for Aid Encode to prevent collision with Resident Profile view
-const [selectedBeneficiaryId, setSelectedBeneficiaryId] = useState('');
 
 
 const [aidLogs, setAidLogs] = useState([]);
 
+useEffect(() => {
+  if (!db) return;
+  let mounted = true;
+  const loadAidLogs = async () => {
+  try {
+    const res = await db.find({
+      selector: { type: 'aid_distribution' },
+      limit: 2000,
+    });
+    const docs = res.docs;
+    if (!mounted) return;
+    setAidLogs((prev) => {
+      const map = new Map();
+      prev.forEach((l) => { if (l._id) map.set(l._id, l); });
+      docs.forEach((d) => map.set(d._id, d));
+      return Array.from(map.values());
+    });
+  } catch (err) {
+    console.error('Failed to load aid logs from PouchDB:', err);
+  }
+};
+  loadAidLogs();
+}, []);
+
+const programAidCount = (prog) =>
+  (aidLogs || []).filter(
+    (log) => log.programId === prog?.id || log.programId === prog?._id
+  ).length;
+
 // ── BARANGAY CLEARANCE (INDIVIDUAL) STATE MANAGEMENT ──
 const [clearanceList, setClearanceList] = useState([]);
 const [clearanceSearch, setClearanceSearch] = useState('');
+const [clearancePage, setClearancePage] = useState(1);
 const [showClearancePrintModal, setShowClearancePrintModal] = useState(false);
 const [selectedClearanceCert, setSelectedClearanceCert] = useState(null);
 
@@ -2940,7 +3315,7 @@ const [editingClearanceId, setEditingClearanceId] = useState(null);
 // Form State matching legacy fields in modern structure
 const [clearanceForm, setClearanceForm] = useState({
   _id: '',
-  clearanceNo: 'BC-2026-0001',
+  clearanceNo: '',
   fullName: '',
   residentId: '',
   rbiId: '',
@@ -2958,6 +3333,7 @@ const [clearanceForm, setClearanceForm] = useState({
   ctcDateIssued: toPHDateString(),
   ctcPlaceIssued: 'Nabua, Camarines Sur',
   hasBlotterRecord: false,
+  blotterReviewNeeded: false,
   selectedResidentId: '',
   includeCtc: false,
   isIssuedByBarangay: true, 
@@ -2974,6 +3350,13 @@ const filteredClearances = clearanceList.filter((rec) => {
   );
 });
 
+const totalClearancePages = Math.max(1, Math.ceil(filteredClearances.length / MASTERLIST_PAGE_SIZE));
+const safeClearancePage = Math.min(clearancePage, totalClearancePages);
+const pagedClearances = filteredClearances.slice(
+  (safeClearancePage - 1) * MASTERLIST_PAGE_SIZE,
+  safeClearancePage * MASTERLIST_PAGE_SIZE
+);
+
 // Fetch Barangay Clearances from PouchDB
 const fetchClearances = async () => {
   try {
@@ -2988,36 +3371,51 @@ const fetchClearances = async () => {
 };
 
 // ── Helper: Kunin ang next ID at i-increment ang sequence (TOTOONG SAVE) ──
+// Retries on write conflict (409) and always checks the number against the
+// locally-known clearances so a duplicate reference is never issued.
 const getNextClearanceSequence = async () => {
-  try {
-    let seqDoc;
+  const year = new Date().getFullYear();
+  const existing = clearanceList.map((c) => c.clearanceNo);
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
     try {
-      seqDoc = await db.get('seq_brgy_clearance');
-    } catch (err) {
-      if (err.name === 'not_found') {
-        seqDoc = { _id: 'seq_brgy_clearance', lastNumber: 0 };
-      } else {
-        throw err;
+      let seqDoc;
+      try {
+        seqDoc = await db.get('seq_brgy_clearance');
+      } catch (err) {
+        if (err.name === 'not_found') {
+          seqDoc = { _id: 'seq_brgy_clearance', lastNumber: 0 };
+        } else {
+          throw err;
+        }
       }
+      const nextNumber = (seqDoc.lastNumber || 0) + 1;
+      await db.put({ ...seqDoc, lastNumber: nextNumber });
+      return nextAvailableClearanceNo(existing, formatClearanceNo(year, nextNumber), year);
+    } catch (err) {
+      if (err && (err.status === 409 || err.name === 'conflict')) continue;
+      console.error('Failed to get next sequence:', err);
+      break;
     }
-    const nextNumber = (seqDoc.lastNumber || 0) + 1;
-    await db.put({ ...seqDoc, lastNumber: nextNumber });
-    return `BC-${new Date().getFullYear()}-${String(nextNumber).padStart(4, '0')}`;
-  } catch (err) {
-    console.error('Failed to get next sequence:', err);
-    return `BC-2026-${String(Date.now()).slice(-4)}`;
   }
+
+  const fallback = formatClearanceNo(year, Date.now() % 10000);
+  return nextAvailableClearanceNo(existing, fallback, year);
 };
 
 // ── Helper: Peek lang (hindi nag-i-increment) para sa preview sa form ──
 const peekNextClearanceNo = async () => {
+  const year = new Date().getFullYear();
+  const existing = clearanceList.map((c) => c.clearanceNo);
   try {
     const seqDoc = await db.get('seq_brgy_clearance');
-    return `BC-${new Date().getFullYear()}-${String((seqDoc.lastNumber || 0) + 1).padStart(4, '0')}`;
+    return nextAvailableClearanceNo(existing, formatClearanceNo(year, (seqDoc.lastNumber || 0) + 1), year);
   } catch (err) {
-    if (err.name === 'not_found') return 'BC-2026-0001';
+    if (err.name === 'not_found') {
+      return nextAvailableClearanceNo(existing, formatClearanceNo(year, 1), year);
+    }
     console.warn('Peek sequence failed:', err);
-    return `BC-2026-${String(clearanceList.length + 1).padStart(4, '0')}`;
+    return nextAvailableClearanceNo(existing, formatClearanceNo(year, clearanceList.length + 1), year);
   }
 };
 
@@ -3025,13 +3423,14 @@ const peekNextClearanceNo = async () => {
 
 // ── Helper: Peek lang (hindi nag-i-increment) para sa preview sa form ──
 const peekNextBusinessSequence = async () => {
+  const existing = businessMasterlist.map((r) => r.bcIdNo);
   try {
     const seqDoc = await db.get('seq_business_clearance');
-    return String((seqDoc.lastNumber || 155) + 1).padStart(4, '0');
+    return nextAvailableBusinessId(existing, String((seqDoc.lastNumber || 155) + 1).padStart(4, '0'));
   } catch (err) {
-    if (err.name === 'not_found') return '0156';
+    if (err.name === 'not_found') return nextAvailableBusinessId(existing, '0156');
     console.warn('Peek business sequence failed:', err);
-    return '0156'; // Safe fallback
+    return nextAvailableBusinessId(existing, '0156'); // Safe fallback
   }
 };
 
@@ -3051,8 +3450,13 @@ const peekNextBusinessSequence = async () => {
     showToast('Please enter the Official Receipt (O.R.) Number.', 'error');
     return;
   }
-  if (!clearanceForm.amtPaid || isNaN(Number(clearanceForm.amtPaid)) || Number(clearanceForm.amtPaid) < 0) {
-    showToast('Please enter a valid Amount Paid / Clearance Fee.', 'error');
+  if (!/^\d{8}$/.test(clearanceForm.orNo.trim())) {
+    showToast('O.R. Number must be exactly 8 digits (e.g. 08605032).', 'error');
+    return;
+  }
+  const amtPaidCheck = parseMoney(clearanceForm.amtPaid, { required: true });
+  if (!amtPaidCheck.ok) {
+    showToast(`Amount Paid / Clearance Fee: ${amtPaidCheck.error}`, 'error');
     return;
   }
   if (clearanceForm.includeCtc) {
@@ -3060,8 +3464,9 @@ const peekNextBusinessSequence = async () => {
       showToast('CTC Number is required when including Community Tax Certificate.', 'error');
       return;
     }
-    if (!clearanceForm.ctcAmtPaid || isNaN(Number(clearanceForm.ctcAmtPaid))) {
-      showToast('Please enter a valid CTC Amount Paid.', 'error');
+    const ctcCheck = parseMoney(clearanceForm.ctcAmtPaid, { required: true });
+    if (!ctcCheck.ok) {
+      showToast(`CTC Amount Paid: ${ctcCheck.error}`, 'error');
       return;
     }
   }
@@ -3069,13 +3474,17 @@ const peekNextBusinessSequence = async () => {
   setIsSavingClearance(true);
   try {
     const isEditing = Boolean(editingClearanceId);
-    const docId = isEditing ? editingClearanceId : `brgy_clearance_${Date.now()}`;
+    const docId = isEditing ? editingClearanceId : collisionSafeId('brgy_clearance_');
     const newClearanceNo = isEditing ? clearanceForm.clearanceNo : await getNextClearanceSequence();
+
+    const issuedDate = clearanceForm.dateIssued || toPHDateString();
+    const derivedExpiry = computeExpiry({ dateIssued: issuedDate, validity: clearanceForm.validity });
 
     const payload = {
       ...clearanceForm,
-      dateIssued: clearanceForm.dateIssued || toPHDateString(),
+      dateIssued: issuedDate,
       clearanceNo: newClearanceNo,
+      status: clearanceForm.status || 'Issued',
       secretary: settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
       captain: settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
       _id: docId,
@@ -3083,6 +3492,7 @@ const peekNextBusinessSequence = async () => {
       updatedAt: new Date().toISOString(),
       createdAt: clearanceForm.createdAt || new Date().toISOString(),
     };
+    if (derivedExpiry) payload.expiryDate = derivedExpiry.toISOString().slice(0, 10);
 
     if (!isEditing) delete payload._rev;
 
@@ -3141,6 +3551,7 @@ const resetClearanceForm = async () => {
     ctcDateIssued: toPHDateString(),
     ctcPlaceIssued: 'Nabua, Camarines Sur',
     hasBlotterRecord: false,
+    blotterReviewNeeded: false,
     selectedResidentId: '',
     includeCtc: false,
     isIssuedByBarangay: true,
@@ -3163,6 +3574,7 @@ const handleEditClearance = (rec) => {
     remarks: rec.remarks || '',
     validity: rec.validity || '(6) Six Months Validity',
     hasBlotterRecord: rec.hasBlotterRecord || false,
+    blotterReviewNeeded: false,
     selectedResidentId: rec.selectedResidentId || '',
     includeCtc: Boolean( rec.includeCtc || rec.ctcNo || rec.ctcAmtPaid ) || false,
     orNo: rec.orNo || '',
@@ -3182,25 +3594,45 @@ const handlePrintClearance = (rec) => {
   setShowClearancePrintModal(true);
 };
 
-
-// ── AUTOMATIC DUPLICATION CHECKER LAYER ──
-useEffect(() => {
-  if (!currentBeneficiaryId) {
-    setDuplicateAlert('');
+// ── NEW STANDARD CERTIFICATE REQUEST SUBMIT ──
+const handleSubmitStandardCert = async () => {
+  if (!standardCertForm.residentId || !standardCertForm.purpose.trim()) {
+    showToast('Please select a resident and enter the purpose.', 'error');
     return;
   }
-  const alreadyReceived = aidLogs.some(log => 
-    log.residentId === currentBeneficiaryId && 
-    log.programId === currentProgramId &&
-    log.status !== 'Duplicate');
-  
-  if (alreadyReceived) {
-    const targetResident = residentsList.find(r => r.id === currentBeneficiaryId);
-    setDuplicateAlert(`Duplicate Alert: ${targetResident ? targetResident.name : 'Resident'} has already received aid under this program. Entry blocked.`);
-  } else {
-    setDuplicateAlert('');
+
+  setIsSavingStandardCert(true);
+  try {
+    const resident = residentsList.find((r) => r.id === standardCertForm.residentId);
+    const now = new Date().toISOString();
+
+    const payload = {
+      _id: `certificate_request_${Date.now()}`,
+      type: 'certificate_request',
+      firstName: resident?.firstName || resident?.name?.split(' ')[0] || '',
+      lastName: resident?.lastName || resident?.name?.split(' ').slice(1).join(' ') || '',
+      residentName: resident?.name || '',
+      certificateType: formatCertType(standardCertForm.certificateType),
+      certType: standardCertForm.certificateType,
+      purpose: standardCertForm.purpose,
+      purok: resident?.purok || 'Purok 1',
+      status: 'Under Review',
+      step: 1,
+      createdAt: now,
+      updatedAt: now,
+    };
+
+    await db.put(payload);
+    showToast('Certificate request submitted successfully!', 'success');
+    setStandardCertForm({ residentId: '', certificateType: 'indigency', purpose: '' });
+    nav('cert-req');
+  } catch (err) {
+    console.error('Failed to save certificate request:', err);
+    showToast('Failed to save request.', 'error');
+  } finally {
+    setIsSavingStandardCert(false);
   }
-}, [currentBeneficiaryId, aidLogs, residentsList, currentProgramId]);
+};
 
 // ── TRANSACTION SUBMIT LOGIC LAYER ──
 const handleLogAidEntry = async () => {
@@ -3289,19 +3721,27 @@ const handleEncodeSubmit = async (e) => {
     showToast('Pumili muna ng Active Relief Program.', 'error');
     return;
   }
-  if (!selectedBeneficiaryId) {
+  
+  if (!selectedResidentId) {
     showToast('Pumili muna ng Beneficiary Resident.', 'error');
     return;
   }
 
   const targetProg = programsList.find((p) => p.id === selectedProgramId);
-  const targetResident = residentsList.find((r) => r.id === selectedBeneficiaryId);
-  const residentName = targetResident ? targetResident.name : 'Unknown Resident';
+  const targetResident = residentsList.find((r) => r.id === selectedResidentId);
+  
+  if (!targetResident) {
+    showToast('Resident not found in list.', 'error');
+    return;
+  }
+  
+  const residentName = targetResident.name || 'Unknown Resident';
 
-  // 1. Clean Duplicate Beneficiary Check
+  // 1. Duplicate Check
   const isDuplicate = aidLogs.some(
-    (log) => log.programId === selectedProgramId && log.residentId === selectedBeneficiaryId
+    (log) => log.programId === selectedProgramId && log.residentId === selectedResidentId
   );
+  
   if (isDuplicate) {
     const errorMsg = `⚠️ Si ${residentName} ay nakatanggap na ng ayuda sa ilalim ng ${targetProg?.title || 'programang ito'}.`;
     if (typeof setDuplicateAlert === 'function') {
@@ -3311,51 +3751,48 @@ const handleEncodeSubmit = async (e) => {
     }
     return;
   }
+  
   if (typeof setDuplicateAlert === 'function') setDuplicateAlert('');
 
-  // 2. Capacity Limit Check
-  if (targetProg && (targetProg.current || 0) >= (targetProg.target || 1)) {
-    showToast(`⚠️ Puno na ang capacity ng ${targetProg.title} (${targetProg.current}/${targetProg.target}).`, 'error');
+  // 2. Capacity Check (galing sa aidLogs, hindi prog.current)
+  const actualCurrent = aidLogs.filter((log) => log.programId === selectedProgramId).length;
+  if (targetProg && actualCurrent >= (targetProg.target || 1)) {
+    showToast(`⚠️ Puno na ang capacity ng ${targetProg.title} (${actualCurrent}/${targetProg.target}).`, 'error');
     return;
   }
 
-  // 3. Increment Program Counter
-  const updatedPrograms = programsList.map((prog) => {
-    if (prog.id === selectedProgramId) {
-      return { ...prog, current: Math.min(prog.target, (prog.current || 0) + 1) };
-    }
-    return prog;
-  });
-  setProgramsList(updatedPrograms);
-
-  // 4. Buuin ang Bagong Log Record
+  // 3. Create Log Entry
   const now = new Date();
   const timeStamp = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const newLog = {
-  _id: `aid_${generateUUID()}`,
-  id: `LOG-${Date.now().toString(36).slice(-4).toUpperCase()}`,
-    residentId: selectedBeneficiaryId,
+    _id: `aid_${generateUUID()}`,
+    id: `LOG-${Date.now().toString(36).slice(-4).toUpperCase()}`,
+    type: 'aid_distribution',
+    residentId: selectedResidentId,
     residentName: residentName,
     programId: selectedProgramId,
     aid: aidType || 'Relief Goods',
+    qty: quantity || 1,
+    remarks: remarks || '',
     officer: typeof displayName !== 'undefined' ? displayName.split(' ')[0] : 'Mark Gian Cortero',
     time: timeStamp,
     status: 'OK',
   };
 
-  // 5. Update Log State
+  // 4. Update Local State
   setAidLogs((prev) => [newLog, ...prev]);
 
-  // 6. Persist aid log to PouchDB + Audit Trace
+  // 5. Persist to PouchDB
   try {
     await db.put({
-      _id: newLog.id,
+      _id: newLog._id,
       type: 'aid_distribution',
       ...newLog,
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     });
-    
+
+    // Audit log
     try {
       await createAuditLog({
         action: 'CREATE_AID_DISTRIBUTION',
@@ -3367,24 +3804,28 @@ const handleEncodeSubmit = async (e) => {
     } catch (auditErr) {
       console.warn('Audit log failed for Aid Distribution:', auditErr);
     }
-    
+
     if (typeof forceSyncToRemote === 'function') {
       await forceSyncToRemote();
     }
+
+    // 6. Reset Form
+    setSelectedProgramId('');
+    setSelectedResidentId('');
+    setResidentSearch('');
+    setAidType('');
+    setQuantity(1);
+    setRemarks('');
+    setDuplicateAlert('');
+    setFormAttempted(false);
+
+    if (typeof setSuccessMessage === 'function') {
+      setSuccessMessage(`Matagumpay na na-record ang ayuda para kay ${residentName}!`);
+      setTimeout(() => setSuccessMessage(''), 4000);
+    }
   } catch (dbErr) {
     console.error('Failed to persist aid log to PouchDB:', dbErr);
-  }
-
-  // 7. Reset Inputs & Success Notification
-  setSelectedProgramId('');
-  setSelectedBeneficiaryId('');
-  setResidentSearch('');
-  setQuantity(1);
-  setRemarks('');
-  
-  if (typeof setSuccessMessage === 'function') {
-    setSuccessMessage(`Matagumpay na na-record ang ayuda para kay ${residentName}!`);
-    setTimeout(() => setSuccessMessage(''), 4000);
+    showToast('Hindi na-save ang aid entry sa offline database. Subukan muli.', 'error');
   }
 };
 
@@ -3392,6 +3833,25 @@ const handleEncodeSubmit = async (e) => {
 const [viewingHouseholdId, setViewingHouseholdId] = useState(null); 
 const [viewingResidentId, setViewingResidentId] = useState(null);
 const [selectedResidentId, setSelectedResidentId] = useState(null);
+
+// ── AUTOMATIC DUPLICATION CHECKER LAYER (placed after selectedResidentId declaration) ──
+useEffect(() => {
+  if (!selectedProgramId || !selectedResidentId) {
+    setDuplicateAlert('');
+    return;
+  }
+  const alreadyReceived = aidLogs.some(log => 
+    log.residentId === selectedResidentId && 
+    log.programId === selectedProgramId &&
+    log.status !== 'Duplicate');
+  
+  if (alreadyReceived) {
+    const targetResident = residentsList.find(r => r.id === selectedResidentId);
+    setDuplicateAlert(`Duplicate Alert: ${targetResident ? targetResident.name : 'Resident'} has already received aid under this program. Entry blocked.`);
+  } else {
+    setDuplicateAlert('');
+  }
+}, [selectedResidentId, selectedProgramId, aidLogs, residentsList]);
 
 const [residentSearch, setResidentSearch] = useState('');
 
@@ -3582,55 +4042,35 @@ const [blotterForm, setBlotterForm] = useState({
   useEffect(() => {
     if (!db) return;
     const fetchBlotters = async () => {
-      setIsBlottersLoading(true); // ✅ Set to true BEFORE fetch
-      try {
-        const res = await db.allDocs({ include_docs: true });
-        const blotterDocs = res.rows
-          .map((row) => row.doc)
-          .filter((doc) => {
-            if (!doc) return false;
-            if (doc.docType === 'certificate' || doc.type === 'certificate_request') return false;
-            const isExplicitBlotter = doc.docType === 'blotter' || doc.type === 'blotter' || doc.type === 'blotter_report';
-            const hasBlotterRef = Boolean(
-              doc.trackingNo?.startsWith('BLT') ||
-              doc.caseNo?.startsWith('BLT') ||
-              doc.refNumber?.startsWith('BLT') ||
-              doc.id?.startsWith('BLT')
-            );
-            return isExplicitBlotter || hasBlotterRef;
-          })
-          .map(mapDocToBlotter)
-          .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
-        setBlotterList(blotterDocs);
-      } catch (err) {
-        console.error('Error fetching blotter records from PouchDB:', err);
-      } finally {
-        setIsBlottersLoading(false); // ✅ Set to false AFTER fetch
-      }
-    };
-    
-    fetchBlotters();
-    
-    const changes = db.changes({ live: true, since: 'now', include_docs: true });
-    changes.on('change', (changeInfo) => {
-      const doc = changeInfo.doc;
-      const isBlotter = doc && (
-        doc.docType === 'blotter' ||
-        doc.type === 'blotter' ||
-        doc.type === 'blotter_report' ||
-        doc.trackingNo?.startsWith('BLT') ||
-        doc.caseNo?.startsWith('BLT')
-      );
-      if (isBlotter || changeInfo.deleted) {
-        fetchBlotters();
-      }
+  setIsBlottersLoading(true);
+  try {
+    // ✅ Mango indexed query
+    const res = await db.find({
+      selector: {
+        $or: [
+          { type: 'blotter' },
+          { type: 'blotter_record' },
+          { type: 'blotter_report' },
+          { docType: 'blotter' },
+          { _id: { $gte: 'BLT-', $lt: 'BLT-\uffff' } }, // ✅ Para sa legacy docs na may BLT- prefix
+        ],
+      },
+      limit: 1000,
     });
-    changes.on('error', (err) => {
-      console.error('❌ Admin blotter changes listener error:', err);
-    });
-    return () => {
-      changes.cancel();
-    };
+    const blotterDocs = res.docs
+      .map(mapDocToBlotter)
+      .filter(Boolean)
+      .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+    setBlotterList(blotterDocs);
+  } catch (err) {
+    console.error('Error fetching blotter records from PouchDB:', err);
+  } finally {
+    setIsBlottersLoading(false);
+  }
+};
+    
+    const timer = setTimeout(fetchBlotters, 500);
+  return () => clearTimeout(timer);
   }, [db]);
 
 const [complainantQuery, setComplainantQuery] = useState('');
@@ -3999,8 +4439,21 @@ useEffect(() => {
   let timer;
   const expire = () => {
     localStorage.removeItem('bustrac_user');
+    localStorage.removeItem('bustrac_role');
+    localStorage.removeItem('bustrac_offline_auth');
+    localStorage.removeItem('bustrac_loginTime');
     sessionStorage.removeItem('bustrac_user');
-    alert('Session expired dahil sa inactivity. Mag-login ulit.');
+    // Clear the online session token on idle expiry. The server session
+    // is not revoked (no logout endpoint in this phase); the user must
+    // re-authenticate to obtain a new token.
+    clearToken();
+    Swal.fire({
+      icon: 'info',
+      title: 'Ang iyong session ay nag-expire dahil sa inactivity.',
+      text: 'Mag-login ulit upang magpatuloy.',
+      timer: 3000,
+      showConfirmButton: false,
+    });
     navigate('/login');
   };
   const reset = () => {
@@ -4267,26 +4720,9 @@ const loadAnnouncements = useCallback(async () => {
   }
 }, [INITIAL_ANNOUNCEMENTS]);
 
-// Live synchronization listener for Announcements
 useEffect(() => {
-  loadAnnouncements();
-  if (!db) return;
-  const changes = db.changes({
-    since: 'now',
-    live: true,
-    include_docs: true
-  }).on('change', (change) => {
-    if (change.deleted) {
-      setAnnouncementsList((prev) => prev.filter((a) => (a._id || a.id) !== change.id));
-    } else if (change.doc?.type === 'announcement') {
-      setAnnouncementsList((prev) => {
-        const filtered = prev.filter((a) => (a._id || a.id) !== change.doc._id);
-        return [change.doc, ...filtered];
-      });
-    }
-  }).on('error', (err) => console.error('Announcement db changes error:', err));
-
-  return () => changes.cancel();
+  const timer = setTimeout(loadAnnouncements, 500);
+  return () => clearTimeout(timer);
 }, [loadAnnouncements]);
 
 const handleZoneClick = useCallback((zoneName) => {
@@ -4660,57 +5096,63 @@ const handleOpenFeedbackDetails = (fb) => {
   // ════════════════════════════════════════════════════════════════
   // 4. EFFECT #2: FEEDBACK & COMPLAINTS POUCHDB LISTENER
   // ════════════════════════════════════════════════════════════════
-  useEffect(() => {
-    if (!db) return;
+    useEffect(() => {
+  if (!db) return;
 
-    // Initial Load mula sa PouchDB
-    const fetchFeedbacks = async () => {
-      try {
-        const res = await db.allDocs({ include_docs: true });
-        const dbFeedbacks = res.rows
-          .map((row) => row.doc)
-          .filter(
-            (doc) => doc && (doc.type === 'feedback' || doc.type === 'feedback_report')
-          )
-          .map(mapDocToFeedback);
-
-        setFeedbackList((prev) => {
-          const existingDbIds = new Set(dbFeedbacks.map((f) => f._id));
-          const filteredMock = prev.filter(
-            (item) => !item._id && !existingDbIds.has(item.id)
-          );
-          return [...dbFeedbacks, ...filteredMock];
-        });
-      } catch (err) {
-        console.error('Error fetching feedbacks from PouchDB:', err);
-      }
-    };
-
-    fetchFeedbacks();
-
-    // Real-time Live Changes Listener
-    const changes = db
-      .changes({ since: 'now', live: true, include_docs: true })
-      .on('change', (change) => {
-        if (
-          change.doc &&
-          (change.doc.type === 'feedback' || change.doc.type === 'feedback_report')
-        ) {
-          const updatedItem = mapDocToFeedback(change.doc);
-          setFeedbackList((prev) => {
-            const filtered = prev.filter(
-              (f) => f._id !== change.doc._id && f.id !== change.doc.refNumber
-            );
-            return [updatedItem, ...filtered];
-          });
-        }
-      })
-      .on('error', (err) => {
-        console.error('Feedback PouchDB change listener error:', err);
+  // Initial Load mula sa PouchDB
+  const fetchFeedbacks = async () => {
+    try {
+      const res = await db.find({
+        selector: {
+          $or: [
+            { type: 'feedback' },
+            { type: 'feedback_report' },
+          ],
+        },
+        limit: 500,
       });
+      const dbFeedbacks = res.docs.map(mapDocToFeedback);
 
-    return () => changes.cancel();
-  }, [db]);
+      setFeedbackList((prev) => {
+        const existingDbIds = new Set(dbFeedbacks.map((f) => f._id));
+        const filteredMock = prev.filter(
+          (item) => !item._id && !existingDbIds.has(item.id)
+        );
+        return [...dbFeedbacks, ...filteredMock];
+      });
+    } catch (err) {
+      console.error('Error fetching feedbacks from PouchDB:', err);
+    }
+  };
+
+  const initialFetchTimer = setTimeout(fetchFeedbacks, 500);
+
+  // ✅ Real-time Live Changes Listener — ISANG .changes() LANG
+  const changes = db
+    .changes({ since: 'now', live: true, include_docs: true })
+    .on('change', (change) => {
+      if (
+        change.doc &&
+        (change.doc.type === 'feedback' || change.doc.type === 'feedback_report')
+      ) {
+        const updatedItem = mapDocToFeedback(change.doc);
+        setFeedbackList((prev) => {
+          const filtered = prev.filter(
+            (f) => f._id !== change.doc._id && f.id !== change.doc.refNumber
+          );
+          return [updatedItem, ...filtered];
+        });
+      }
+    })
+    .on('error', (err) => {
+      console.error('Feedback PouchDB change listener error:', err);
+    });
+
+  return () => {
+    clearTimeout(initialFetchTimer);   // ✅ DAGDAG — i-clear ang timer
+    changes.cancel();
+  };
+}, [db]);
 
 const handleSubmitFeedbackAction = async (e) => {
   e.preventDefault();
@@ -4927,14 +5369,6 @@ const fetchArchivedResidents = async () => {
     console.error('Error fetching archived residents:', err);
   }
 }
-
-// Siguraduhing tumatawag ito kapag nagbago ang viewMode
-useEffect(() => {
-  fetchResidents();
-}, [viewMode]); 
-
-
-
 // Automatically scan for conflicts when mounting or navigating to conflict screen
 useEffect(() => {
   if (screen === 'conflicts') {
@@ -4952,11 +5386,15 @@ const handleKeepVersionA = async (conflict) => {
     const diffSummary = Array.isArray(conflict.diff) && conflict.diff.length > 0
   ? ` (${conflict.diff.map(d => d.label).join(', ')})`
   : '';
-await createAuditLog({
-  action: 'CONFLICT_RESOLVED',
+await logConflictResolution({
+  docId: conflict.docId,
   module: conflict.moduleLabel || 'CONFLICTS',
-  recordId: conflict.docId,
-  details: `Conflict resolved for ${conflict.residentName}. Selected: Version A${diffSummary}`
+  strategy: 'keep-a',
+  winnerRev: conflict.winningRev,
+  loserRevs: [conflict.conflictRev],
+  mergedFields: conflict.changedFields || [],
+  residentName: conflict.residentName,
+  details: `Retained Version A for ${conflict.residentName}${diffSummary}`,
 });
     
     // Refresh UI
@@ -5024,11 +5462,24 @@ const handleResolveAllConflicts = async () => {
             // Add resolution markers
             cleanPayload._conflictResolved = true;
             cleanPayload.updatedAt = new Date().toISOString();
-            
-            // Put the clean document. This creates a new revision (e.g., 160-xxx) 
-            // that is a definitive child of the winning revision, cementing it as the truth.
+
             await db.put(cleanPayload);
             successCount++;
+            try {
+              const conflictMeta = conflictsList.find((c) => c.docId === docId) || {};
+              await logConflictResolution({
+                docId,
+                module: conflictMeta.moduleLabel || 'CONFLICTS',
+                strategy: 'keep-local',
+                winnerRev: conflictMeta.winningRev || currentDoc._rev,
+                loserRevs: conflictMeta.conflictRev ? [conflictMeta.conflictRev] : [],
+                mergedFields: conflictMeta.changedFields || [],
+                residentName: conflictMeta.residentName || '',
+                details: `Bulk resolution kept local version for ${conflictMeta.residentName || docId}`,
+              });
+            } catch (auditErr) {
+              console.warn('Bulk conflict audit log failed:', auditErr);
+            }
           } catch (putErr) {
             console.warn(`⚠️ Failed to update winning doc ${docId}:`, putErr);
             // If it's a 409, the background sync might have already updated it. 
@@ -5118,11 +5569,15 @@ const handleKeepVersionB = async (conflict) => {
     const diffSummary = Array.isArray(conflict.diff) && conflict.diff.length > 0
   ? ` (${conflict.diff.map(d => d.label).join(', ')})`
   : '';
-await createAuditLog({
-  action: 'CONFLICT_RESOLVED',
+await logConflictResolution({
+  docId: conflict.docId,
   module: conflict.moduleLabel || 'CONFLICTS',
-  recordId: conflict.docId,
-  details: `Conflict resolved for ${conflict.residentName}. Selected: Version B${diffSummary}`
+  strategy: 'keep-b',
+  winnerRev: conflict.conflictRev,
+  loserRevs: [conflict.winningRev],
+  mergedFields: conflict.changedFields || [],
+  residentName: conflict.residentName,
+  details: `Retained Version B for ${conflict.residentName}${diffSummary}`,
 });
     
     // Refresh UI
@@ -5154,11 +5609,24 @@ const handleKeepBoth = async (conflict) => {
     await db.remove(conflict.docId, conflict.conflictRev);
     showToast('✓ Conflict resolved. Saved Version B as a distinct record.', 'success');
     
-await createAuditLog({
-  action: 'CONFLICT_RESOLVED',
+await logConflictResolution({
+  docId: conflict.docId,
   module: conflict.moduleLabel || 'CONFLICTS',
-  recordId: conflict.docId,
-  details: `Conflict split for ${conflict.residentName}. Saved Version B as distinct record`,
+  strategy: 'keep-both',
+  winnerRev: conflict.winningRev,
+  loserRevs: [],
+  mergedFields: conflict.changedFields || [],
+  residentName: conflict.residentName,
+  details: `Split conflict for ${conflict.residentName}; Version B (rev ${conflict.conflictRev}) preserved as distinct record (${newDocId})`,
+  meta: {
+    conflict: true,
+    strategy: 'keep-both',
+    winnerRev: conflict.winningRev,
+    loserRevs: [],
+    mergedFields: conflict.changedFields || [],
+    splitId: newDocId,
+    originalConflictRev: conflict.conflictRev,
+  },
 });
     
     fetchDatabaseConflicts();
@@ -5256,17 +5724,31 @@ useEffect(() => {
   };
   loadSettings();
 }, []);
-const pendingRequestsCount = (issuedCertificates || []).filter(
-  (c) => c.status === 'Under Review' || c.status === 'Pending' || c.step === 1
-).length;
 
-const pendingBlotterCount = blotterList.filter(
-  (b) => b.status === 'Open' || b.status === 'Under Mediation'
-).length;
+const pendingRequestsCount = useMemo(() => {
+  return (issuedCertificates || []).filter((c) => {
+    const status = (c.status || '').toLowerCase();
+    if (['issued', 'released', 'cancelled', 'needs revision', 'returned', 'denied', 'rejected'].includes(status)) return false;
+    const step = Number(c.step || 1);
+    if (step >= 2 && step <= 4) return true;
+    if (step === 1) {
+      return ['under review', 'proceeding', 'for approval', 'approved', 'pending', 'ready'].includes(status);
+    }
+    return false;
+  }).length;
+}, [issuedCertificates]);
 
-const activeFeedbackCount = feedbackList.filter(
-  (f) => f.status === 'Pending' || f.status === 'Under Review'
-).length;
+const pendingBlotterCount = useMemo(() => {
+  return blotterList.filter(
+    (b) => b.status === 'Open' || b.status === 'Under Mediation'
+  ).length;
+}, [blotterList]);
+
+const activeFeedbackCount = useMemo(() => {
+  return feedbackList.filter(
+    (f) => f.status === 'Pending' || f.status === 'Under Review'
+  ).length;
+}, [feedbackList]);
 
 const handleSelectCtc = (ctc) => {
   setIssuanceMeta(prev => ({
@@ -5591,7 +6073,7 @@ const handleSaveCtc = async (e) => {
 // ── BUSINESS CLEARANCE FORM STATE ──
 const [businessForm, setBusinessForm] = useState({
   // Applicant Information
-  bcIdNo: '0156',
+  bcIdNo: '',
   lastName: '',
   firstName: '',
   middleName: '',
@@ -5629,12 +6111,18 @@ const [businessForm, setBusinessForm] = useState({
   // Employee Masterlist
   employeeCount: 0,
   employeeMasterlistName: '',
+
+  // Issuance metadata
+  status: '',
+  clearanceIssueDate: '',
+  expiryDate: '',
 });
 
 
 const [businessTab, setBusinessTab] = useState('page1');
 const [businessMasterlist, setBusinessMasterlist] = useState([]);
 const [businessClearanceSearch, setBusinessClearanceSearch] = useState('');
+const [businessPage, setBusinessPage] = useState(1);
 
 const filteredBusinessClearances = businessMasterlist.filter((record) => {
   const query = businessClearanceSearch.toLowerCase().trim();
@@ -5650,6 +6138,13 @@ const filteredBusinessClearances = businessMasterlist.filter((record) => {
     String(record.orNo || '').toLowerCase().includes(query)
   );
 });
+
+const totalBusinessPages = Math.max(1, Math.ceil(filteredBusinessClearances.length / MASTERLIST_PAGE_SIZE));
+const safeBusinessPage = Math.min(businessPage, totalBusinessPages);
+const pagedBusinessClearances = filteredBusinessClearances.slice(
+  (safeBusinessPage - 1) * MASTERLIST_PAGE_SIZE,
+  safeBusinessPage * MASTERLIST_PAGE_SIZE
+);
 
 const fetchBusinessClearances = async () => {
   if (typeof db === 'undefined') return;
@@ -5676,35 +6171,35 @@ useEffect(() => {
 const handleSaveBusinessClearance = async (e) => {
   e.preventDefault();
 
-  if (
-    !businessForm.businessName?.trim() ||
-    !businessForm.lastName?.trim() ||
-    !businessForm.firstName?.trim()
-  ) {
-    showToast(
-      'Please complete the required Applicant and Business Name fields.',
-      'error'
-    );
-    setBusinessTab('page1');
+  // Validate in the save handler (not only the UI) so hidden-page fields and
+  // programmatic submits are still checked. Collect all errors, then focus the
+  // first invalid field on the right page.
+  const errors = {};
+  if (!businessForm.lastName?.trim()) errors.lastName = 'Last name is required.';
+  if (!businessForm.firstName?.trim()) errors.firstName = 'First name is required.';
+  if (!businessForm.businessName?.trim()) errors.businessName = 'Business name is required.';
+  if (!/^\d{4,12}$/.test(String(businessForm.orNo || '').trim())) {
+    errors.orNo = 'O.R. Number must be 4 to 12 digits (e.g. 9876543).';
+  }
+  const feeCheck = parseMoney(businessForm.clearanceFee, { required: true });
+  if (!feeCheck.ok) errors.clearanceFee = feeCheck.error;
+  const garbageCheck = parseMoney(businessForm.garbageFee);
+  if (!garbageCheck.ok) errors.garbageFee = garbageCheck.error;
+
+  if (Object.keys(errors).length > 0) {
+    setBusinessErrors(errors);
+    const firstInvalid = ['lastName', 'firstName', 'businessName', 'orNo', 'clearanceFee', 'garbageFee']
+      .find((field) => errors[field]);
+    const targetTab = (errors.lastName || errors.firstName || errors.businessName) ? 'page1' : 'page2';
+    setBusinessTab(targetTab);
+    showToast('Please complete the highlighted fields.', 'error');
+    requestAnimationFrame(() => {
+      const el = businessFieldRefs.current[firstInvalid];
+      if (el && typeof el.focus === 'function') el.focus();
+    });
     return;
   }
-
-  const hasOrNo =
-    businessForm.orNo &&
-    String(businessForm.orNo).trim().length > 0;
-
-  const hasFee =
-    businessForm.clearanceFee !== undefined &&
-    String(businessForm.clearanceFee).trim().length > 0;
-
-  if (!hasOrNo || !hasFee) {
-    showToast(
-      'Please complete the O.R. Number and Clearance Fee on Page 2.',
-      'error'
-    );
-    setBusinessTab('page2');
-    return;
-  }
+  setBusinessErrors({});
 
   setIsSavingBusiness(true);
 
@@ -5712,7 +6207,7 @@ const handleSaveBusinessClearance = async (e) => {
     const isEditing = Boolean(businessForm._id);
     const docId = isEditing
       ? businessForm._id
-      : `bus_clearance_${Date.now()}`;
+      : collisionSafeId('bus_clearance_');
 
     const newBcIdNo = isEditing
       ? businessForm.bcIdNo
@@ -5723,14 +6218,25 @@ const handleSaveBusinessClearance = async (e) => {
       .trim()
       .toUpperCase();
 
+    const issueDate = businessForm.orDateIssued || toPHDateString();
+    const parsedIssue = new Date(issueDate);
+    const issueYear = Number.isNaN(parsedIssue.getTime())
+      ? new Date().getFullYear()
+      : parsedIssue.getFullYear();
+
     const payload = {
       ...businessForm,
       ownerName: formattedOwnerName,
       _id: docId,
       bcIdNo: newBcIdNo,
       type: 'business_clearance',
-      clearanceFee: Number(businessForm.clearanceFee || 0).toFixed(2),
-      garbageFee: Number(businessForm.garbageFee || 0).toFixed(2),
+      status: businessForm.status || 'Issued',
+      dateIssued: issueDate,
+      clearanceIssueDate: businessForm.clearanceIssueDate || toPHDateString(),
+      clearanceYear: String(issueYear),
+      expiryDate: `${issueYear}-12-31`,
+      clearanceFee: feeCheck.value.toFixed(2),
+      garbageFee: (garbageCheck.value ?? 0).toFixed(2),
       updatedAt: new Date().toISOString(),
       createdAt: businessForm.createdAt || new Date().toISOString(),
     };
@@ -5750,6 +6256,8 @@ const handleSaveBusinessClearance = async (e) => {
       details: `${isEditing ? 'Updated' : 'Created'} Business Clearance ${newBcIdNo} for ${businessForm.businessName}`,
     });
 
+    await fetchBusinessClearances();
+
     showToast(
       isEditing
         ? 'Business Clearance updated successfully!'
@@ -5764,6 +6272,72 @@ const handleSaveBusinessClearance = async (e) => {
     console.error('Failed to save/update Business Clearance:', err);
     showToast(
       `Error saving record: ${err.message || 'Database error'}`,
+      'error'
+    );
+  } finally {
+    setIsSavingBusiness(false);
+  }
+};
+
+// ── POUCHDB SAVE HANDLER: DRAFT (no O.R. / fee required, not yet issued) ──
+const handleSaveBusinessDraft = async () => {
+  const errors = {};
+  if (!businessForm.lastName?.trim()) errors.lastName = 'Last name is required.';
+  if (!businessForm.firstName?.trim()) errors.firstName = 'First name is required.';
+  if (!businessForm.businessName?.trim()) errors.businessName = 'Business name is required.';
+
+  if (Object.keys(errors).length > 0) {
+    setBusinessErrors(errors);
+    const firstInvalid = ['lastName', 'firstName', 'businessName'].find((field) => errors[field]);
+    setBusinessTab('page1');
+    showToast('Please complete the highlighted fields before saving a draft.', 'error');
+    requestAnimationFrame(() => {
+      const el = businessFieldRefs.current[firstInvalid];
+      if (el && typeof el.focus === 'function') el.focus();
+    });
+    return;
+  }
+  setBusinessErrors({});
+
+  setIsSavingBusiness(true);
+  try {
+    const isEditing = Boolean(businessForm._id);
+    const docId = isEditing ? businessForm._id : collisionSafeId('bus_clearance_');
+
+    const formattedOwnerName = `${businessForm.lastName || ''}, ${businessForm.firstName || ''} ${businessForm.middleName || ''}`
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toUpperCase();
+
+    const payload = {
+      ...businessForm,
+      ownerName: formattedOwnerName,
+      _id: docId,
+      bcIdNo: businessForm.bcIdNo || '',
+      type: 'business_clearance',
+      status: 'Draft',
+      updatedAt: new Date().toISOString(),
+      createdAt: businessForm.createdAt || new Date().toISOString(),
+    };
+
+    if (!isEditing) delete payload._rev;
+
+    await db.put(payload);
+
+    await createAuditLog({
+      action: isEditing ? 'UPDATE_BUSINESS_CLEARANCE' : 'CREATE_BUSINESS_CLEARANCE',
+      module: 'BUSINESS_CLEARANCE',
+      recordId: payload.bcIdNo || 'DRAFT',
+      details: `Saved Business Clearance DRAFT for ${businessForm.businessName}`,
+    });
+
+    await fetchBusinessClearances();
+
+    showToast('Draft saved. It will not show as valid until issued with an O.R.', 'success');
+  } catch (err) {
+    console.error('Failed to save Business Clearance draft:', err);
+    showToast(
+      `Error saving draft: ${err.message || 'Database error'}`,
       'error'
     );
   } finally {
@@ -5856,6 +6430,7 @@ const handleEditBusinessClearance = (record) => {
 
 // ── RESET BUSINESS CLEARANCE FORM ──
 const resetBusinessForm = async (skipConfirm = false) => {
+  setBusinessErrors({});
   if (
     !skipConfirm &&
     (
@@ -6144,8 +6719,9 @@ const filteredFeedback = feedbackList
   }, [db]);
 
   useEffect(() => {
-    fetchUsers();
-  }, [fetchUsers]);
+  const timer = setTimeout(fetchUsers, 1500);
+  return () => clearTimeout(timer);
+}, [fetchUsers]);
 
   const filteredUsers = useMemo(() => {
     return (usersList || []).filter((u) => {
@@ -6193,8 +6769,9 @@ const filteredFeedback = feedbackList
   }, [db]);
 
   useEffect(() => {
-    fetchAccountRequests();
-  }, [fetchAccountRequests]);
+  const timer = setTimeout(fetchAccountRequests, 1500);
+  return () => clearTimeout(timer);
+}, [fetchAccountRequests]);
 
   // ── HANDLE APPROVE RESIDENT ACCOUNT REQUEST (CONTROLLED REGISTRY LINKING) ──
   const handleApproveRequest = async (requestDoc) => {
@@ -6776,6 +7353,7 @@ const handleRejectRequest = async (requestId) => {
 };
 
 const [generatingReport, setGeneratingReport] = useState(null);
+const [reportFilters, setReportFilters] = useState({})
 const handleGenerateReport = async (module) => {
   const today = new Date().toLocaleDateString('en-PH', {
     year: 'numeric',
@@ -7045,7 +7623,39 @@ const handleGenerateReport = async (module) => {
         );
         break;
       }
-
+      case 'voters': {
+  const voters = (residentsList || []).filter((r) => {
+    const voterVal = String(r.voter ?? '').toLowerCase();
+    const statusVal = String(r.voterStatus ?? '').toLowerCase();
+    return (
+      r.voter === true ||
+      voterVal === 'yes' ||
+      voterVal === 'true' ||
+      statusVal === 'registered' ||
+      statusVal === 'voter'
+    );
+  });
+  const rows = voters.slice(0, 50).map((r) => [
+    r.id || r._id || '—',
+    r.name || `${r.lastName || ''}, ${r.firstName || ''} ${r.middleName || ''}`.trim() || '—',
+    r.address || r.purok || '—',
+    r.purok || '—',
+    r.barangay || (r.isBarangayResident === false
+      ? (r.otherBarangay || r.addressOutsideBarangay || 'Other Barangay')
+      : 'Bustrac'),
+    r.voterStatus || (r.voter ? 'Registered' : 'Non-Voter'),
+    r.precinctNo || r.precinct || '—',
+    r.votingLocation || r.votingPlace || '—',
+    r.contact || r.contactNo || r.phone || '—',
+  ]);
+  openPrintWindow(
+    'Voter List Report',
+    ['Resident ID', 'Full Name', 'Address', 'Purok', 'Barangay', 'Voter Status', 'Precinct No.', 'Voting Location', 'Contact'],
+    rows,
+    `Total Registered Voters: ${voters.length}`
+  );
+  break;
+}
       default:
         showToast('Unknown report module.', 'error');
     }
@@ -7057,7 +7667,7 @@ const handleGenerateReport = async (module) => {
   }
 };
 
-const handleGenerateExcelReport = async (moduleType) => {
+const handleGenerateExcelReport = async (moduleType, selectedFilter = 'All') => {
   let exportData = [];
   const currentDate = new Date().toISOString().split('T')[0];
   let fileName = `Barangay_Bustrac_${moduleType}_${currentDate}.xlsx`;
@@ -7075,6 +7685,35 @@ const handleGenerateExcelReport = async (moduleType) => {
       }));
       break;
 
+    case 'voters':
+      exportData = (residentsList || [])
+        .filter(r => {
+          const voterVal = String(r.voter ?? '').toLowerCase();
+          const statusVal = String(r.voterStatus ?? '').toLowerCase();
+          return (
+            r.voter === true ||
+            voterVal === 'yes' ||
+            voterVal === 'true' ||
+            statusVal === 'registered' ||
+            statusVal === 'voter'
+          );
+        })
+        .map(r => ({
+          'Resident ID': r.id || r._id || 'N/A',
+          'Full Name': r.name || `${r.lastName || ''}, ${r.firstName || ''} ${r.middleName || ''}`.trim() || 'N/A',
+          'Address': r.address || r.purok || 'N/A',
+          'Purok / Zone': r.purok || 'N/A',
+          'Barangay': r.barangay || (r.isBarangayResident === false
+            ? r.otherBarangay || r.addressOutsideBarangay || 'Other Barangay'
+            : 'Bustrac'),
+          'Voter Status': r.voterStatus || (r.voter ? 'Registered' : 'Non-Voter'),
+          'Precinct No.': r.precinctNo || r.precinct || 'N/A',
+          'Voting Location': r.votingLocation || r.votingPlace || 'N/A',
+          'Contact Number': r.contact || r.contactNo || r.phone || 'N/A',
+        }));
+      fileName = `Barangay_Bustrac_Voter_List_${currentDate}.xlsx`;
+      break;
+
     case 'blotter':
       exportData = (blotterList || []).map(b => ({
         'Case No': b.id || b.trackingNo || b.refNumber || b._id,
@@ -7090,7 +7729,6 @@ const handleGenerateExcelReport = async (moduleType) => {
       break;
 
     case 'certificates':
-      // Pinagsama ang issuedCertificates at pending certRequestsList kung mayroon
       const allCerts = typeof issuedCertificates !== 'undefined' ? issuedCertificates : (certRequestsList || []);
       exportData = allCerts.map(c => ({
         'Reference No': c.refNumber || c.trackingNo || c._id,
@@ -7119,7 +7757,7 @@ const handleGenerateExcelReport = async (moduleType) => {
     case 'households':
       exportData = (householdsList || []).map(h => ({
         'Household No': h.id || h._id,
-        'Head of Family': h.head || 'N/A',       
+        'Head of Family': h.head || 'N/A',
         'Purok / Zone': h.purok || 'N/A',
         'Members Count': h.members || (h.members ? h.members.length : 0),
         'Address': h.address || 'N/A'
@@ -7127,13 +7765,25 @@ const handleGenerateExcelReport = async (moduleType) => {
       break;
 
     case 'aid':
-      exportData = (programsList || []).map(a => ({
-        'Program Name': a.title || a.name || 'N/A',
-        'Category': a.category || a.type || 'Aid Distribution',
-        'Beneficiaries Count': a.beneficiariesCount || (a.beneficiaries ? a.beneficiaries.length : 0),
-        'Status': a.status || 'Completed',
-        'Date Distributed': a.date || a.createdAt || 'N/A'
-      }));
+      exportData = (programsList || []).map(a => {
+        const programLogs = (aidLogs || []).filter(
+          log => log.programId === a.id || log.programId === a._id
+        );
+        const beneficiariesCount = programLogs.length;
+        const target = a.target || 0;
+        const progress = target > 0
+          ? `${Math.round((beneficiariesCount / target) * 100)}%`
+          : 'N/A';
+        return {
+          'Program Name': a.title || a.name || 'N/A',
+          'Status': a.status || 'Completed',
+          'Beneficiaries': `${beneficiariesCount} / ${target}`,
+          'Progress': progress,
+          'Date Created': a.createdAt
+            ? new Date(a.createdAt).toLocaleDateString('en-PH')
+            : 'N/A',
+        };
+      });
       break;
 
     case 'audit':
@@ -7159,7 +7809,7 @@ const handleGenerateExcelReport = async (moduleType) => {
         'Blotter Status': c.hasBlotterRecord ? 'With Active Case' : 'Clean Record'
       }));
       break;
-    
+
     case 'business_clearances':
       exportData = (businessMasterlist || []).map(b => ({
         'BC ID No': b.bcIdNo || 'N/A',
@@ -7180,8 +7830,56 @@ const handleGenerateExcelReport = async (moduleType) => {
       return;
   }
 
+  // ✅ NEW: Apply filter logic bago i-export
+  const isAllFilter = !selectedFilter || 
+    ['All', 'All Months', 'All Puroks', 'All Status', 'All Voters', 'All Types', 'All Priorities'].includes(selectedFilter);
+
+  if (!isAllFilter) {
+    // Extract month/year mula sa filter string (hal. "April 2026")
+    const monthYearMatch = selectedFilter.match(/^([A-Za-z]+)\s+(\d{4})$/);
+
+    if (moduleType === 'certificates') {
+      exportData = exportData.filter(row => {
+        if (!row['Date Submitted']) return false;
+        const rowDate = new Date(row['Date Submitted']);
+        if (isNaN(rowDate.getTime())) return false;
+        return rowDate.toLocaleString('en-US', { month: 'long', year: 'numeric' }) === selectedFilter;
+      });
+    } else if (moduleType === 'blotter') {
+      exportData = exportData.filter(row => {
+        if (!row['Date']) return false;
+        const rowDate = new Date(row['Date']);
+        if (isNaN(rowDate.getTime())) return false;
+        return rowDate.toLocaleString('en-US', { month: 'long', year: 'numeric' }) === selectedFilter;
+      });
+    } else if (moduleType === 'aid') {
+      exportData = exportData.filter(row => {
+        if (!row['Date Created']) return false;
+        const rowDate = new Date(row['Date Created']);
+        if (isNaN(rowDate.getTime())) return false;
+        return rowDate.toLocaleString('en-US', { month: 'long', year: 'numeric' }) === selectedFilter;
+      });
+    } else if (moduleType === 'feedback') {
+      exportData = exportData.filter(row => row['Status'] === selectedFilter);
+    } else if (moduleType === 'residents' || moduleType === 'households' || moduleType === 'voters') {
+      // Filter by purok para sa residents/households/voters
+      if (selectedFilter.startsWith('Purok')) {
+        exportData = exportData.filter(row => 
+          (row['Purok / Zone'] || row['Purok'] || '').toLowerCase().includes(selectedFilter.toLowerCase())
+        );
+      }
+    } else if (moduleType === 'audit') {
+      exportData = exportData.filter(row => {
+        if (!row['Timestamp']) return false;
+        const rowDate = new Date(row['Timestamp']);
+        if (isNaN(rowDate.getTime())) return false;
+        return rowDate.toLocaleString('en-US', { month: 'long', year: 'numeric' }) === selectedFilter;
+      });
+    }
+  }
+
   if (exportData.length === 0) {
-    showToast('Walang available data para i-export sa piniling report category.', 'error');
+    showToast(`Walang available data para sa filter na "${selectedFilter}".`, 'warning');
     return;
   }
 
@@ -7190,7 +7888,7 @@ const handleGenerateExcelReport = async (moduleType) => {
       action: 'EXPORT_DATA',
       module: moduleType.toUpperCase().replace('_', ' '),
       recordId: fileName,
-      details: `Admin exported ${moduleType} Masterlist to Excel (${exportData.length} records).`,
+      details: `Admin exported ${moduleType} Masterlist to Excel (${exportData.length} records). Filter: ${selectedFilter}`,
     });
   } catch (err) {
     console.warn('Audit log for export failed:', err);
@@ -7340,26 +8038,30 @@ const printPreviewProps = React.useMemo(() => {
     printType,
     mode: printMode,
     data: {
+      _id: printData._id,
+      certificateType: printData.type || printData.certificateType,
       trackingCode: printData.trackingCode || printData._id || 'CERT-000000',
       fullName:
         printData.residentName ||
         (printData.firstName
           ? `${printData.firstName} ${printData.lastName}`
           : printData.fullName) ||
-        'JUAN DELA CRUZ',
+        '',
+      firstName: printData.firstName || '',
+      lastName: printData.lastName || '',
       address:
         printData.address ||
         printData.purok ||
-        'Barangay Bustrac, Nabua, Camarines Sur',
-      purpose: printData.purpose || 'Local Employment',
+        '',
+      purpose: printData.purpose || '',
       issueDate,
-      orNumber: printData.orNumber ?? 'N/A',
-      ctcNumber: printData.ctc?.number ?? printData.ctcNumber ?? 'N/A',
+      orNumber: printData.orNumber ?? '',
+      ctcNumber: printData.ctc?.number ?? printData.ctcNumber ?? '',
       amountPaid: printData.amountPaid ?? printData.ctc?.amountPaid ?? 0,
-      civilStatus: printData.civilStatus || 'Single',
-      age: printData.age || 'N/A',
+      civilStatus: printData.civilStatus || '',
+      age: printData.age || '',
       punongBarangay:
-        printData.punongBarangay || 'HON. ANNABELLE E. RULL'
+        printData.punongBarangay || ''
     }
   };
 }, [printData, printMode]);
@@ -7565,15 +8267,6 @@ useEffect(() => {
   };
 
   fetchRecentLogs();
-
-  const changes = db.changes({ live: true, since: 'now', include_docs: true });
-  changes.on('change', (change) => {
-    if (change.doc && (change.doc.type === 'audit_log' || change.doc.docType === 'audit_log')) {
-      fetchRecentLogs();
-    }
-  });
-
-  return () => changes.cancel();
 }, []);
 
   const [advisoriesList, setAdvisoriesList] = useState([]);
@@ -7916,6 +8609,44 @@ useEffect(() => {
   }
 }, [systemSettings]);
 
+// ── BUSINESS CLEARANCE: CONFIGURABLE QR VERIFICATION SETTINGS ──
+useEffect(() => {
+  let isMounted = true;
+  (async () => {
+    const loaded = await loadBusinessQrConfig(db);
+    if (isMounted) {
+      setBusinessQrConfig(loaded);
+      setQrConfigForm(loaded);
+    }
+  })();
+  return () => { isMounted = false; };
+}, []);
+
+const handleSaveQrConfig = async () => {
+  setIsSavingQrConfig(true);
+  try {
+    const saved = await saveBusinessQrConfig(db, qrConfigForm);
+    setBusinessQrConfig(saved);
+    setQrConfigForm(saved);
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+    await createAuditLog({
+      action: 'UPDATE_BUSINESS_QR_CONFIG',
+      module: 'BUSINESS_CLEARANCE',
+      recordId: 'setting_business_qr',
+      details: `Business Clearance QR verification ${saved.enabled ? 'enabled' : 'disabled'} (base URL: ${saved.baseUrl || 'auto'})`,
+      user: currentUser?.name || currentUser?.username || 'Admin',
+    });
+    showToast('QR verification settings saved.', 'success');
+  } catch (err) {
+    console.error('Failed to save Business QR config:', err);
+    showToast(err?.message ? `Failed to save QR settings: ${err.message}` : 'Failed to save QR settings.', 'error');
+  } finally {
+    setIsSavingQrConfig(false);
+  }
+};
+
 // ── BARANGAY CLEARANCE: REAL-TIME POUCHDB LISTENER ──
 useEffect(() => {
   const loadClearances = async () => {
@@ -7937,7 +8668,7 @@ useEffect(() => {
   };
 
   loadClearances();
-
+  /*
   const changes = db.changes({
     since: 'now',
     live: true,
@@ -7955,6 +8686,7 @@ useEffect(() => {
   });
 
   return () => changes.cancel();
+  */
 }, []);
 
 // ── BUSINESS CLEARANCE: REAL-TIME POUCHDB LISTENER ──
@@ -7978,24 +8710,6 @@ useEffect(() => {
   };
 
   loadBusiness();
-
-    const changes = db.changes({ since: 'now', live: true, include_docs: true })
-    .on('change', (change) => {
-      if (change.doc && change.doc._id && change.doc._id.startsWith('bus_clearance_')) {
-        setBusinessMasterlist((prev) => {
-          const filtered = prev.filter((c) => c._id !== change.doc._id);
-          if (change.deleted) return filtered;
-          return [change.doc, ...filtered];
-        });
-      }
-    })
-    .on('error', (err) => {
-      console.error('Business clearance changes error:', err);
-    });
-
-  return () => {
-    changes.cancel();
-  };
 }, []);
 
 useEffect(() => {
@@ -8007,15 +8721,38 @@ useEffect(() => {
 }, [screen, businessForm._id]);
 
 useEffect(() => {
-  setupPouchDBSync(); 
+  if (screen === 'brgy_clearance' && !clearanceForm._id && !clearanceForm.clearanceNo) {
+    peekNextClearanceNo().then(nextNo => {
+      setClearanceForm(prev => (prev.clearanceNo ? prev : { ...prev, clearanceNo: nextNo }));
+    });
+  }
+}, [screen, clearanceForm._id, clearanceForm.clearanceNo, clearanceList]);
 
-  const unsubscribe = onSyncStatusChange((status) => {
-    setSyncState(status); // 'syncing' | 'synced' | 'error' | 'offline'
+useEffect(() => {
+  setClearancePage(1);
+}, [clearanceSearch]);
+
+useEffect(() => {
+  setBusinessPage(1);
+}, [businessClearanceSearch]);
+
+useEffect(() => {
+  setupPouchDBSync();
+  const unsubscribe = onSyncStatusChange(({ status, pending }) => {
+    setSyncState(status);
+    
+    if (pending !== undefined && pending !== 999) {
+      setPendingCount(pending);
+    }
+    
+    if (status === 'synced' || status === 'success') {
+      const now = new Date().toISOString();
+      setLastSynced(now);
+      localStorage.setItem('bustrac_last_synced', now); // ✅ DITO ANG DAGDAG
+      setPendingCount(0);
+    }
   });
-
-  // Initial check
   setSyncState(navigator.onLine ? 'synced' : 'offline');
-
   return () => unsubscribe();
 }, []);
 
@@ -8100,744 +8837,80 @@ const handleGenerateCredentials = async (resident) => {
     <div className="dashboard-shell-container">
       <div className={`app ${sidebarOpen ? 'sidebar-is-open' : 'sidebar-is-closed'}`}>
         {/* ════════════════ SIDEBAR ════════════════ */}
-        <aside 
-          className={`sidebar ${sidebarOpen ? 'sidebar-open' : 'sidebar-closed'}`} 
-          style={{ display: 'flex', flexDirection: 'column', height: '100vh' }}
-        >
-          <div
-            className="sb-logo"
-            style={{ cursor: sidebarOpen ? 'default' : 'pointer', transition: 'cursor 0.2s ease', flexShrink: 0 }}
-            onClick={() => { if (!sidebarOpen) setSidebarOpen(true); }}
-          >
-            <button 
-              type="button" 
-              className="sidebar-close-btn" 
-              onClick={(e) => { e.stopPropagation(); setSidebarOpen(!sidebarOpen); }} 
-              aria-label={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"} 
-              title={sidebarOpen ? "Collapse sidebar" : "Expand sidebar"}
-            >
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" focusable="false">
-                <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
-                <line x1="9" y1="3" x2="9" y2="21" />
-              </svg>
-            </button>
-            <img src={logo} alt="Barangay Bustrac Official Seal" className="sb-logo-img" />
-            <div>
-              <div className="sb-title">Bustrac Hub</div>
-              <div className="sb-sub">{role === 'admin' ? 'Administrator Portal' : 'Staff Portal'}</div>
-            </div>
-          </div>
-          <nav className="sb-nav" style={{ flex: 1, overflowY: sidebarOpen ? 'auto' : 'hidden', paddingBottom: '16px' }}>
-            {/* OVERVIEW */}
-            <div className="sb-sec">Overview</div>
-            <button 
-              className={`nav-btn${screen === 'dashboard' ? ' active' : ''}`} 
-              onClick={() => nav('dashboard')} 
-              title={!sidebarOpen ? "Dashboard" : ""}
-              data-tooltip="Dashboard"
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 3h8v8H3z" />
-                  <path d="M3 13h6v8H3z" />
-                  <path d="M13 3h8v6h-8z" />
-                  <path d="M13 13h8v8h-8z" />
-                </svg>
-              </span>
-              <span className="nav-label">Dashboard</span>
-            </button>
-{/*             
-            <button 
-              className={`nav-btn${screen === 'barangay-map' ? ' active' : ''}`} 
-              onClick={() => nav('barangay-map')}
-              title={!sidebarOpen ? "Barangay Map" : ""}
-              data-tooltip="Barangay Map"
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polygon points="1 6 1 22 8 18 16 22 21 18 21 2 16 6 8 2 1 6" />
-                  <line x1="8" y1="2" x2="8" y2="18" />
-                  <line x1="16" y1="6" x2="16" y2="22" />
-                </svg>
-              </span>
-              <span className="nav-label">Barangay Map</span>
-            </button> */}
-
-            {/* RESIDENTS MANAGEMENT */}
-            <div className="sb-sec">Residents Management</div>
-            <div className="sb-nav-group">
-              <button 
-                type="button" 
-                className={`nav-btn toggle-parent ${['residents', 'households', 'add-resident'].includes(screen) ? 'active-parent' : ''}`} 
-                onClick={() => {
-                  if (!sidebarOpen) {
-                    setSidebarOpen(true);
-                    setIsResidentsOpen(true);
-                  } else {
-                    setIsResidentsOpen(!isResidentsOpen);
-                  }
-                }} 
-                aria-expanded={isResidentsOpen}
-                title={!sidebarOpen ? "Residents Profile" : ""}
-                data-tooltip="Residents Profile"
-              >
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                    <circle cx="9" cy="7" r="4" />
-                    <path d="M23 21v-2a4 4 0 0 0-3-3.87" />
-                    <path d="M16 3.13a4 4 0 0 1 0 7.75" />
-                  </svg>
-                </span>
-                <span className="nav-label" style={{ flex: 1, textAlign: 'left' }}>Residents Management</span>
-                <span className="submenu-arrow" style={{ transform: isResidentsOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
-              </button>
-
-              {isResidentsOpen && sidebarOpen && (
-                <div className="sb-submenu-zone" style={{ paddingLeft: '14px' }}>
-                  <button className={`nav-btn sub-btn${screen === 'residents' ? ' active' : ''}`} onClick={() => nav('residents')}>
-                    <span className="nav-ico">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <path d="M14 2v6h6" />
-                        <path d="M12 18v-6" />
-                        <path d="M9 15h6" />
-                      </svg>
-                    </span>
-                   <span className="nav-label">Manage Residents</span>
-                  </button>
-                  
-                  <button className={`nav-btn sub-btn${screen === 'households' ? ' active' : ''}`} onClick={() => nav('households')}>
-                    <span className="nav-ico">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
-                        <path d="M9 22V12h6v10" />
-                      </svg>
-                    </span>
-                    <span className="nav-label">Manage Households</span>
-                  </button>
-
-                  {/* <button className={`nav-btn sub-btn${screen === 'add-resident' ? ' active' : ''}`} onClick={() => nav('add-resident')}>
-                    <span className="nav-ico">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M12 5v14M5 12h14" />
-                      </svg>
-                    </span>
-                    <span className="nav-label">Add Resident</span>
-                  </button> */}
-                </div>
-              )}
-            </div>
-
-            {/* CERTIFICATES */}
-            <div className="sb-sec">Certificates</div>
-            <button 
-              className={`nav-btn${['cert-req', 'brgy_clearance', 'business_clearance'].includes(screen) ? ' active' : ''}`} 
-              onClick={() => nav('cert-req')} 
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 2v6h6" />
-                  <path d="M12 18v-6" />
-                  <path d="M9 15h6" />
-                </svg>
-              </span>
-              <span className="nav-label">Request & Approval</span>
-              {pendingRequestsCount > 0 && <span className="nb nb-amber">{pendingRequestsCount}</span>}
-            </button>
-
-            <button 
-              className={`nav-btn${screen === 'cert-print' ? ' active' : ''}`} 
-              onClick={() => nav('cert-print')}
-              title={!sidebarOpen ? "Issuance & Print" : ""}
-              data-tooltip="Issuance & Print"
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M17 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-2" />
-                  <path d="M7 17h2a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2H7" />
-                  <path d="M12 7V5" />
-                  <path d="M10 19h4" />
-                  <path d="M7 9H5a2 2 0 0 0-2 2v6a2 2 0 0 0 2 2h2" />
-                </svg>
-              </span>
-              <span className="nav-label">Issuance & Print</span>
-            </button>
-
-            {/* AID DISTRIBUTION */}
-            <div className="sb-sec">Aid Distribution</div>
-            <div className="sb-nav-group">
-              <button 
-                type="button" 
-                className={`nav-btn toggle-parent ${['programs', 'aid-encode', 'aid-logs', 'add-beneficiary'].includes(screen) ? 'active-parent' : ''}`} 
-                onClick={() => {
-                  if (!sidebarOpen) {
-                    setSidebarOpen(true);
-                    setIsAidOpen(true);
-                  } else {
-                    setIsAidOpen(!isAidOpen);
-                  }
-                }} 
-                aria-expanded={isAidOpen}
-                title={!sidebarOpen ? "Aid Distribution" : ""}
-                data-tooltip="Aid Distribution"
-              >
-                <span className="nav-ico">
-                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                    <path d="M3.27 6.96L12 12.01l8.73-5.05" />
-                    <path d="M12 22.08V12" />
-                  </svg>
-                </span>
-                <span className="nav-label" style={{ flex: 1, textAlign: 'left' }}>Aid Distribution</span>
-                <span className="submenu-arrow" style={{ transform: isAidOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
-              </button>
-
-              {isAidOpen && sidebarOpen && (
-                <div className="sb-submenu-zone" style={{ paddingLeft: '14px' }}>
-                  <button className={`nav-btn sub-btn${screen === 'programs' ? ' active' : ''}`} onClick={() => nav('programs')}>
-                    <span className="nav-ico">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                      </svg>
-                    </span>
-                    <span className="nav-label">Programs</span>
-                  </button>
-
-                  <button className={`nav-btn sub-btn${screen === 'aid-encode' ? ' active' : ''}`} onClick={() => nav('aid-encode')}>
-                    <span className="nav-ico">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M12 5v14M5 12h14" />
-                      </svg>
-                    </span>
-                    <span className="nav-label">Relief Distribution</span>
-                  </button>
-
-                  <button className={`nav-btn sub-btn${screen === 'aid-logs' ? ' active' : ''}`} onClick={() => nav('aid-logs')}>
-                    <span className="nav-ico">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                        <path d="M14 2v6h6" />
-                        <path d="M12 18v-6" />
-                        <path d="M9 15h6" />
-                      </svg>
-                    </span>
-                    <span className="nav-label">Distribution Logs</span>
-                  </button>
-
-                  
-                </div>
-              )}
-            </div>
-
-            {/* PEACE & ORDER / INCIDENTS */}
-            <div className="sb-sec">Peace & Order</div>
-            <button 
-              className={`nav-btn${screen === 'blotter-new' ? ' active' : ''}`} 
-              onClick={() => nav('blotter-new')}
-              title={!sidebarOpen ? "File Incident / Complaint" : ""}
-              data-tooltip="File Incident"
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                  <path d="M12 9v4" />
-                  <path d="M12 17h.01" />
-                </svg>
-              </span>
-              <span className="nav-label">File Incident / Complaint</span>
-            </button>
-
-            <button 
-              className={`nav-btn${screen === 'blotter-manage' ? ' active' : ''}`} 
-              onClick={() => nav('blotter-manage')}
-              title={!sidebarOpen ? "Manage Incident Cases" : ""}
-              data-tooltip="Manage Incidents"
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 2v6h6" />
-                  <path d="M12 18v-6" />
-                  <path d="M9 15h6" />
-                </svg>
-              </span>
-              <span className="nav-label">Manage Blotter Records</span>
-              {pendingBlotterCount > 0 && <span className="nb nb-red">{pendingBlotterCount}</span>}
-            </button>
-            
-            <button
-              className={`nav-btn${screen === 'blotter-detail' ? ' active' : ''}`}
-              onClick={() => nav('blotter-detail')}
-              title={!sidebarOpen ? "Summons & Hearings" : ""}
-              data-tooltip="Summons & Hearings"
-            >
-              <span className="nav-ico">
-                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                              </svg>
-              </span>
-              <span className="nav-label">Summons & Hearings</span>
-            </button>
-            
-
-            {/* COMMUNITY */}
-            <div className="sb-sec">Community</div>
-            <button 
-              className={`nav-btn${screen === 'announcements' ? ' active' : ''}`} 
-              onClick={() => nav('announcements')}
-              title={!sidebarOpen ? "Announcements" : ""}
-              data-tooltip="Announcements"
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9" />
-                  <path d="M13.73 21a2 2 0 0 1-3.46 0" />
-                </svg>
-              </span>
-              <span className="nav-label">Announcements</span>
-            </button>
-
-            <button 
-              className={`nav-btn${screen === 'feedback' ? ' active' : ''}`} 
-              onClick={() => nav('feedback')}
-              title={!sidebarOpen ? "Feedback" : ""}
-              data-tooltip="Feedback"
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
-                </svg>
-              </span>
-              <span className="nav-label">Feedback</span>
-              {activeFeedbackCount > 0 && <span className="nb nb-red">{activeFeedbackCount}</span>}
-            </button>
-
-            
-
-            {/* ADMIN-ONLY SECTION */}
-            {role === 'admin' && (
-              <>
-                <div className="sb-sec">Admin & Governance</div>
-                
-                
-
-                <button 
-                  className={`nav-btn${screen === 'conflicts' ? ' active' : ''}`} 
-                  onClick={() => nav('conflicts')}
-                  title={!sidebarOpen ? "Conflict Resolution" : ""}
-                  data-tooltip="Conflict Resolution"
-                >
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
-                      <path d="M12 9v4" />
-                      <path d="M12 17h.01" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Conflict Resolution</span>
-                  {conflictsList?.length > 0 && <span className="nb nb-red">{conflictsList.length}</span>}
-                </button>
-
-                <button 
-                  className={`nav-btn${screen === 'audit' ? ' active' : ''}`} 
-                  onClick={() => nav('audit')}
-                  title={!sidebarOpen ? "Audit Log" : ""}
-                  data-tooltip="Audit Log"
-                >
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0z" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Audit Log</span>
-                </button>
-
-                <button 
-                  className={`nav-btn${screen === 'users' ? ' active' : ''}`} 
-                  onClick={() => nav('users')}
-                  title={!sidebarOpen ? "Manage Users" : ""}
-                  data-tooltip="Manage Users"
-                >
-                  <span className="nav-ico">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                      <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                      <circle cx="12" cy="7" r="4" />
-                    </svg>
-                  </span>
-                  <span className="nav-label">Manage Users</span>
-                  {accountRequests.length > 0 && <span className="nb nb-amber">{accountRequests.length}</span>}
-                </button>
-              </>
-            )}
-
-            {/* REPORTS */}
-            <div className="sb-sec">Reports</div>
-            <button 
-              className={`nav-btn${screen === 'reports' ? ' active' : ''}`} 
-              onClick={() => nav('reports')}
-              title={!sidebarOpen ? "Generate Reports" : ""}
-              data-tooltip="Generate Reports"
-            >
-              <span className="nav-ico">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M3 3h18v18H3z" />
-                  <path d="M3 9h18" />
-                  <path d="M9 21V9" />
-                </svg>
-              </span>
-              <span className="nav-label">Generate Reports</span>
-            </button>
-          </nav>
-
-          {/* 3. SIDEBAR FOOTER (USER PROFILE & SYNC STATUS) */}
-          <div 
-            className="sb-foot" 
-            onClick={() => {
-              if (typeof setScreen === 'function') {
-                setScreen('profile');
-              } else if (typeof setShowUserMenu === 'function') {
-                setShowUserMenu(prev => !prev);
-              }
-            }} 
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') {
-                e.preventDefault();
-                if (typeof setScreen === 'function') setScreen('profile');
-              }
-            }} 
-            role="button" 
-            tabIndex={0}
-            title={!sidebarOpen ? displayName : ""}
-          >
-            <div className="sb-ava">{initials}</div>
-            <div className="sb-info" style={{ flex: 1, minWidth: 0 }}>
-              <div className="sb-uname" style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                {displayName}
-              </div>
-              <div className="sb-urole">
-                {role === 'admin' ? 'Administrator' : 'Staff'}
-              </div>
-            </div>
-            <div 
-              className="online-dot" 
-              title={
-                syncState === 'offline' ? 'Offline — changes saved locally' :
-                syncState === 'syncing' ? 'Connecting and syncing' : 
-                'Online — changes synced'
-              } 
-              style={{ 
-                background: syncState === 'offline' ? 'var(--red)' : syncState === 'syncing' ? 'var(--amber)' : 'var(--green)', 
-                boxShadow: syncState === 'offline' ? '0 0 0 2px var(--red-bg)' : syncState === 'syncing' ? '0 0 0 2px var(--amber-bg)' : '0 0 0 2px var(--green-bg)' 
-              }} 
-            />
-          </div>
-        </aside>
+        <Sidebar
+  sidebarOpen={sidebarOpen}
+  setSidebarOpen={setSidebarOpen}
+  isResidentsOpen={isResidentsOpen}
+  setIsResidentsOpen={setIsResidentsOpen}
+  isAidOpen={isAidOpen}
+  setIsAidOpen={setIsAidOpen}
+  screen={screen}
+  nav={nav}
+  role={role}
+  displayName={displayName}
+  initials={initials}
+  syncState={syncState}
+  pendingRequestsCount={pendingRequestsCount}
+  pendingBlotterCount={pendingBlotterCount}
+  activeFeedbackCount={activeFeedbackCount}
+  accountRequests={accountRequests}
+  conflictsList={conflictsList}
+  logo={logo}
+  logout={logout}
+/>
         
         {/* ════════════════ MAIN CONTENT ════════════════ */}
         <div className="main">
 
           {/* ── Topbar ── */}
-          <header 
-              className="topbar" 
-              style={{ 
-                display: 'flex', 
-                justify: 'space-between', 
-                alignItems: 'center', 
-                padding: '12px 24px', 
-                borderBottom: '1px solid var(--border)', 
-                background: 'var(--surface)' 
-              }}
-            >
-              <div style={{ flex: 1 }}>
-                <div className="tb-title" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
-                  {currentTitle}
-                </div>
-                <div className="tb-sub" style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                  {currentSubtitle}
-                </div>
-              </div>
-
-              <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
-                {role === 'admin' && (
-                  <div 
-                    className="role-admin" 
-                    style={{ 
-                      fontSize: '12px', 
-                      fontWeight: 700, 
-                      color: 'var(--amber)', 
-                      background: 'rgba(245, 158, 11, 0.1)', 
-                      padding: '4px 10px', 
-                      borderRadius: '6px' 
-                    }}
-                  >
-                    🔑 Admin
-                  </div>
-                )}
-                <SyncStatusIndicator syncState={syncState || 'offline'} />
-                <ThemeToggle />
-                <button 
-                  className="btn btn-g btn-sm" 
-                  onClick={logout} 
-                  style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/>
-                    <polyline points="16 17 21 12 16 7"/>
-                    <line x1="21" y1="12" x2="9" y2="12"/>
-                  </svg> 
-                  Sign Out
-                </button>
-              </div>
-          </header>
+          <Topbar
+            currentTitle={currentTitle}
+            currentSubtitle={currentSubtitle}
+            role={role}
+            syncState={syncState}
+            pendingCount={pendingCount}
+            lastSynced={lastSynced}
+            logout={logout}
+          />
 
           <div className="content">
             {/* ════════════════════════════════════════
                 SCREEN: DASHBOARD
                 ════════════════════════════════════════ */}
                 {screen === 'dashboard' && (
-                  <div className="screen active" style={{ padding: '24px', width: '100%', boxSizing: 'border-box', maxWidth: '1600px', margin: '0 auto' }}> 
-                  {/* DASHBOARD SUMMARY HEADER (Consolidated view for quick decision-making) */}
-                    <div style={{ marginBottom: '16px' }}>
-                      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
-                        {role === 'admin' ? 'Barangay Overview — Full System View' : 'Operations Overview'}
-                      </div>
-                      <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
-                        Consolidated key metrics, trends &amp; indicators • As of {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                      </div>
-                    </div>
-                  {/* QUICK ACTIONS GRID (Para hindi puro numbers, may mga button na agad) */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '12px', marginBottom: '20px' }}>
-                      {[
-                        { label: 'Add Resident', icon: '👤', color: 'var(--primary)', nav: 'add-resident' },
-                        { label: 'Issue Certificate', icon: '📄', color: 'var(--green)', nav: 'cert-req' },
-                        { label: 'Post Announcement', icon: '📢', color: 'var(--amber)', nav: 'announcements' },
-                        { label: 'View Reports', icon: '📊', color: 'var(--teal)', nav: 'reports' }
-                      ].map((action, i) => (
-                        <button 
-                          key={i} 
-                          onClick={() => nav(action.nav)}
-                          style={{ 
-                            background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', 
-                            padding: '16px', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px',
-                            cursor: 'pointer', transition: 'all 0.2s ease', boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
-                          }}
-                          onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)'; e.currentTarget.style.borderColor = action.color; }}
-                          onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)'; e.currentTarget.style.borderColor = 'var(--border)'; }}
-                        >
-                          <span style={{ fontSize: '24px' }}>{action.icon}</span>
-                          <span style={{ fontSize: '12px', fontWeight: 700, color: 'var(--text)' }}>{action.label}</span>
-                        </button>
-                          ))}
-                    </div>
-                    {/* 1. TOP METRICS GRID */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '14px', marginBottom: '20px' }}>
-                      {[
-                        { label: 'Total Residents', value: totalResidents, sub: 'Registered', color: 'var(--text)', trend: residentTrend, goodWhenUp: true },
-                        { label: 'Households', value: totalHouseholds, sub: 'Family units', color: 'var(--green)', trend: householdTrend, goodWhenUp: true },
-                        { label: 'Reg. Voters', value: totalVoters, sub: `${totalResidents > 0 ? ((totalVoters / totalResidents) * 100).toFixed(0) : 0}% of total`, color: 'var(--amber)', trend: voterTrend, goodWhenUp: true },
-                        { label: 'Pending Certs', value: pendingRequestsCount, sub: 'Awaiting approval', color: 'var(--accent)', trend: certTrend, goodWhenUp: false },
-                        { label: 'Open Blotter', value: typeof blotterList !== 'undefined' ? blotterList.filter(b => b.status === 'Open' || b.status === 'Under Mediation').length : 0, sub: 'Active cases', color: 'var(--red)', trend: blotterTrend, goodWhenUp: false },
-                        ...(role === 'admin' ? [{ label: 'Sync Conflicts', value: conflictsList.length, sub: conflictsList.length > 0 ? 'Needs fix' : 'All synced', color: conflictsList.length > 0 ? 'var(--amber)' : 'var(--muted)' }] : []),
-                        { label: 'Feedback', value: activeFeedbackCount, sub: 'Submissions', color: 'var(--teal)', trend: feedbackTrend, goodWhenUp: null }
-                      ].map((stat, i) => (
-                        <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
-                          <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</span>
-                          <span style={{ fontSize: '26px', fontWeight: 800, color: stat.color, lineHeight: 1.1 }}>{stat.value}</span>
-                          {stat.trend && (
-                            <span style={{ fontSize: '11px', fontWeight: 700, color: stat.trend.delta === 0 ? 'var(--muted)' : stat.goodWhenUp === null ? 'var(--teal-text)' : (stat.trend.delta > 0) === stat.goodWhenUp ? 'var(--green-text)' : 'var(--red-text)' }}>
-                              {stat.trend.delta > 0 ? '▲' : stat.trend.delta < 0 ? '▼' : '•'} {stat.trend.thisMonth} new this month (last mo: {stat.trend.lastMonth})
-                            </span>
-                          )}
-                          <span style={{ fontSize: '11px', color: 'var(--hint)' }}>{stat.sub}</span>
-                        </div>
-                      ))}
-                    </div>
-
-                    {/* 2. MIDDLE ROW (Pending Actions & Audit Trail) */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px', marginBottom: '20px' }}>
-                      {/* Pending Actions */}
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '20px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
-                        <div style={{ fontSize: '12px', fontWeight: 800, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.6px' }}>
-                          {role === 'admin' ? 'Pending Admin Actions' : 'Pending Actions'}
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', flex: 1 }}>
-                          {role === 'admin' && conflictsList.length > 0 && (
-                            <div onClick={() => nav('conflicts')} style={{ background: 'var(--amber-bg)', border: '1px solid var(--amber-border)', borderRadius: '8px', padding: '12px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }}>
-                              <div>
-                                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--amber-text)' }}>Sync Conflicts Detected</div>
-                                <div style={{ fontSize: '12px', color: 'var(--text)' }}>{conflictsList.length} record(s) need resolution</div>
-                              </div>
-                              <span style={{ background: 'var(--amber)', color: '#ffffff', border: 'none', fontWeight: 700, fontSize: '11px', padding: '6px 14px', borderRadius: '6px' }}>Resolve</span>
-                            </div>
-                          )}
-                          {[
-                            { title: 'Certificate Requests', count: pendingRequestsCount, desc: 'Pending approval by authorized officer', color: 'var(--accent-text)', border: 'var(--accent)', bg: 'var(--accent-bg)', nav: 'cert-approve', btnText: 'Review' },
-                            { title: 'Unread Feedback', count: activeFeedbackCount, desc: 'Resident submissions awaiting response', color: 'var(--teal-text)', border: 'var(--teal)', bg: 'var(--teal-bg)', nav: 'feedback', btnText: 'View' },
-                            { title: 'Open Blotter Cases', count: typeof blotterList !== 'undefined' ? blotterList.filter(b => b.status === 'Open' || b.status === 'Under Mediation').length : 0, desc: 'Active cases requiring mediation', color: 'var(--red-text)', border: 'var(--red)', bg: 'var(--red-bg)', nav: 'blotter-manage', btnText: 'Manage' }
-                          ].map((action, i) => (
-                            <div key={i} onClick={() => nav(action.nav)} style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px', padding: '14px 16px', display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer', transition: 'background 0.2s' }}>
-                              <div style={{ paddingRight: '12px' }}>
-                                <div style={{ fontSize: '13px', fontWeight: 700, color: 'var(--text)', display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '2px' }}>
-                                  {action.title}
-                                  {action.count > 0 && (
-                                    <span style={{ background: action.bg, color: action.color, fontSize: '10px', padding: '2px 8px', borderRadius: '12px', fontWeight: 800, border: `1px solid ${action.border}` }}>
-                                      {action.count}
-                                    </span>
-                                  )}
-                                </div>
-                                <div style={{ fontSize: '11px', color: 'var(--muted)' }}>{action.desc}</div>
-                              </div>
-                              <button style={{ background: action.bg, color: action.color, border: `1px solid ${action.border}`, fontWeight: 700, fontSize: '11px', padding: '6px 16px', borderRadius: '6px', cursor: 'pointer', flexShrink: 0 }}>
-                                {action.btnText}
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-                    </div>
-                    
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px', marginBottom: '20px' }}>
-                      
-                      {/* Blotter Case Outcomes Visual Card */}
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '20px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                          <div>
-                            <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Blotter Case Outcomes</div>
-                            <div style={{ fontSize: '11px', color: 'var(--hint)' }}>Settled vs Escalated (CFA) vs Pending</div>
-                          </div>
-                          <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-                            Total: {blotterList.length}
-                          </span>
-                        </div>
-
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                          {[
-                            { label: 'Settled / Amicable', count: settledBlotterCount, color: 'var(--green)', bg: 'var(--green-bg)' },
-                            { label: 'Referred to PNP (CFA)', count: cfaBlotterCount, color: 'var(--red)', bg: 'var(--red-bg)' },
-                            { label: 'Active / Mediation', count: activeBlotterCount, color: 'var(--amber)', bg: 'var(--amber-bg)' }
-                          ].map((item) => {
-                            const total = blotterList.length || 1;
-                            const pct = Math.round((item.count / total) * 100);
-                            return (
-                              <div key={item.label}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', fontWeight: 600, marginBottom: '4px' }}>
-                                  <span style={{ color: 'var(--text)' }}>{item.label}</span>
-                                  <span style={{ fontFamily: 'var(--mono)', color: 'var(--muted)' }}>{item.count} ({pct}%)</span>
-                                </div>
-                                <div style={{ background: 'var(--surface2)', height: '10px', borderRadius: '5px', overflow: 'hidden' }}>
-                                  <div style={{ background: item.color, height: '100%', width: `${pct}%`, transition: 'width 0.5s ease' }} />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* Feedback Reports Breakdown Visual Card */}
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '20px' }}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-                          <div>
-                            <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Feedback Submissions</div>
-                            <div style={{ fontSize: '11px', color: 'var(--hint)' }}>Categorized by report type</div>
-                          </div>
-                          <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-                            Total: {feedbackList.length}
-                          </span>
-                        </div>
-
-                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '12px', marginTop: '10px' }}>
-                          {[
-                            { label: 'Complaints', count: feedbackSummary.complaint, color: 'var(--red)', bg: 'rgba(239, 68, 68, 0.1)' },
-                            { label: 'Inquiries', count: feedbackSummary.inquiry, color: 'var(--accent)', bg: 'rgba(59, 130, 246, 0.1)' },
-                            { label: 'Suggestions', count: feedbackSummary.suggestion, color: 'var(--teal)', bg: 'rgba(20, 184, 166, 0.1)' }
-                          ].map((fb, idx) => (
-                            <div key={idx} style={{ background: fb.bg, border: `1px solid ${fb.color}`, borderRadius: '8px', padding: '12px', textAlign: 'center' }}>
-                              <div style={{ fontSize: '22px', fontWeight: 800, color: fb.color }}>{fb.count}</div>
-                              <div style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text)', marginTop: '2px' }}>{fb.label}</div>
-                            </div>
-                          ))}
-                        </div>
-                      </div>
-
-                    </div>
-                    
-                    {/* 3. BOTTOM ROW (Purok Population & System Status) */}
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '20px' }}>
-                      {/* Purok Population */}
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '20px' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                          <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--accent-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--accent)' }}>
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 20V10" /><path d="M12 20V4" /><path d="M6 20v-6" /></svg>
-                          </div>
-                          <div>
-                            <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Population per Purok</div>
-                            <div style={{ fontSize: '11px', color: 'var(--hint)' }}>Resident distribution</div>
-                          </div>
-                        </div>
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                          {[
-                            { label: 'Purok 1', count: p1Count, color: 'var(--accent)' },
-                            { label: 'Purok 2', count: p2Count, color: 'var(--teal)' },
-                            { label: 'Purok 3', count: p3Count, color: 'var(--primary)' },
-                            { label: 'Purok 4', count: getPurokCount('Purok 4'), color: 'var(--red)' },
-                            { label: 'Purok 5', count: p5Count, color: 'var(--amber)' }
-                          ].map((purok) => {
-                            const percentage = totalResidents > 0 ? Math.round((purok.count / totalResidents) * 100) : 0;
-                            return (
-                              <div key={purok.label}>
-                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
-                                  <span style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text)' }}>{purok.label}</span>
-                                  <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)' }}>{purok.count} ({percentage}%)</span>
-                                </div>
-                                <div style={{ background: 'var(--surface2)', height: '8px', borderRadius: '4px', overflow: 'hidden' }}>
-                                  <div style={{ background: purok.color, height: '100%', width: `${percentage}%`, borderRadius: '4px', transition: 'width 0.6s ease' }} />
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-
-                      {/* System Status */}
-                      <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '20px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '16px' }}>
-                            <div style={{ width: '32px', height: '32px', borderRadius: '8px', background: 'var(--teal-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--teal)' }}>
-                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 2v4" /><path d="M12 18v4" /><path d="M2 12h2" /><path d="M20 12h2" /></svg>
-                            </div>
-                            <div>
-                              <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>System Status</div>
-                              <div style={{ fontSize: '11px', color: 'var(--hint)' }}>Local database & sync</div>
-                            </div>
-                          </div>
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-                            {[
-                              { label: 'Sync Engine', value: 'PouchDB → CouchDB', color: 'var(--text)' },
-                              { label: 'Local Documents', value: `${residentsList.length + householdsList.length + programsList.length} records`, color: 'var(--text)' },
-                              { label: 'Sync Mode', value: syncState === 'offline' ? 'Offline' : syncState === 'syncing' ? 'Syncing...' : 'Live Replication', color: syncState === 'offline' ? 'var(--amber)' : 'var(--green)' }
-                            ].map((row, i) => (
-                              <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '10px 12px', background: 'var(--surface2)', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                                <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>{row.label}</span>
-                                <span style={{ fontSize: '12px', fontWeight: 700, color: row.color }}>{row.value}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                        <div style={{ marginTop: '16px', paddingTop: '12px', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                          <span style={{ fontSize: '12px', color: 'var(--green-text)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '6px' }}>
-                            <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--green)' }} />
-                            {syncState === 'offline' ? 'Offline' : 'Synchronization Active'}
-                          </span>
-                          <button onClick={() => nav('residents')} style={{ background: 'var(--primary)', color: '#ffffff', border: 'none', padding: '8px 16px', borderRadius: '6px', fontWeight: 700, fontSize: '12px', cursor: 'pointer' }}>
-                            Masterlist →
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                )}
+                <DashboardScreen
+                  role={role}
+                  residentsList={residentsList}
+                  householdsList={householdsList}
+                  programsList={programsList}
+                  blotterList={blotterList}
+                  feedbackList={feedbackList}
+                  conflictsList={conflictsList}
+                  pendingRequestsCount={pendingRequestsCount}
+                  pendingBlotterCount={pendingBlotterCount}
+                  activeFeedbackCount={activeFeedbackCount}
+                  totalResidents={totalResidents}
+                  totalHouseholds={totalHouseholds}
+                  totalVoters={totalVoters}
+                  p1Count={p1Count}
+                  p2Count={p2Count}
+                  p3Count={p3Count}
+                  p4Count={p4Count}
+                  p5Count={p5Count}
+                  settledBlotterCount={settledBlotterCount}
+                  cfaBlotterCount={cfaBlotterCount}
+                  activeBlotterCount={activeBlotterCount}
+                  feedbackSummary={feedbackSummary}
+                  residentTrend={residentTrend}
+                  householdTrend={householdTrend}
+                  voterTrend={voterTrend}
+                  certTrend={certTrend}
+                  blotterTrend={blotterTrend}
+                  feedbackTrend={feedbackTrend}
+                  syncState={syncState}
+                  nav={handleNav}
+                />
+              )}
                 
                 {screen === 'barangay-map' && (
                   <div className="screen active certificate-lifecycle-screen" style={{ padding: '24px' }}>
@@ -8864,473 +8937,105 @@ const handleGenerateCredentials = async (resident) => {
                         SCREEN: MANAGE RESIDENTS 
                     ════════════════════════════════════════ */}
                     {screen === 'residents' && (
-  <div className="screen active">
-    {/* ── View Mode Tabs ── */}
-    <div className="res-view-tabs">
-      <button
-        className={`btn ${viewMode === 'active' ? 'btn-p' : 'btn-g'}`}
-        onClick={() => setViewMode('active')}
-      >
-        Active Residents
-      </button>
-      <button
-        className={`btn ${viewMode === 'archived' ? 'btn-p' : 'btn-g'}`}
-        onClick={() => setViewMode('archived')}
-      >
-        Archived
-      </button>
-    </div>
-
-    {/* ── Search & Filter Bar ── */}
-    <div className="res-filter-bar">
-      <div className="res-filter-group">
-        <div className="sb-box res-search-box">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <circle cx="11" cy="11" r="8" />
-            <path d="M21 21l-4.35-4.35" />
-          </svg>
-          <input
-            placeholder="Search by name, purok, Resident ID, or RBI ID..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-          />
-        </div>
-        <select
-          className="fc res-filter-select"
-          value={purokFilter}
-          onChange={(e) => setPurokFilter(e.target.value)}
-        >
-          <option value="All Puroks">All Puroks</option>
-          <option value="Purok 1">Purok 1</option>
-          <option value="Purok 2">Purok 2</option>
-          <option value="Purok 3">Purok 3</option>
-          <option value="Purok 4">Purok 4</option>
-          <option value="Purok 5">Purok 5</option>
-        </select>
-        <select
-          className="fc res-filter-select"
-          value={genderFilter}
-          onChange={(e) => setGenderFilter(e.target.value)}
-        >
-          <option value="All Gender">All Gender</option>
-          <option value="Male">Male</option>
-          <option value="Female">Female</option>
-          <option value="LGBTQ+">LGBTQ+</option>
-          <option value="Non-binary">Non-binary</option>
-          <option value="Transgender">Transgender</option>
-          <option value="Prefer not to say">Prefer not to say</option>
-        </select>
-      </div>
-      <button
-        className="btn btn-p res-add-btn"
-        onClick={() => {
-          setEditingResidentId(null);
-          setResidentForm(EMPTY_RESIDENT);
-          setHouseholdAssignmentMode('existing');
-          setHouseholdForm(EMPTY_HOUSEHOLD);
-          setShowAddResidentModal(true);
-        }}
-      >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <line x1="12" y1="5" x2="12" y2="19" />
-          <line x1="5" y1="12" x2="19" y2="12" />
-        </svg>
-        Add New Resident
-      </button>
-    </div>
-
-    {/* ── Bulk Actions Bar ── */}
-    {selectedResidents.length > 0 && (
-      <div className="res-bulk-bar">
-        <div className="res-bulk-info">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-            <circle cx="9" cy="7" r="4" />
-          </svg>
-          <span>
-            Selected: <strong>{selectedResidents.length}</strong>
-            {selectedResidents.length === 1 ? ' resident' : ' residents'}
-          </span>
-        </div>
-        <div className="res-bulk-actions">
-          <button
-            className="btn btn-p btn-sm res-bulk-toggle"
-            onClick={() => setShowBulkDropdown(!showBulkDropdown)}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z" />
-              <path d="M12 2v2" /><path d="M12 18v2" />
-              <path d="M4.93 4.93l2.83 2.83" /><path d="M16.24 16.24l2.83 2.83" />
-              <path d="M2 12h2" /><path d="M20 12h2" />
-              <path d="M4.93 19.07l2.83-2.83" /><path d="M16.24 7.76l2.83-2.83" />
-            </svg>
-            Bulk Actions
-            <span className="res-bulk-arrow">{showBulkDropdown ? '▲' : '▼'}</span>
-          </button>
-          <button
-            className="btn btn-g btn-sm"
-            onClick={() => { setSelectedResidents([]); setShowBulkDropdown(false); }}
-          >
-            Cancel
-          </button>
-
-          {showBulkDropdown && (
-            <div className="res-bulk-dropdown">
-              <button className="bulk-menu-item" onClick={() => { nav('aid-encode'); setShowBulkDropdown(false); }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                </svg>
-                Encode to Aid Program
-              </button>
-              <button className="bulk-menu-item" onClick={() => { nav('cert-print'); setShowBulkDropdown(false); }}>
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <path d="M14 2v6h6" /><path d="M12 18v-6" /><path d="M9 15h6" />
-                </svg>
-                Prepare Bulk Certificates
-              </button>
-              <div className="section-divider" />
-              {/* ── CSV Export ── */}
-              <button
-                className="bulk-menu-item bulk-menu-export"
-                onClick={() => {
-                  const selectedData = residentsList.filter((r) => selectedResidents.includes(r.id));
-                  const csvHeaders = "Resident ID,RBI ID,Name,Purok,Age,Civil Status,Voter\n";
-                  const csvRows = selectedData.map((r) =>
-                    `"${r.id}","${r.rbiId || ''}","${r.name}","${r.purok}",${r.age},"${r.civilStatus}","${r.voter ? 'Yes' : 'No'}"`
-                  ).join("\n");
-                  const blob = new Blob([csvHeaders + csvRows], { type: 'text/csv;charset=utf-8;' });
-                  const url = URL.createObjectURL(blob);
-                  const link = document.createElement("a");
-                  link.href = url;
-                  link.download = `Bustrac_Selected_Residents_${new Date().toISOString().slice(0, 10)}.csv`;
-                  document.body.appendChild(link);
-                  link.click();
-                  document.body.removeChild(link);
-                  setShowBulkDropdown(false);
-                  setSelectedResidents([]);
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                  <path d="M7 10l5 5 5-5" /><path d="M12 15v-6" />
-                </svg>
-                Export to CSV
-              </button>
-              {/* ── EXCEL Export ── */}
-              <button
-                className="bulk-menu-item bulk-menu-excel"
-                onClick={() => {
-                  const selectedData = residentsList.filter((r) => selectedResidents.includes(r.id));
-                  const rows = selectedData.map((r) => ({
-                    'Resident ID': r.id,
-                    'RBI ID': r.rbiId || '',
-                    'Name': r.name,
-                    'Purok': r.purok,
-                    'Age': r.age,
-                    'Civil Status': r.civilStatus,
-                    'Voter': r.voter ? 'Yes' : 'No',
-                  }));
-                  exportToExcel(rows, `Bustrac_Residents_${new Date().toISOString().slice(0, 10)}`);
-                  setShowBulkDropdown(false);
-                  setSelectedResidents([]);
-                }}
-              >
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <path d="M8 13h2v6H8z" /><path d="M12 15h2v4h-2z" /><path d="M16 11h2v8h-2z" />
-                </svg>
-                Export to Excel
-              </button>
-            </div>
-          )}
-        </div>
-      </div>
-    )}
-
-    {/* ── Residents Table ── */}
-    <div className="tw res-table-wrap">
-      <table className="res-table">
-        <thead>
-          <tr>
-            <th className="res-th-checkbox">
-  <input 
-    type="checkbox" 
-    checked={
-      sortedFilteredResidents.length > 0 &&
-      sortedFilteredResidents.every((r) => selectedResidents.includes(r.id))
-    } 
-    onChange={(e) => {
-      if (e.target.checked) {
-        const allVisibleIds = sortedFilteredResidents.map((r) => r.id);
-        setSelectedResidents(allVisibleIds);
-        showToast(`Selected ${allVisibleIds.length} resident(s) on this page.`, 'success');
-      } else {
-        setSelectedResidents([]);
-        showToast('Selection cleared.', 'info'); // Note: gamitin ang 'info' o 'success' base sa showToast mo
-      }
-    }} 
-  />
-</th>
-            <th className="res-th-sortable" onClick={() => handleResidentSort('id')}>
-              Resident ID {residentSort.key === 'id' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-            </th>
-            <th className="res-th-sortable" onClick={() => handleResidentSort('rbiId')}>
-              RBI ID {residentSort.key === 'rbiId' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-            </th>
-            <th className="res-th-sortable" onClick={() => handleResidentSort('name')}>
-              Full Name {residentSort.key === 'name' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-            </th>
-            <th className="res-th-sortable" onClick={() => handleResidentSort('purok')}>
-              Purok {residentSort.key === 'purok' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-            </th>
-            <th className="res-th-sortable" onClick={() => handleResidentSort('age')}>
-              Age {residentSort.key === 'age' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-            </th>
-            <th className="res-th-sortable" onClick={() => handleResidentSort('civilStatus')}>
-              Civil Status {residentSort.key === 'civilStatus' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-            </th>
-            <th className="res-th-sortable" onClick={() => handleResidentSort('voter')}>
-              Voter {residentSort.key === 'voter' ? (residentSort.direction === 'asc' ? '▲' : '▼') : '↕'}
-            </th>
-            {role === 'admin' && <th>Household</th>}
-            <th className="res-th-actions">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-        {isResidentsLoading ? (
-          // ✅ Loading State: Maiiwasan ang "No residents found" flash
-          <tr>
-            <td colSpan={role === 'admin' ? 10 : 9} style={{ textAlign: 'center', padding: '40px', color: 'var(--muted)' }}>
-              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
-                <span className="spinner" style={{ width: '24px', height: '24px', borderWidth: '3px' }} />
-                <span>Loading resident records from local database...</span>
-              </div>
-            </td>
-          </tr>
-        ) : sortedFilteredResidents.length === 0 ? (
-          // ✅ True Empty State: Ipapakita lang kung talagang walang data
-          <tr>
-            <td colSpan={role === 'admin' ? 10 : 9} className="res-empty-cell">
-              <div className="res-empty-state">
-                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
-                  <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
-                  <circle cx="9" cy="7" r="4" />
-                </svg>
-                <span>No residents found matching your search.</span>
-              </div>
-            </td>
-          </tr>
-        ) : (
-          sortedFilteredResidents.map((res) => {
-            const isChecked = selectedResidents.includes(res.id);
-            const initials = res.name.split(' ').map((n) => n[0]).join('').substring(0, 2).toUpperCase();
-            
-            return (
-              <tr key={res.id} className={isChecked ? 'row-selected' : ''}>
-                <td className="res-td-center">
-                  <input type="checkbox" checked={isChecked} onChange={(e) => {
-                    if (e.target.checked) setSelectedResidents([...selectedResidents, res.id]);
-                    else setSelectedResidents(selectedResidents.filter((id) => id !== res.id));
-                  }} />
-                </td>
-                
-                {/* ✅ FIX: Truncated IDs with Tooltip */}
-                <td className="res-td-mono res-td-muted" style={{ maxWidth: '90px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={res.id}>
-                  {res.id}
-                </td>
-                <td className="res-td-mono" style={{ maxWidth: '110px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={res.rbiId || 'N/A'}>
-                  {res.rbiId || '—'}
-                </td>
-                
-                <td>
-                  <div className="res-name-cell">
-                    <div className="res-avatar">
-                      <span>{initials}</span>
-                      {res.photoUrl && <img src={res.photoUrl} alt={res.name} onError={(e) => { e.target.style.visibility = 'hidden'; }} />}
-                    </div>
-                    <div className="res-name-info">
-                      <strong className="res-name-text">{res.name}</strong>
-                      {res.conflict && (
-                        <span className="badge r res-conflict-badge" title="Data conflict detected">
-                          <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M10.3 3.9 2.5 17a2 2 0 0 0 1.7 3h15.6a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
-                            <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
-                          </svg> Conflict
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                </td>
-                
-                <td><span className={`badge ${res.purokClass}`}>{res.purok || 'N/A'}</span></td>
-                
-                {/* ✅ FIX: Fallback for empty data */}
-                <td>{res.age || '—'}</td>
-                <td>{res.civilStatus || '—'}</td>
-                
-                <td>
-                  <span className={`badge ${res.voter ? 'g' : 'gr'}`}>{res.voter ? 'Yes' : 'No'}</span>
-                </td>
-                
-                {role === 'admin' && (
-                  <td className="res-td-mono">
-                    {res.household ? (
-                      <span className="badge res-household-badge" title={`View household ${res.household}`} onClick={() => { setSelectedHouseholdId(res.household); nav('view-household'); }} style={{ cursor: 'pointer' }}>
-                        {res.household}
-                      </span>
-                    ) : <span className="res-td-muted">—</span>}
-                  </td>
-                )}
-                
-                <td>
-                  <div className="res-actions">
-                    {viewMode === 'active' && (
-                      <>
-                        <button className="btn btn-sm action-btn-view" onClick={() => { setSelectedResidentId(res.id); nav('view-resident'); }} title="View Profile">
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Z" /><circle cx="12" cy="12" r="3" /></svg>
-                        </button>
-                        <button className="btn btn-sm action-btn-edit" onClick={() => { /* edit logic */ nav('edit-resident'); }} title="Edit Details">
-                          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 20h9" /><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" /></svg>
-                        </button>
-                        
-                        {!res.hasAccount && (
-                          <button className="btn btn-sm res-btn-credentials" onClick={() => handleGenerateCredentials(res)} title="Generate Login Credentials">
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>
-                          </button>
-                        )}
-                        
-                        {role === 'admin' && (
-                          <button className="btn btn-sm action-btn-delete" onClick={() => handleArchiveResident(res.id, res.name)} title="Archive Resident">
-
-                            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></svg>
-                          </button>
-                        )}
-                      </>
-                    )}
-                    
-                    {viewMode === 'archived' && role === 'admin' && (
-                      <button className="btn btn-sm res-btn-restore" onClick={async () => {
-                        const confirmRestore = window.confirm(`I-restore ba si ${res.name} sa Active Residents list?`);
-                        if (!confirmRestore) return;
-                        try {
-                          const existingDoc = await db.get(res.id);
-                          const restoredDoc = { ...existingDoc, isArchived: false, archivedAt: null, updatedAt: new Date().toISOString() };
-                          await db.put(restoredDoc);
-                          await createAuditLog({ action: 'RESTORE_RESIDENT', module: 'RESIDENTS', recordId: res.id, details: `Restored archived resident: ${res.name}` });
-                          showToast(`${res.name} has been restored successfully.`, 'success');
-                          fetchResidents();
-                        } catch (err) {
-                          console.error('Failed to restore:', err);
-                          showToast('Failed to restore resident.', 'error');
-                        }
-                      }} title="Restore Resident">
-                        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" /><path d="M3 3v5h5" /></svg> Restore
-                      </button>
-                    )}
-                  </div>
-                </td>
-              </tr>
-            );
-          })
-        )}
-      </tbody>
-            </table>
-          </div>
-        </div>
-      )}
+                    <ResidentsScreen
+                      residentsList={residentsList}
+                      filteredResidents={filteredResidents}
+                      sortedFilteredResidents={sortedFilteredResidents}
+                      isResidentsLoading={isResidentsLoading}
+                      viewMode={viewMode}
+                      role={role}
+                      searchTerm={searchTerm}
+                      setSearchTerm={setSearchTerm}
+                      purokFilter={purokFilter}
+                      setPurokFilter={setPurokFilter}
+                      genderFilter={genderFilter}
+                      setGenderFilter={setGenderFilter}
+                      residentSort={residentSort}
+                      selectedResidents={selectedResidents}
+                      setSelectedResidents={setSelectedResidents}
+                      showBulkDropdown={showBulkDropdown}
+                      setShowBulkDropdown={setShowBulkDropdown}
+                      handleResidentSort={handleResidentSort}
+                      handleStartEditResident={handleStartEditResident}
+                      handleArchiveResident={handleArchiveResident}
+                      handleGenerateCredentials={handleGenerateCredentials}
+                      setSelectedResidentId={setSelectedResidentId}
+                      setSelectedHouseholdId={setSelectedHouseholdId}
+                      setShowAddResidentModal={setShowAddResidentModal}
+                      setEditingResidentId={setEditingResidentId}
+                      setResidentForm={setResidentForm}
+                      setHouseholdAssignmentMode={setHouseholdAssignmentMode}
+                      setHouseholdForm={setHouseholdForm}
+                      EMPTY_HOUSEHOLD={EMPTY_HOUSEHOLD}
+                      EMPTY_RESIDENT={EMPTY_RESIDENT}
+                      showToast={showToast}
+                      nav={nav}
+                      exportToExcel={exportToExcel}
+                    />
+                  )}
 
                     {/* ════════════════════════════════════════
                         SCREEN: EDIT RESIDENT
                         ════════════════════════════════════════ */}
-                        {screen === 'edit-resident' && (
-                          <div className="screen active" style={{ padding: '0 0 24px 0' }}>
-                            {/* ✅ NEW: Top Header with Back Button para hindi na kailangang mag-scroll pababa */}
-                            <div style={{ 
-                              display: 'flex', 
-                              justifyContent: 'space-between', 
-                              alignItems: 'center', 
-                              marginBottom: '20px', 
-                              padding: '16px 24px', 
-                              background: 'var(--surface)', 
-                              borderBottom: '1px solid var(--border)',
-                              borderRadius: '8px',
-                              margin: '0 24px 20px 24px'
-                            }}>
-                              <button 
-                                className="btn btn-g" 
-                                onClick={() => { 
-                                  setEditingResidentId(null); 
-                                  setResidentForm(EMPTY_RESIDENT); 
-                                  nav('residents'); 
-                                }} 
-                                style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-                              >
-                                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                  <path d="M19 12H5" />
-                                  <path d="M12 19l-7-7 7-7" />
-                                </svg>
-                                Back to Residents
-                              </button>
-                              
-                              <div style={{ fontSize: '18px', fontWeight: '800', color: 'var(--text)' }}>
-                                Edit Resident Profile
-                              </div>
-                              
-                              <div style={{ width: '120px' }}></div> {/* Spacer para centered ang title */}
-                            </div>
+                       {screen === 'edit-resident' && (
+  <div className="screen active" style={{ padding: '0 0 24px 0' }}>
+    <div style={{
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      marginBottom: '20px',
+      padding: '16px 24px',
+      background: 'var(--surface)',
+      borderBottom: '1px solid var(--border)',
+      borderRadius: '8px',
+      margin: '0 24px 20px 24px'
+    }}>
+      <button
+        className="btn btn-g"
+        onClick={() => {
+          setEditingResidentId(null);
+          setResidentForm(EMPTY_RESIDENT);
+          nav('residents');
+        }}
+        style={{ display: 'flex', alignItems: 'center', gap: '6px', minWidth: '140px' }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M19 12H5" />
+          <path d="M12 19l-7-7 7-7" />
+        </svg>
+        Back to Residents
+      </button>
 
-                            <ResidentForm
-                              residentForm={residentForm}
-                              setResidentForm={setResidentForm}
-                              editingResidentId={editingResidentId}
-                              photoPreviewUrl={photoPreviewUrl}
-                              setPhotoPreviewUrl={setPhotoPreviewUrl}
-                              handlePhotoChange={handlePhotoChange}
-                              handleRemovePhoto={handleRemovePhoto}
-                              updateResidentField={updateResidentField}
-                              submitAddResident={submitAddResident}
-                              households={householdsList}
-                              householdAssignmentMode={householdAssignmentMode}
-                              setHouseholdAssignmentMode={setHouseholdAssignmentMode}
-                              householdForm={householdForm}
-                              setHouseholdForm={setHouseholdForm}
-                              canCreateHousehold={role === 'admin'}
-                              nav={nav}
-                              setEditingResidentId={setEditingResidentId}
-                              EMPTY_RESIDENT={EMPTY_RESIDENT}
-                              onCancel={handleCancelResidentForm}
-                            />
-                          </div>
-                        )}
+      <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)', textAlign: 'center', flex: 1 }}>
+        Edit Resident Profile
+      </div>
 
-            {/* ════════════════════════════════════════
-                SCREEN: ADD RESIDENT
-                ════════════════════════════════════════ */}
-                  {screen === 'add-resident' && (
-                    <ResidentForm 
-                      residentForm={residentForm}
-                      setResidentForm={setResidentForm}
-                      editingResidentId={editingResidentId}
-                      photoPreviewUrl={photoPreviewUrl}
-                      setPhotoPreviewUrl={setPhotoPreviewUrl}
-                      handlePhotoChange={handlePhotoChange}
-                      handleRemovePhoto={handleRemovePhoto}
-                      updateResidentField={updateResidentField}
-                      submitAddResident={submitAddResident}
-                      households={householdsList}
-                      householdAssignmentMode={householdAssignmentMode}
-                      setHouseholdAssignmentMode={setHouseholdAssignmentMode}
-                      householdForm={householdForm}
-                      setHouseholdForm={setHouseholdForm}
-                      canCreateHousehold={role === 'admin'}
-                      nav={nav}
-                      setEditingResidentId={setEditingResidentId}
-                      EMPTY_RESIDENT={EMPTY_RESIDENT}
-                      onCancel={handleCancelResidentForm}
-                    />
-                  )}
+      <div style={{ minWidth: '140px' }}></div>
+    </div>
+
+    <ResidentForm
+      residentForm={residentForm}
+      setResidentForm={setResidentForm}
+      editingResidentId={editingResidentId}
+      photoPreviewUrl={photoPreviewUrl}
+      setPhotoPreviewUrl={setPhotoPreviewUrl}
+      handlePhotoChange={handlePhotoChange}
+      handleRemovePhoto={handleRemovePhoto}
+      updateResidentField={updateResidentField}
+      submitAddResident={submitAddResident}
+      households={householdsList}
+      householdAssignmentMode={householdAssignmentMode}
+      setHouseholdAssignmentMode={setHouseholdAssignmentMode}
+      householdForm={householdForm}
+      setHouseholdForm={setHouseholdForm}
+      canCreateHousehold={role === 'admin'}
+      nav={nav}
+      setEditingResidentId={setEditingResidentId}
+      EMPTY_RESIDENT={EMPTY_RESIDENT}
+      onCancel={handleCancelResidentForm}
+    />
+  </div>
+)}
 
             {/* ════════════════════════════════════════
                 SCREEN: VIEW RESIDENT PROFILE
@@ -9641,57 +9346,206 @@ const handleGenerateCredentials = async (resident) => {
             {/* ════════════════════════════════════════
                 SCREEN: ADD HOUSEHOLD
                 ════════════════════════════════════════ */}
-            {screen === 'add-household' && (
-              <div className="screen active">
-                <div className="tw" style={{ padding: '24px', maxWidth: '600px', margin: '0 auto' }}>
-                  <form onSubmit={role === 'admin' ? submitAddHousehold : (e) => e.preventDefault()}>
-                    <div style={{ marginBottom: '16px' }}>
-                      <label style={{ display: 'block', color: 'var(--muted)', marginBottom: '6px', fontSize: '13px' }}>Head of Family (Format: Lastname, Firstname M.)</label>
-                      <input 
-                        className="fc" 
-                        placeholder="e.g., Obrero, Jay N."
-                        value={householdForm.head}
-                        onChange={(e) => setHouseholdForm({...householdForm, head: e.target.value})}
-                        required
-                      />
-                    </div>
+                {screen === 'add-household' && (
+  <div className="screen active">
+    <div style={{ padding: '24px', maxWidth: '900px', margin: '0 auto' }}>
 
-                    <div style={{ marginBottom: '16px' }}>
-                      <label style={{ display: 'block', color: 'var(--muted)', marginBottom: '6px', fontSize: '13px' }}>Complete Address</label>
-                      <input 
-                        className="fc" 
-                        placeholder="e.g., No. 7, Zone 1, Nabua"
-                        value={householdForm.address}
-                        onChange={(e) => setHouseholdForm({...householdForm, address: e.target.value})}
-                        required
-                      />
-                    </div>
+      {/* ═══ Back Button ═══ */}
+      <button
+        type="button"
+        onClick={() => nav('households')}
+        style={{
+          display: 'inline-flex', alignItems: 'center', gap: 6,
+          background: 'transparent', border: 'none',
+          color: 'var(--muted)', fontSize: 13, fontWeight: 600,
+          cursor: 'pointer', padding: '6px 0', marginBottom: 12,
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M19 12H5M12 19l-7-7 7-7" />
+        </svg>
+        Back to Households
+      </button>
 
-                    <div style={{ marginBottom: '24px' }}>
-                      <label style={{ display: 'block', color: 'var(--muted)', marginBottom: '6px', fontSize: '13px' }}>Purok Assignment</label>
-                      <select 
-                        className="fc"
-                        value={householdForm.purok}
-                        onChange={(e) => setHouseholdForm({...householdForm, purok: e.target.value})}
-                        required
-                      >
-                        <option value="">-- Select Purok --</option>
-                        <option value="Purok 1">Purok 1</option>
-                        <option value="Purok 2">Purok 2</option>
-                        <option value="Purok 3">Purok 3</option>
-                        <option value="Purok 4">Purok 4</option>
-                        <option value="Purok 5">Purok 5</option>
-                      </select>
-                    </div>
+      {/* ═══ Page Header ═══ */}
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ fontSize: 24, fontWeight: 800, color: 'var(--text)', margin: 0, letterSpacing: '-0.4px' }}>
+          Register New Household
+        </h1>
+        <p style={{ fontSize: 13, color: 'var(--muted)', margin: '6px 0 0 0', lineHeight: 1.5 }}>
+          Fill out the details below to register a family unit in the barangay registry.
+        </p>
+      </div>
 
-                    <div style={{ display: 'flex', gap: '12px', justifyContent: 'flex-end' }}>
-                      <button type="button" className="btn btn-g" onClick={() => { setHouseholdForm(EMPTY_HOUSEHOLD); nav('households'); }}>Cancel</button>
-                      <button type="submit" className="btn btn-p">💾 Save Household</button>
-                    </div>
-                  </form>
-                </div>
-              </div>
-            )}
+      {/* ═══ Form Card ═══ */}
+      <div style={{
+        background: 'var(--surface)',
+        border: '1px solid var(--border)',
+        borderRadius: 14,
+        overflow: 'hidden',
+        boxShadow: '0 4px 16px rgba(0,0,0,0.06)',
+      }}>
+
+        {/* Card Header */}
+        <div style={{
+          display: 'flex', alignItems: 'center', gap: 12,
+          padding: '18px 24px',
+          background: 'linear-gradient(135deg, var(--surface2) 0%, var(--surface) 100%)',
+          borderBottom: '1px solid var(--border)',
+        }}>
+          <div style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            width: 40, height: 40, borderRadius: 10,
+            background: 'var(--accent-bg)', color: 'var(--accent)',
+            border: '1px solid rgba(79,142,247,0.25)',
+          }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M3 9l9-7 9 7v11a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z" />
+              <polyline points="9 22 9 12 15 12 15 22" />
+            </svg>
+          </div>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)' }}>
+              Household Information
+            </div>
+            <div style={{ fontSize: 11.5, color: 'var(--muted)', marginTop: 2 }}>
+              All fields are required
+            </div>
+          </div>
+        </div>
+
+        {/* Form Body */}
+        <form onSubmit={role === 'admin' ? submitAddHousehold : (e) => e.preventDefault()}>
+          <div style={{ padding: '24px' }}>
+
+            {/* ── Head of Family ── */}
+            <div style={{ marginBottom: 20 }}>
+              <label className="fl" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
+                  <circle cx="12" cy="7" r="4" />
+                </svg>
+                Head of Family
+                <span style={{ color: 'var(--red)', marginLeft: 2 }}>*</span>
+              </label>
+              <input
+                className="fc"
+                placeholder="e.g., Obrero, Jay N."
+                value={householdForm.head}
+                onChange={(e) => setHouseholdForm({ ...householdForm, head: e.target.value })}
+                required
+                style={{ fontSize: 14, padding: '11px 14px' }}
+              />
+              <span style={{ display: 'block', marginTop: 6, fontSize: 11, color: 'var(--hint)' }}>
+                Format: <strong style={{ color: 'var(--muted)' }}>Lastname, Firstname MiddleInitial.</strong>
+              </span>
+            </div>
+
+            {/* ── Complete Address ── */}
+            <div style={{ marginBottom: 20 }}>
+              <label className="fl" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z" />
+                  <circle cx="12" cy="10" r="3" />
+                </svg>
+                Complete Address
+                <span style={{ color: 'var(--red)', marginLeft: 2 }}>*</span>
+              </label>
+              <input
+                className="fc"
+                placeholder="e.g., No. 7, Zone 1, Nabua"
+                value={householdForm.address}
+                onChange={(e) => setHouseholdForm({ ...householdForm, address: e.target.value })}
+                required
+                style={{ fontSize: 14, padding: '11px 14px' }}
+              />
+              <span style={{ display: 'block', marginTop: 6, fontSize: 11, color: 'var(--hint)' }}>
+                Include house number, street, and zone/purok.
+              </span>
+            </div>
+
+            {/* ── Purok Assignment ── */}
+            <div style={{ marginBottom: 8 }}>
+              <label className="fl" style={{ marginBottom: 6, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                  <rect x="3" y="3" width="7" height="7" />
+                  <rect x="14" y="3" width="7" height="7" />
+                  <rect x="14" y="14" width="7" height="7" />
+                  <rect x="3" y="14" width="7" height="7" />
+                </svg>
+                Purok Assignment
+                <span style={{ color: 'var(--red)', marginLeft: 2 }}>*</span>
+              </label>
+              <select
+                className="fc"
+                value={householdForm.purok}
+                onChange={(e) => setHouseholdForm({ ...householdForm, purok: e.target.value })}
+                required
+                style={{ fontSize: 14, padding: '11px 14px', cursor: 'pointer' }}
+              >
+                <option value="">— Select Purok —</option>
+                <option value="Purok 1">Purok 1</option>
+                <option value="Purok 2">Purok 2</option>
+                <option value="Purok 3">Purok 3</option>
+                <option value="Purok 4">Purok 4</option>
+                <option value="Purok 5">Purok 5</option>
+              </select>
+              <span style={{ display: 'block', marginTop: 6, fontSize: 11, color: 'var(--hint)' }}>
+                The zone where this household is officially registered.
+              </span>
+            </div>
+
+          </div>
+
+          {/* ── Form Footer / Actions ── */}
+          <div style={{
+            display: 'flex', justifyContent: 'flex-end', gap: 10,
+            padding: '16px 24px',
+            background: 'var(--surface2)',
+            borderTop: '1px solid var(--border)',
+          }}>
+            <button
+              type="button"
+              className="btn btn-g"
+              onClick={() => { setHouseholdForm(EMPTY_HOUSEHOLD); nav('households'); }}
+              style={{ minWidth: 100, justifyContent: 'center' }}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="btn btn-p"
+              style={{ minWidth: 160, justifyContent: 'center', gap: 8 }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                <polyline points="17 21 17 13 7 13 7 21" />
+                <polyline points="7 3 7 8 15 8" />
+              </svg>
+              Save Household
+            </button>
+          </div>
+        </form>
+      </div>
+
+      {/* ═══ Help Info Box ═══ */}
+      <div style={{
+        marginTop: 20, padding: '14px 18px',
+        background: 'var(--accent-bg)',
+        border: '1px solid rgba(79,142,247,0.25)',
+        borderRadius: 10,
+        display: 'flex', alignItems: 'flex-start', gap: 12,
+      }}>
+        <span style={{ fontSize: 18, flexShrink: 0, lineHeight: 1 }}></span>
+        <div style={{ fontSize: 12.5, color: 'var(--text)', lineHeight: 1.6 }}>
+          <strong style={{ display: 'block', marginBottom: 2, color: 'var(--accent)' }}>Quick tip</strong>
+          Make sure the head of family's name matches the format used in existing records for easier searching and matching.
+        </div>
+      </div>
+
+    </div>
+  </div>
+)}
 
             {/* ════════════════════════════════════════
                  SCREEN: EDIT HOUSEHOLD
@@ -10167,111 +10021,121 @@ const handleGenerateCredentials = async (resident) => {
                 {/* ════════════════════════════════════════
                     SCREEN: NEW STANDARD CERTIFICATE REQUEST
                     ════════════════════════════════════════ */}
-                {screen === 'cert-new' && (
-                  <div className="screen active" style={{ padding: '24px', maxWidth: '720px', margin: '0 auto' }}>
-                    
-                    {/* Header */}
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '24px' }}>
-                      <button className="btn btn-g" onClick={() => nav('cert-req')} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                          <path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/>
-                        </svg>
-                        Back
-                      </button>
-                      <div>
-                        <h2 style={{ margin: 0, fontSize: '20px', fontWeight: 800, color: 'var(--text)' }}>New Standard Certificate</h2>
-                        <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>Indigency, Residency, and other general certificates</p>
-                      </div>
-                    </div>
+                    {screen === 'cert-new' && (
+  <div className="screen active screen-narrow">
 
-                    {/* Form Card */}
-                    <div className="card" style={{ padding: '24px' }}>
-                      
-                      {/* Resident Select */}
-                      <div className="fg" style={{ marginBottom: '16px' }}>
-                        <label className="fl">Resident <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <ResidentCombobox
-                          residents={residentsList}
-                          value={standardCertForm.residentId}
-                          onChange={(selected) => setStandardCertForm(prev => ({
-                            ...prev,
-                            residentId: selected?.id || '',
-                            residentName: selected?.name || ''
-                          }))}
-                          placeholder="Search registered resident..."
-                        />
-                      </div>
+    {/* ── Simple Back Link ── */}
+    <button
+      type="button"
+      className="btn btn-g"
+      onClick={() => nav('cert-req')}
+      style={{
+        marginBottom: 20,
+        padding: '6px 14px',
+        fontSize: 13,
+        display: 'inline-flex',
+        alignItems: 'center',
+        gap: 6,
+      }}
+    >
+      ← Back
+    </button>
 
-                      {/* Certificate Type */}
-                      <div className="fg" style={{ marginBottom: '16px' }}>
-                        <label className="fl">Certificate Type <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <select
-                          className="fc"
-                          value={standardCertForm.certificateType}
-                          onChange={(e) => setStandardCertForm(prev => ({ ...prev, certificateType: e.target.value }))}
-                        >
-                          <option value="indigency">Certificate of Indigency</option>
-                          <option value="residency">Certificate of Residency</option>
-                          <option value="barangay_clearance">Barangay Clearance (General)</option>
-                        </select>
-                      </div>
+    {/* ── Form Card ── */}
+    <div className="card" style={{ padding: '24px' }}>
+      <form
+        onSubmit={(e) => {
+          e.preventDefault();
+          handleSubmitStandardCert();
+        }}
+      >
+        {/* Resident */}
+        <div className="fg">
+          <label className="fl" htmlFor="cert-new-resident">
+            Resident <span style={{ color: 'var(--red)' }}>*</span>
+          </label>
+          <ResidentCombobox
+            residents={residentsList}
+            value={standardCertForm.residentId}
+            onChange={(selected) =>
+              setStandardCertForm((prev) => ({
+                ...prev,
+                residentId: selected?.id || '',
+                residentName: selected?.name || '',
+              }))
+            }
+            placeholder="Search registered resident…"
+          />
+        </div>
 
-                      {/* Purpose */}
-                      <div className="fg" style={{ marginBottom: '24px' }}>
-                        <label className="fl">Purpose <span style={{ color: 'var(--red)' }}>*</span></label>
-                        <input
-                          className="fc"
-                          placeholder="e.g. Scholarship application, employment requirement"
-                          value={standardCertForm.purpose}
-                          onChange={(e) => setStandardCertForm(prev => ({ ...prev, purpose: e.target.value }))}
-                        />
-                      </div>
+        {/* Certificate Type — Indigency & Residency lang */}
+        <div className="fg">
+          <label className="fl" htmlFor="cert-new-type">
+            Certificate Type <span style={{ color: 'var(--red)' }}>*</span>
+          </label>
+          <select
+            id="cert-new-type"
+            className="fc"
+            value={standardCertForm.certificateType}
+            onChange={(e) =>
+              setStandardCertForm((prev) => ({
+                ...prev,
+                certificateType: e.target.value,
+              }))
+            }
+          >
+            <option value="indigency">Certificate of Indigency</option>
+            <option value="residency">Certificate of Residency</option>
+          </select>
+        </div>
 
-                      {/* Actions */}
-                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px' }}>
-                        <button className="btn btn-g" onClick={() => nav('cert-req')}>Cancel</button>
-                        <button
-                          className="btn btn-p"
-                          onClick={async () => {
-                            if (!standardCertForm.residentId || !standardCertForm.purpose) {
-                              showToast('Please complete all required fields.', 'error');
-                              return;
-                            }
-                            const resident = residentsList.find(r => r.id === standardCertForm.residentId);
-                            const now = new Date().toISOString();
-                            
-                            const payload = {
-                              _id: `certificate_request_${Date.now()}`,
-                              type: 'certificate_request',
-                              firstName: resident?.firstName || resident?.name?.split(' ')[0] || '',
-                              lastName: resident?.lastName || resident?.name?.split(' ').slice(1).join(' ') || '',
-                              residentName: resident?.name || '',
-                              certificateType: formatCertType(standardCertForm.certificateType),
-                              certType: standardCertForm.certificateType,
-                              purpose: standardCertForm.purpose,
-                              purok: resident?.purok || 'Purok 1',
-                              status: 'Under Review',
-                              step: 1,
-                              createdAt: now,
-                              updatedAt: now,
-                            };
+        {/* Purpose */}
+        <div className="fg" style={{ marginBottom: 0 }}>
+          <label className="fl" htmlFor="cert-new-purpose">
+            Purpose <span style={{ color: 'var(--red)' }}>*</span>
+          </label>
+          <textarea
+            id="cert-new-purpose"
+            className="fc"
+            rows={3}
+            placeholder="e.g. Scholarship application, employment requirement, hospital assistance"
+            value={standardCertForm.purpose}
+            onChange={(e) =>
+              setStandardCertForm((prev) => ({
+                ...prev,
+                purpose: e.target.value,
+              }))
+            }
+            style={{ resize: 'vertical', minHeight: 70 }}
+          />
+        </div>
 
-                            try {
-                              await db.put(payload);
-                              showToast('Certificate request submitted successfully!', 'success');
-                              nav('cert-req');
-                            } catch (err) {
-                              console.error('Failed to save certificate request:', err);
-                              showToast('Failed to save request.', 'error');
-                            }
-                          }}
-                        >
-                          Submit Request
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
+        {/* Actions */}
+        <div className="form-actions" style={{ marginTop: 24 }}>
+          <button
+            type="button"
+            className="btn btn-g"
+            onClick={() => nav('cert-req')}
+            disabled={isSavingStandardCert}
+          >
+            Cancel
+          </button>
+          <button
+            type="submit"
+            className="btn btn-p"
+            disabled={isSavingStandardCert}
+            style={{
+              opacity: isSavingStandardCert ? 0.7 : 1,
+              cursor: isSavingStandardCert ? 'not-allowed' : 'pointer',
+            }}
+          >
+            {isSavingStandardCert ? 'Submitting…' : 'Submit Request'}
+          </button>
+        </div>
+      </form>
+    </div>
+  </div>
+)}
 
             {/* ════════════════════════════════════════
                 SCREEN: ISSUANCE & PRINT
@@ -10287,11 +10151,12 @@ const handleGenerateCredentials = async (resident) => {
                     setIssuanceMeta={setIssuanceMeta}
                     blotterVerifyQuery={blotterVerifyQuery}
                     setBlotterVerifyQuery={setBlotterVerifyQuery}
-                    blotterMatches={blotterMatches}
                     printMode={printMode}
                     setPrintMode={setPrintMode}
                     onOpenPrintPreview={onOpenPrintPreview}
                     showToast={showToast}
+                    notifyDesktop={notifyDesktop} 
+                    nav={nav} 
                   />
                 )}
 
@@ -10300,18 +10165,61 @@ const handleGenerateCredentials = async (resident) => {
                 ════════════════════════════════════════ */}
                 {screen === 'brgy_clearance' && (
                   <div className="screen active">
+                      {/* ═══ BACK BUTTON ═══ */}
+                    <div style={{ 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: 12, 
+                      marginBottom: 20,
+                      paddingBottom: 16,
+                      borderBottom: '1px solid var(--border)',
+                    }}>
+                      <button
+                        type="button"
+                        className="btn btn-g"
+                        onClick={() => {
+                          const hasUnsavedData =
+                            clearanceForm.selectedResidentId ||
+                            clearanceForm.purpose?.trim() ||
+                            clearanceForm.orNo?.trim() ||
+                            clearanceForm.amtPaid;
+                          
+                          if (hasUnsavedData) {
+                            Swal.fire({
+                              title: 'Discard Changes?',
+                              text: 'May mga hindi pa naka-save na data. Sigurado ka bang gusto mong bumalik?',
+                              icon: 'warning',
+                              showCancelButton: true,
+                              confirmButtonColor: '#ef4444',
+                              cancelButtonColor: '#64748b',
+                              confirmButtonText: 'Yes, Discard',
+                              cancelButtonText: 'Keep Editing',
+                            }).then((result) => {
+                              if (result.isConfirmed) {
+                                resetClearanceForm(); 
+                                nav('cert-req');
+                              }
+                            });
+                          } else {
+                            nav('cert-req');
+                          }
+                        }}
+                        style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+                      >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M19 12H5M12 19l-7-7 7-7" />
+                        </svg>
+                        Back to Requests
+                      </button>
+                    </div>
                     {/* ── CLEARANCE DATA CAPTURE FORM ─ */}
                     <form onSubmit={handleSaveClearance}>
-                    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '24px', marginBottom: '24px' }}>
+                    <div className="form-2col" style={{ marginBottom: '24px' }}>
 
-                      {/* LEFT COLUMN: APPLICANT & BLOTTER VERIFICATION */}
+                      {/* LEFT COLUMN: RESIDENT & BLOTTER */}
                       <div className="fp" style={{ margin: 0, padding: '24px' }}>
                         <div className="fp-t" style={{ fontSize: '15px', fontWeight: 700, marginBottom: '20px', paddingBottom: '12px', borderBottom: '2px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
-                          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
-                            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-                            <circle cx="12" cy="7" r="4" />
-                          </svg>
-                          APPLICANT & BLOTTER VERIFICATION
+                          APPLICANT &amp; BLOTTER VERIFICATION
                         </div>
 
                         {/* Clearance No & Date Issued */}
@@ -10344,19 +10252,16 @@ const handleGenerateCredentials = async (resident) => {
                                   purok: '',
                                   address: '',
                                   hasBlotterRecord: false,
+                                  blotterReviewNeeded: false,
                                 }));
                                 return;
                               }
 
-                              const resName = (selected.name || `${selected.firstName || ''} ${selected.lastName || ''}`).trim().toLowerCase();
-                              const activeCases = blotterList.filter(b => {
-                                const isClosed = ['Settled / Resolved', 'Resolved', 'Settled', 'Dismissed', 'Referred to PNP (CFA Issued)'].includes(b.status);
-                                if (isClosed) return false;
-                                const comp = (b.complainant || '').toLowerCase();
-                                const resp = (b.respondent || '').toLowerCase();
-                                const matchesName = comp.includes(resName) || resp.includes(resName) || resName.includes(comp) || resName.includes(resp);
-                                const matchesId = b.complainantId === selected.id || b.respondentId === selected.id;
-                                return matchesName || matchesId;
+                              const { confirmed, ambiguous } = matchActiveBlotterCases(blotterList, {
+                                id: selected.id,
+                                name: selected.name,
+                                firstName: selected.firstName,
+                                lastName: selected.lastName,
                               });
 
                               setClearanceForm(prev => ({
@@ -10367,7 +10272,8 @@ const handleGenerateCredentials = async (resident) => {
                                 rbiId: selected.rbiId || selected.rbiNo || '—',
                                 purok: selected.purok || '—',
                                 address: selected.purokZoneAddress || selected.purok || '—',
-                                hasBlotterRecord: activeCases.length > 0,
+                                hasBlotterRecord: confirmed.length > 0,
+                                blotterReviewNeeded: confirmed.length === 0 && ambiguous.length > 0,
                                 ctcName: selected.name || `${selected.firstName || ''} ${selected.lastName || ''}`.trim(),
                               }));
                             }}
@@ -10376,7 +10282,7 @@ const handleGenerateCredentials = async (resident) => {
 
                         {/* Auto-populated Resident Details */}
                         {clearanceForm.selectedResidentId && (
-                          <div className="fg3" style={{ marginBottom: '16px', display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '12px' }}>
+                          <div className="fg3" style={{ marginBottom: '16px' }}>
                             <div className="fg" style={{ marginBottom: 0 }}>
                               <label className="fl">RESIDENT ID</label>
                               <input type="text" className="fc" readOnly style={{ background: 'var(--surface2)', opacity: 0.8 }} value={clearanceForm.residentId} />
@@ -10405,34 +10311,45 @@ const handleGenerateCredentials = async (resident) => {
                         </div>
 
                         {/* BLOTTER VERIFICATION PANEL - Read Only */}
-                        <div style={{ padding: '16px', borderRadius: '10px', background: clearanceForm.hasBlotterRecord ? 'rgba(248, 113, 113, 0.08)' : 'rgba(52, 211, 153, 0.08)', border: `1.5px solid ${clearanceForm.hasBlotterRecord ? 'rgba(248, 113, 113, 0.3)' : 'rgba(52, 211, 153, 0.3)'}`, transition: 'all 0.3s ease' }}>
+                        {(() => {
+                          const hasCase = clearanceForm.hasBlotterRecord;
+                          const needsReview = !hasCase && clearanceForm.blotterReviewNeeded;
+                          const accent = hasCase ? '#f87171' : needsReview ? '#fbbf24' : '#34d399';
+                          const bg = hasCase ? 'rgba(248, 113, 113, 0.08)' : needsReview ? 'rgba(251, 191, 36, 0.08)' : 'rgba(52, 211, 153, 0.08)';
+                          const border = hasCase ? 'rgba(248, 113, 113, 0.3)' : needsReview ? 'rgba(251, 191, 36, 0.35)' : 'rgba(52, 211, 153, 0.3)';
+                          return (
+                        <div style={{ padding: '16px', borderRadius: '10px', background: bg, border: `1.5px solid ${border}`, transition: 'all 0.3s ease' }}>
                           <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: clearanceForm.selectedResidentId ? '8px' : '0' }}>
-                            {clearanceForm.hasBlotterRecord ? (
+                            {hasCase ? (
                               <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(248, 113, 113, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                                 <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#f87171" strokeWidth="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" /><line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" /></svg>
                               </div>
                             ) : (
-                              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: 'rgba(52, 211, 153, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#34d399" strokeWidth="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
+                              <div style={{ width: '32px', height: '32px', borderRadius: '50%', background: needsReview ? 'rgba(251, 191, 36, 0.15)' : 'rgba(52, 211, 153, 0.15)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke={accent} strokeWidth="2.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>
                               </div>
                             )}
-                            <span style={{ fontSize: '13px', fontWeight: 700, color: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399' }}>
+                            <span style={{ fontSize: '13px', fontWeight: 700, color: accent }}>
                               Blotter Verification
                             </span>
                           </div>
-                          <div style={{ fontSize: '12px', color: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399', paddingLeft: clearanceForm.selectedResidentId ? '42px' : '0', lineHeight: '1.6', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
+                          <div style={{ fontSize: '12px', color: accent, paddingLeft: clearanceForm.selectedResidentId ? '42px' : '0', lineHeight: '1.6', fontWeight: 500, display: 'flex', alignItems: 'center', gap: '8px' }}>
                             {!clearanceForm.selectedResidentId ? (
                               'Select a resident to verify blotter status.'
                             ) : (
                               <>
-                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: clearanceForm.hasBlotterRecord ? '#f87171' : '#34d399', display: 'inline-block' }} />
-                                {clearanceForm.hasBlotterRecord
-                                  ? 'Warning: Active blotter case(s) found for this resident.'
-                                  : 'Verified: No active blotter case found on local masterlist.'}
+                                <span style={{ width: '8px', height: '8px', borderRadius: '50%', background: accent, display: 'inline-block' }} />
+                                {hasCase
+                                  ? 'Confirmed: active blotter case(s) found (matched by resident ID or exact name).'
+                                  : needsReview
+                                    ? 'Possible name match only — this does NOT confirm an active case. Review the blotter masterlist manually before issuing.'
+                                    : 'Verified: no active blotter case found on the local masterlist.'}
                               </>
                             )}
                           </div>
                         </div>
+                          );
+                        })()}
                       </div>
 
                       {/* RIGHT COLUMN: RECEIPT, CTC & SIGNATORIES */}
@@ -10445,7 +10362,20 @@ const handleGenerateCredentials = async (resident) => {
                         <div className="fg2" style={{ marginBottom: '20px' }}>
                           <div className="fg" style={{ marginBottom: 0 }}>
                             <label className="fl">O.R. NUMBER <span style={{ color: 'var(--red)' }}>*</span></label>
-                            <input type="text" className="fc" required placeholder="e.g. 1234567" value={clearanceForm.orNo} onChange={(e) => setClearanceForm({ ...clearanceForm, orNo: e.target.value })} style={{ fontFamily: 'var(--mono)' }} />
+                            <input
+  type="text"
+  inputMode="numeric"
+  className="fc"
+  required
+  placeholder="e.g. 08605032"
+  maxLength={8}
+  value={clearanceForm.orNo}
+  onChange={(e) => {
+    const cleaned = e.target.value.replace(/\D/g, '').slice(0, 8);
+    setClearanceForm({ ...clearanceForm, orNo: cleaned });
+  }}
+  style={{ fontFamily: 'var(--mono)' }}
+/>
                           </div>
                           <div className="fg" style={{ marginBottom: 0 }}>
                             <label className="fl">CLEARANCE FEE (₱) <span style={{ color: 'var(--red)' }}>*</span></label>
@@ -10457,10 +10387,6 @@ const handleGenerateCredentials = async (resident) => {
                         <div style={{ border: '2px dashed var(--border)', padding: '18px', borderRadius: '10px', background: 'var(--surface2)', marginBottom: '20px' }}>
                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: clearanceForm.includeCtc ? '14px' : '0', paddingBottom: clearanceForm.includeCtc ? '12px' : '0', borderBottom: clearanceForm.includeCtc ? '1px solid var(--border)' : 'none' }}>
                             <span style={{ fontSize: '13px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '8px' }}>
-                              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="2">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                              </svg>
                               COMMUNITY TAX CERTIFICATE (CTC)
                             </span>
                             {!clearanceForm.includeCtc ? (
@@ -10484,7 +10410,21 @@ const handleGenerateCredentials = async (resident) => {
                                 </div>
                                 <div className="fg" style={{ marginBottom: 0 }}>
                                   <label className="fl">CTC AMT. PAID (₱) <span style={{ color: 'var(--red)' }}>*</span></label>
-                                  <input type="number" className="fc" required={clearanceForm.includeCtc} placeholder="0.00" value={clearanceForm.ctcAmtPaid} onChange={(e) => setClearanceForm({ ...clearanceForm, ctcAmtPaid: e.target.value })} />
+                                  <input
+                                    type="text"
+                                    inputMode="decimal"
+                                    className="fc"
+                                    required={clearanceForm.includeCtc}
+                                    placeholder="0.00"
+                                    value={clearanceForm.ctcAmtPaid}
+                                    onChange={(e) => {
+                                      const cleaned = e.target.value
+                                        .replace(/[^\d.]/g, '')
+                                        .replace(/(\..*)\./g, '$1')
+                                        .slice(0, 10);
+                                      setClearanceForm({ ...clearanceForm, ctcAmtPaid: cleaned });
+                                    }}
+                                  />
                                 </div>
                               </div>
                               <div className="fg2" style={{ marginBottom: 0 }}>
@@ -10591,13 +10531,14 @@ const handleGenerateCredentials = async (resident) => {
                               <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>Date Issued</th>
                               <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px' }}>O.R. No.</th>
                               <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'right' }}>Amount</th>
+                              <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'center' }}>Status</th>
                               <th style={{ padding: '14px 20px', fontWeight: 700, color: 'var(--muted)', fontSize: '11px', textTransform: 'uppercase', letterSpacing: '0.8px', textAlign: 'center' }}>Actions</th>
                             </tr>
                           </thead>
                           <tbody>
                             {filteredClearances.length === 0 ? (
                               <tr>
-                                <td colSpan="7" style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--muted)' }}>
+                                 <td colSpan="8" style={{ padding: '60px 20px', textAlign: 'center', color: 'var(--muted)' }}>
                                   <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '12px' }}>
                                     <div style={{ width: '64px', height: '64px', borderRadius: '50%', background: 'var(--surface2)', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '8px' }}>
                                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="1.5" style={{ opacity: 0.6 }}>
@@ -10619,19 +10560,20 @@ const handleGenerateCredentials = async (resident) => {
                                 </td>
                               </tr>
                             ) : (
-                              filteredClearances.map((rec) => (
+                              pagedClearances.map((rec) => (
                                 <tr 
                                   key={rec._id} 
                                   style={{ borderBottom: '1px solid var(--border)', transition: 'background-color 0.2s ease' }} 
                                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = 'var(--surface2)'; }} 
                                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = 'transparent'; }}
                                 >
-                                  <td style={{ padding: '16px 20px', fontWeight: '700', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--accent)' }}>{rec.clearanceNo}</td>
-                                  <td style={{ padding: '16px 20px', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text)' }}>{rec.fullName}</td>
-                                  <td style={{ padding: '16px 20px', color: 'var(--text)' }}>{rec.purpose}</td>
-                                  <td style={{ padding: '16px 20px', fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{rec.dateIssued}</td>
-                                  <td style={{ padding: '16px 20px', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--muted)' }}>{rec.orNo || '—'}</td>
-                                  <td style={{ padding: '16px 20px', fontWeight: 700, textAlign: 'right', color: 'var(--green)', fontFamily: 'var(--mono)' }}>₱{parseFloat(rec.amtPaid || 0).toFixed(2)}</td>
+                                  <td className="cell-nowrap" style={{ padding: '16px 20px', fontWeight: '700', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--accent)' }} title={rec.clearanceNo}>{rec.clearanceNo}</td>
+                                  <td className="cell-clip" style={{ padding: '16px 20px', textTransform: 'uppercase', fontWeight: 600, color: 'var(--text)' }} title={rec.fullName}>{rec.fullName}</td>
+                                  <td className="cell-clip" style={{ padding: '16px 20px', color: 'var(--text)' }} title={rec.purpose}>{rec.purpose}</td>
+                                  <td className="cell-nowrap" style={{ padding: '16px 20px', fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{rec.dateIssued}</td>
+                                  <td className="cell-nowrap" style={{ padding: '16px 20px', fontFamily: 'var(--mono)', fontSize: '12px', color: 'var(--muted)' }}>{rec.orNo || '—'}</td>
+                                  <td className="cell-nowrap" style={{ padding: '16px 20px', fontWeight: 700, textAlign: 'right', color: 'var(--green)', fontFamily: 'var(--mono)' }}>{formatCurrency(rec.amtPaid)}</td>
+                                  <td style={{ padding: '16px 20px', textAlign: 'center' }}><StatusBadge doc={rec} /></td>
                                   <td style={{ padding: '16px 20px', textAlign: 'center' }}>
                                     <div style={{ display: 'flex', gap: '8px', justifyContent: 'center' }}>
                                       <button 
@@ -10667,6 +10609,18 @@ const handleGenerateCredentials = async (resident) => {
                           </tbody>
                         </table>
                       </div>
+                      {/* Pagination */}
+                      {filteredClearances.length > MASTERLIST_PAGE_SIZE && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '14px 24px', borderTop: '1px solid var(--border)' }}>
+                          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                            Page {safeClearancePage} of {totalClearancePages}
+                          </span>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button type="button" className="btn btn-g" disabled={safeClearancePage <= 1} onClick={() => setClearancePage((p) => Math.max(1, p - 1))} style={{ padding: '6px 14px', fontSize: '12px' }}>Prev</button>
+                            <button type="button" className="btn btn-g" disabled={safeClearancePage >= totalClearancePages} onClick={() => setClearancePage((p) => Math.min(totalClearancePages, p + 1))} style={{ padding: '6px 14px', fontSize: '12px' }}>Next</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -10676,25 +10630,86 @@ const handleGenerateCredentials = async (resident) => {
                 ════════════════════════════════════════ */}
                 {screen === 'business_clearance' && (
                   <div className="screen active">
-                    
-                    {/* ── TAB BUTTONS (PAGE 1 / PAGE 2) ── */}
-                    <div style={{ display: 'flex', gap: '6px', marginBottom: '16px', borderBottom: '2px solid var(--border)', paddingBottom: '2px' }}>
-                      <button 
-                        type="button" 
-                        className={`btn ${businessTab === 'page1' ? 'btn-p' : 'btn-g'}`} 
-                        style={{ padding: '6px 18px', fontWeight: 700, fontSize: '12px' }} 
-                        onClick={() => setBusinessTab('page1')} 
-                      > 
-                        Page 1 (Data Entry) 
-                      </button> 
-                      <button 
-                        type="button" 
-                        className={`btn ${businessTab === 'page2' ? 'btn-p' : 'btn-g'}`} 
-                        style={{ padding: '6px 18px', fontWeight: 700, fontSize: '12px' }} 
-                        onClick={() => setBusinessTab('page2')} 
-                      > 
-                        Page 2 (O.R. & Assessment Details) 
-                      </button> 
+                    {/* ═══ BACK BUTTON ═══ */}
+    <div style={{ 
+      display: 'flex', 
+      alignItems: 'center', 
+      gap: 12, 
+      marginBottom: 20,
+      paddingBottom: 16,
+      borderBottom: '1px solid var(--border)',
+    }}>
+      <button
+  type="button"
+  className="btn btn-g"
+  onClick={() => {
+    const hasUnsavedData =
+      businessForm.businessName?.trim() ||
+      businessForm.lastName?.trim() ||
+      businessForm.firstName?.trim() ||
+      businessForm.orNo?.trim();
+    
+    if (hasUnsavedData) {
+      Swal.fire({
+        title: 'Discard Changes?',
+        text: 'May mga hindi pa naka-save na data. Sigurado ka bang gusto mong bumalik?',
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonColor: '#ef4444',
+        cancelButtonColor: '#64748b',
+        confirmButtonText: 'Yes, Discard',
+        cancelButtonText: 'Keep Editing',
+      }).then((result) => {
+        if (result.isConfirmed) {
+          resetBusinessForm();
+          setBusinessTab('page1');  
+          nav('cert-req');
+        }
+      });
+    } else {
+      nav('cert-req');
+    }
+  }}
+  style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+>
+  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M19 12H5M12 19l-7-7 7-7" />
+  </svg>
+  Back to Requests
+</button>
+      
+      <div style={{ flex: 1 }}>
+        <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>
+          New Business Clearance
+        </div>
+        <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: 2 }}>
+          Two-step form: Applicant details, then O.R. & assessment
+        </div>
+      </div>
+    </div>
+                    {/* ── STEP NAVIGATION (PAGE 1 / PAGE 2) ── */}
+                    <div className="stepper" role="tablist" aria-label="Business clearance steps">
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={businessTab === 'page1'}
+                        className={`step ${businessTab === 'page1' ? 'active' : ''}`}
+                        onClick={() => setBusinessTab('page1')}
+                      >
+                        <span className="step-num">1</span>
+                        Applicant &amp; Business Details
+                      </button>
+                      <span className="step-sep" aria-hidden="true">›</span>
+                      <button
+                        type="button"
+                        role="tab"
+                        aria-selected={businessTab === 'page2'}
+                        className={`step ${businessTab === 'page2' ? 'active' : ''}`}
+                        onClick={() => setBusinessTab('page2')}
+                      >
+                        <span className="step-num">2</span>
+                        O.R. &amp; Assessment Details
+                      </button>
                     </div>
 
                     {/* SINGLE FORM WRAPPER FOR BOTH TABS */}
@@ -10702,7 +10717,7 @@ const handleGenerateCredentials = async (resident) => {
                       
                       {/* ── PAGE 1 CONTENT ── */}
                       <div style={{ display: businessTab === 'page1' ? 'block' : 'none' }}>
-                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                        <div className="form-2col">
                           
                           {/* LEFT COLUMN: APPLICANT INFORMATION */}
                           <div className="fp" style={{ margin: 0, padding: '16px' }}>
@@ -10723,12 +10738,34 @@ const handleGenerateCredentials = async (resident) => {
 
                             <div className="fg3" style={{ marginBottom: '10px' }}>
                               <div className="fg" style={{ marginBottom: 0 }}>
-                                <label className="fl">LAST NAME *</label>
-                                <input type="text" className="fc" value={businessForm.lastName} onChange={(e) => setBusinessForm({ ...businessForm, lastName: e.target.value.toUpperCase() })} />
+                                <label className="fl" htmlFor="biz-lastName">LAST NAME *</label>
+                                <input
+                                  id="biz-lastName"
+                                  ref={(el) => { businessFieldRefs.current.lastName = el; }}
+                                  type="text"
+                                  className={`fc ${businessErrors.lastName ? 'is-invalid' : ''}`}
+                                  value={businessForm.lastName}
+                                  onChange={(e) => {
+                                    setBusinessForm({ ...businessForm, lastName: e.target.value.toUpperCase() });
+                                    if (businessErrors.lastName) setBusinessErrors((p) => ({ ...p, lastName: undefined }));
+                                  }}
+                                />
+                                {businessErrors.lastName && <span className="field-error">{businessErrors.lastName}</span>}
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
-                                <label className="fl">FIRST NAME *</label>
-                                <input type="text" className="fc" value={businessForm.firstName} onChange={(e) => setBusinessForm({ ...businessForm, firstName: e.target.value.toUpperCase() })} />
+                                <label className="fl" htmlFor="biz-firstName">FIRST NAME *</label>
+                                <input
+                                  id="biz-firstName"
+                                  ref={(el) => { businessFieldRefs.current.firstName = el; }}
+                                  type="text"
+                                  className={`fc ${businessErrors.firstName ? 'is-invalid' : ''}`}
+                                  value={businessForm.firstName}
+                                  onChange={(e) => {
+                                    setBusinessForm({ ...businessForm, firstName: e.target.value.toUpperCase() });
+                                    if (businessErrors.firstName) setBusinessErrors((p) => ({ ...p, firstName: undefined }));
+                                  }}
+                                />
+                                {businessErrors.firstName && <span className="field-error">{businessErrors.firstName}</span>}
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
                                 <label className="fl">MIDDLE NAME</label>
@@ -10823,8 +10860,20 @@ const handleGenerateCredentials = async (resident) => {
                             </div>
 
                             <div className="fg" style={{ marginBottom: '10px' }}>
-                              <label className="fl">BUSINESS NAME *</label>
-                              <input type="text" className="fc" placeholder="e.g. Bustrac Convenience Store" value={businessForm.businessName} onChange={(e) => setBusinessForm({ ...businessForm, businessName: e.target.value.toUpperCase() })} />
+                              <label className="fl" htmlFor="biz-businessName">BUSINESS NAME *</label>
+                              <input
+                                id="biz-businessName"
+                                ref={(el) => { businessFieldRefs.current.businessName = el; }}
+                                type="text"
+                                className={`fc ${businessErrors.businessName ? 'is-invalid' : ''}`}
+                                placeholder="e.g. Bustrac Convenience Store"
+                                value={businessForm.businessName}
+                                onChange={(e) => {
+                                  setBusinessForm({ ...businessForm, businessName: e.target.value.toUpperCase() });
+                                  if (businessErrors.businessName) setBusinessErrors((p) => ({ ...p, businessName: undefined }));
+                                }}
+                              />
+                              {businessErrors.businessName && <span className="field-error">{businessErrors.businessName}</span>}
                             </div>
 
                             <div className="fg3" style={{ marginBottom: '10px' }}>
@@ -10896,13 +10945,17 @@ const handleGenerateCredentials = async (resident) => {
                         </div>
 
                         {/* ACTION BUTTONS (PAGE 1) */}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '20px', borderTop: '1px solid var(--border)', paddingTop: '14px' }}>
+                        <div className="form-actions" style={{ marginTop: '20px' }}>
 
-                          {!businessForm._id && (
-                            <button type="button" className="btn btn-g" onClick={() => showToast('Draft saving feature is coming soon!', 'info')} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
-                              Save as Draft
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            className="btn btn-g"
+                            onClick={handleSaveBusinessDraft}
+                            disabled={isSavingBusiness}
+                            style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', opacity: isSavingBusiness ? 0.6 : 1 }}
+                          >
+                            Save as Draft
+                          </button>
 
                           <button 
                             type="button" 
@@ -10947,7 +11000,7 @@ const handleGenerateCredentials = async (resident) => {
                       {/* ── PAGE 2 CONTENT ── */}
                       <div style={{ display: businessTab === 'page2' ? 'block' : 'none' }}>
                         <div className="card" style={{ padding: '20px' }}>
-                          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+                          <div className="form-2col">
                             
                             {/* LEFT COLUMN: OFFICIAL RECEIPT & ASSESSMENT */}
                             <div className="fp" style={{ margin: 0, padding: '16px' }}>
@@ -10956,8 +11009,21 @@ const handleGenerateCredentials = async (resident) => {
                               </div>
                               <div className="fg2" style={{ marginBottom: '10px' }}>
                                 <div className="fg" style={{ marginBottom: 0 }}>
-                                  <label className="fl">O.R. NUMBER *</label>
-                                  <input type="text" className="fc" placeholder="e.g. 9876543" value={businessForm.orNo || ''} onChange={(e) => setBusinessForm({ ...businessForm, orNo: e.target.value })} />
+                                  <label className="fl" htmlFor="biz-orNo">O.R. NUMBER *</label>
+                                  <input
+                                    id="biz-orNo"
+                                    ref={(el) => { businessFieldRefs.current.orNo = el; }}
+                                    type="text"
+                                    inputMode="numeric"
+                                    className={`fc ${businessErrors.orNo ? 'is-invalid' : ''}`}
+                                    placeholder="e.g. 9876543"
+                                    value={businessForm.orNo || ''}
+                                    onChange={(e) => {
+                                      setBusinessForm({ ...businessForm, orNo: e.target.value });
+                                      if (businessErrors.orNo) setBusinessErrors((p) => ({ ...p, orNo: undefined }));
+                                    }}
+                                  />
+                                  {businessErrors.orNo && <span className="field-error">{businessErrors.orNo}</span>}
                                 </div>
                                 <div className="fg" style={{ marginBottom: 0 }}>
                                   <label className="fl">DATE ISSUED</label>
@@ -10967,15 +11033,43 @@ const handleGenerateCredentials = async (resident) => {
                               <div className="fg2" style={{ marginBottom: '10px' }}>
                                 <div className="fg" style={{ marginBottom: 0 }}>
                                   <label className="fl">CLEARANCE FEE (₱) *</label>
-                                  <input type="number" className="fc" placeholder="500.00" value={businessForm.clearanceFee || ''} onChange={(e) => setBusinessForm({ ...businessForm, clearanceFee: e.target.value })} />
+                                  <input
+                                    id="biz-clearanceFee"
+                                    ref={(el) => { businessFieldRefs.current.clearanceFee = el; }}
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className={`fc ${businessErrors.clearanceFee ? 'is-invalid' : ''}`}
+                                    placeholder="500.00"
+                                    value={businessForm.clearanceFee || ''}
+                                    onChange={(e) => {
+                                      setBusinessForm({ ...businessForm, clearanceFee: e.target.value });
+                                      if (businessErrors.clearanceFee) setBusinessErrors((p) => ({ ...p, clearanceFee: undefined }));
+                                    }}
+                                  />
+                                  {businessErrors.clearanceFee && <span className="field-error">{businessErrors.clearanceFee}</span>}
                                 </div>
                                 <div className="fg" style={{ marginBottom: 0 }}>
                                   <label className="fl">GARBAGE FEE (₱)</label>
-                                  <input type="number" className="fc" placeholder="200.00" value={businessForm.garbageFee || ''} onChange={(e) => setBusinessForm({ ...businessForm, garbageFee: e.target.value })} />
+                                  <input
+                                    id="biz-garbageFee"
+                                    ref={(el) => { businessFieldRefs.current.garbageFee = el; }}
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    className={`fc ${businessErrors.garbageFee ? 'is-invalid' : ''}`}
+                                    placeholder="200.00"
+                                    value={businessForm.garbageFee || ''}
+                                    onChange={(e) => {
+                                      setBusinessForm({ ...businessForm, garbageFee: e.target.value });
+                                      if (businessErrors.garbageFee) setBusinessErrors((p) => ({ ...p, garbageFee: undefined }));
+                                    }}
+                                  />
+                                  {businessErrors.garbageFee && <span className="field-error">{businessErrors.garbageFee}</span>}
                                 </div>
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
-                                <label className="fl">TOTAL AMOUNT PAID (₱)</label>
+                                <label className="fl">TOTAL FEES DUE (₱)</label>
                                 <input type="number" className="fc" readOnly style={{ fontWeight: 'bold', color: 'var(--accent)', fontSize: '14px' }} value={(parseFloat(businessForm.clearanceFee || 0) + parseFloat(businessForm.garbageFee || 0)).toFixed(2)} />
                               </div>
                             </div>
@@ -11006,14 +11100,24 @@ const handleGenerateCredentials = async (resident) => {
                                 </select>
                               </div>
                               <div className="fg" style={{ marginBottom: 0 }}>
-                                <label className="fl">PERMIT VALIDITY / EXPIRATION</label>
-                                <input type="text" className="fc" readOnly value={`Valid until December 31, ${new Date().getFullYear()}`} />
+                                <label className="fl">VALID UNTIL</label>
+                                <input
+                                  type="text"
+                                  className="fc"
+                                  readOnly
+                                  value={
+                                    businessForm.expiryDate
+                                      ? new Date(businessForm.expiryDate).toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })
+                                      : `December 31, ${new Date().getFullYear()}`
+                                  }
+                                />
+                                <span className="ps" style={{ marginTop: '4px' }}>Set automatically on issue (December 31 of the approval year).</span>
                               </div>
                             </div>
                           </div>
 
                           {/* ACTION BUTTONS (PAGE 2) */}
-                          <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
+                          <div className="form-actions" style={{ marginTop: '20px' }}>
                             {/* Back to Page 1 Button */}
                             <button 
                               type="button" 
@@ -11048,6 +11152,21 @@ const handleGenerateCredentials = async (resident) => {
                                 <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
                               </svg> 
                               Clear Form 
+                            </button>
+
+                            <button
+                              type="button"
+                              className="btn btn-g"
+                              onClick={handleSaveBusinessDraft}
+                              disabled={isSavingBusiness}
+                              title="Save without issuing (no O.R. / fee required)"
+                              style={{ padding: '12px 24px', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '8px', opacity: isSavingBusiness ? 0.6 : 1 }}
+                            >
+                              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z" />
+                                <polyline points="17 21 17 13 7 13 7 21" />
+                              </svg>
+                              Save as Draft
                             </button>
 
                             <button 
@@ -11087,20 +11206,208 @@ const handleGenerateCredentials = async (resident) => {
                       </div>
                     </form>
 
+                    {/* ── CONFIGURABLE QR VERIFICATION SETTINGS ── */}
+                    <div className="card" style={{ marginTop: '20px', padding: '16px' }}>
+                      <details>
+                        <summary style={{ cursor: 'pointer', fontSize: '14px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '10px', listStyle: 'none' }}>
+                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <rect x="3" y="3" width="7" height="7" rx="1" />
+                            <rect x="14" y="3" width="7" height="7" rx="1" />
+                            <rect x="3" y="14" width="7" height="7" rx="1" />
+                            <path d="M14 14h3v3h-3zM19 19h2v2h-2zM14 19h2v2h-2zM19 14h2v2h-2z" />
+                          </svg>
+                          Business Clearance QR Verification
+                          <span style={{
+                            fontSize: '11px',
+                            fontWeight: 700,
+                            padding: '2px 10px',
+                            borderRadius: '20px',
+                            border: '1px solid var(--border)',
+                            color: businessQrConfig.enabled ? 'var(--green)' : 'var(--muted)',
+                          }}>
+                            {businessQrConfig.enabled ? 'Enabled' : 'Disabled'}
+                          </span>
+                        </summary>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 220px', gap: '24px', marginTop: '16px', alignItems: 'start' }}>
+                          {/* LEFT: CONFIG FIELDS */}
+                          <div>
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', fontWeight: 600, marginBottom: '16px', cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={qrConfigForm.enabled}
+                                onChange={(e) => setQrConfigForm((prev) => ({ ...prev, enabled: e.target.checked }))}
+                              />
+                              Print QR code on the Business Clearance (replaces seal placeholder)
+                            </label>
+
+                            <div className="fg" style={{ marginBottom: '12px' }}>
+                              <label className="fl">Verification Base URL</label>
+                              <input
+                                type="text"
+                                className="fc"
+                                placeholder="e.g. 192.168.1.10:5173 or https://bustrachub.gov.ph"
+                                value={qrConfigForm.baseUrl}
+                                onChange={(e) => setQrConfigForm((prev) => ({ ...prev, baseUrl: e.target.value }))}
+                                style={!qrBaseUrlValidation.ok ? { borderColor: 'var(--red)' } : undefined}
+                              />
+                              {!qrBaseUrlValidation.ok ? (
+                                <div style={{ fontSize: '11px', color: 'var(--red)', marginTop: '4px', fontWeight: 600 }}>
+                                  {qrBaseUrlValidation.error}
+                                </div>
+                              ) : (
+                                <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '4px' }}>
+                                  Leave blank to use the current site domain. The QR opens <code>/verify?id=&lt;record id&gt;</code>.
+                                </div>
+                              )}
+                            </div>
+
+                            {/* RESOLVED LINK + DEVICE-REACHABILITY WARNING */}
+                            <div style={{
+                              fontSize: '11px',
+                              padding: '10px 12px',
+                              borderRadius: '8px',
+                              marginBottom: '12px',
+                              border: `1px solid ${qrPointsToLoopback ? 'var(--amber, #f59e0b)' : 'var(--border)'}`,
+                              background: qrPointsToLoopback ? 'rgba(245, 158, 11, 0.08)' : 'var(--surface2)',
+                            }}>
+                              <div style={{ fontWeight: 700, marginBottom: '4px' }}>Resolved verification link</div>
+                              <div style={{ fontFamily: 'var(--mono, monospace)', wordBreak: 'break-all', color: 'var(--text)' }}>
+                                {buildVerifyUrl(businessMasterlist?.[0]?._id || 'bus_clearance_0000000000000', qrConfigForm)}
+                              </div>
+                              {qrPointsToLoopback && (
+                                <div style={{ marginTop: '8px', color: '#b45309', fontWeight: 600 }}>
+                                  ⚠️ This links to <strong>localhost</strong>, so it will NOT open on a phone or another computer.
+                                  {' '}For Wi-Fi testing set the base URL to this computer's LAN IP (e.g. <strong>192.168.1.10:5173</strong>),
+                                  {' '}or use the deployed HTTPS domain in production.
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="fg" style={{ marginBottom: '12px' }}>
+                              <label className="fl">Caption Text</label>
+                              <input
+                                type="text"
+                                className="fc"
+                                value={qrConfigForm.label}
+                                onChange={(e) => setQrConfigForm((prev) => ({ ...prev, label: e.target.value }))}
+                              />
+                            </div>
+
+                            <div className="fg2" style={{ marginBottom: '12px' }}>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">QR Size (px)</label>
+                                <input
+                                  type="number"
+                                  min="48"
+                                  max="200"
+                                  className="fc"
+                                  value={qrConfigForm.size}
+                                  onChange={(e) => setQrConfigForm((prev) => ({ ...prev, size: e.target.value }))}
+                                />
+                              </div>
+                              <div className="fg" style={{ marginBottom: 0 }}>
+                                <label className="fl">Error Correction Level</label>
+                                <select
+                                  className="fc"
+                                  value={qrConfigForm.level}
+                                  onChange={(e) => setQrConfigForm((prev) => ({ ...prev, level: e.target.value }))}
+                                >
+                                  <option value="L">L — Low (7%)</option>
+                                  <option value="M">M — Medium (15%)</option>
+                                  <option value="Q">Q — Quartile (25%)</option>
+                                  <option value="H">H — High (30%)</option>
+                                </select>
+                              </div>
+                            </div>
+
+                            <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', fontWeight: 600, marginBottom: '16px', cursor: 'pointer' }}>
+                              <input
+                                type="checkbox"
+                                checked={qrConfigForm.includeMargin}
+                                onChange={(e) => setQrConfigForm((prev) => ({ ...prev, includeMargin: e.target.checked }))}
+                              />
+                              Include quiet-zone margin
+                            </label>
+
+                            <div style={{ display: 'flex', gap: '10px' }}>
+                              <button
+                                type="button"
+                                className="btn btn-p"
+                                disabled={isSavingQrConfig || !qrBaseUrlValidation.ok}
+                                onClick={handleSaveQrConfig}
+                                style={{ display: 'flex', alignItems: 'center', gap: '8px', opacity: isSavingQrConfig || !qrBaseUrlValidation.ok ? 0.6 : 1 }}
+                              >
+                                {isSavingQrConfig ? 'Saving…' : 'Save QR Settings'}
+                              </button>
+                              <button
+                                type="button"
+                                className="btn btn-g"
+                                onClick={() => setQrConfigForm(businessQrConfig)}
+                                disabled={isSavingQrConfig}
+                              >
+                                Reset
+                              </button>
+                            </div>
+                          </div>
+
+                          {/* RIGHT: LIVE PREVIEW */}
+                          <div style={{ textAlign: 'center', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px', background: '#ffffff' }}>
+                            <div style={{ fontSize: '11px', fontWeight: 700, color: '#334155', marginBottom: '10px' }}>PREVIEW</div>
+                            {qrConfigForm.enabled ? (
+                              <>
+                                <QRCodeSVG
+                                  value={buildVerifyUrl(businessMasterlist?.[0]?._id || 'sample-business-clearance', qrConfigForm)}
+                                  size={Number(qrConfigForm.size) || 92}
+                                  level={qrConfigForm.level || 'H'}
+                                  includeMargin={Boolean(qrConfigForm.includeMargin)}
+                                  bgColor="#ffffff"
+                                  fgColor="#000000"
+                                />
+                                <div style={{ fontSize: '10px', fontWeight: 'bold', color: '#000', marginTop: '8px' }}>
+                                  {qrConfigForm.label}
+                                </div>
+                              </>
+                            ) : (
+                              <div style={{ fontSize: '11px', color: '#666', fontStyle: 'italic' }}>
+                                QR printing is disabled.
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </details>
+                    </div>
+
                     {/* ── REGISTERED BUSINESS CLEARANCES TABLE ── */}
                     <div className="card" style={{ marginTop: '20px', padding: '16px' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '12px' }}>
                         <h4 style={{ margin: 0, fontSize: '14px', fontWeight: 700 }}>
-                          Registered Business Clearances ({businessMasterlist.length})
+                          Registered Business Clearances ({filteredBusinessClearances.length} of {businessMasterlist.length})
                         </h4>
-                        <button type="button" className="btn btn-g" onClick={() => handleGenerateExcelReport('business_clearances')} style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '36px', fontSize: '12px' }}>
-                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                            <path d="M7 10l5 5 5-5" />
-                            <path d="M12 15V3" />
-                          </svg>
-                          Export Excel
-                        </button>
+                        <div style={{ display: 'flex', gap: '10px', alignItems: 'center', flexWrap: 'wrap' }}>
+                          <div style={{ position: 'relative', width: '280px', maxWidth: '100%' }}>
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--muted)" strokeWidth="2" style={{ position: 'absolute', left: '12px', top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }}>
+                              <circle cx="11" cy="11" r="8" />
+                              <path d="M21 21l-4.35-4.35" />
+                            </svg>
+                            <input
+                              type="text"
+                              className="fc"
+                              placeholder="Search BC ID, business, owner..."
+                              value={businessClearanceSearch}
+                              onChange={(e) => setBusinessClearanceSearch(e.target.value)}
+                              style={{ paddingLeft: '38px', height: '36px', fontSize: '12px', width: '100%' }}
+                            />
+                          </div>
+                          <button type="button" className="btn btn-g" onClick={() => handleGenerateExcelReport('business_clearances')} style={{ display: 'flex', alignItems: 'center', gap: '6px', height: '36px', fontSize: '12px' }}>
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                              <path d="M7 10l5 5 5-5" />
+                              <path d="M12 15V3" />
+                            </svg>
+                            Export Excel
+                          </button>
+                        </div>
                       </div>
                       
                       
@@ -11114,18 +11421,21 @@ const handleGenerateCredentials = async (resident) => {
                               <th style={{ padding: '8px' }}>Nature</th>
                               <th style={{ padding: '8px' }}>Date Issued</th>
                               <th style={{ padding: '8px' }}>O.R. No.</th>
+                              <th style={{ padding: '8px', textAlign: 'center' }}>Status</th>
                               <th style={{ padding: '8px', textAlign: 'center' }}>Actions</th>
                             </tr>
                           </thead>
                           <tbody>
-                            {businessMasterlist.length === 0 ? (
+                            {filteredBusinessClearances.length === 0 ? (
                               <tr>
-                                <td colSpan="7" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
-                                  No business clearance records found in local database.
+                                <td colSpan="8" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
+                                  {businessMasterlist.length === 0
+                                    ? 'No business clearance records found in local database.'
+                                    : 'No business clearances match your search.'}
                                 </td>
                               </tr>
                             ) : (
-                              businessMasterlist.map((rec, index) => (
+                              pagedBusinessClearances.map((rec, index) => (
                                 <tr key={rec._id || rec.id || `bus-${index}`} style={{ borderBottom: '1px solid var(--border)' }}>
                                   <td style={{ padding: '8px', fontWeight: 'bold' }}>{rec.bcIdNo || 'N/A'}</td>
                                   <td style={{ padding: '8px' }}>{rec.businessName || 'N/A'}</td>
@@ -11135,6 +11445,7 @@ const handleGenerateCredentials = async (resident) => {
                                   <td style={{ padding: '8px' }}>{rec.natureOfBusiness || 'N/A'}</td>
                                   <td style={{ padding: '8px' }}>{rec.regDate || rec.dateIssued || 'N/A'}</td>
                                   <td style={{ padding: '8px' }}>{rec.orNo || rec.orNumber || 'N/A'}</td>
+                                  <td style={{ padding: '8px', textAlign: 'center' }}><StatusBadge doc={rec} /></td>
                                   <td style={{ padding: '8px', textAlign: 'center' }}>
                                     <div style={{ display: 'flex', gap: '6px', justifyContent: 'center' }}>
                                       {/* Edit Button */}
@@ -11183,6 +11494,18 @@ const handleGenerateCredentials = async (resident) => {
                           </tbody>
                         </table>
                       </div>
+                      {/* Pagination */}
+                      {filteredBusinessClearances.length > MASTERLIST_PAGE_SIZE && (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 8px 0' }}>
+                          <span style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                            Page {safeBusinessPage} of {totalBusinessPages}
+                          </span>
+                          <div style={{ display: 'flex', gap: '8px' }}>
+                            <button type="button" className="btn btn-g" disabled={safeBusinessPage <= 1} onClick={() => setBusinessPage((p) => Math.max(1, p - 1))} style={{ padding: '6px 14px', fontSize: '12px' }}>Prev</button>
+                            <button type="button" className="btn btn-g" disabled={safeBusinessPage >= totalBusinessPages} onClick={() => setBusinessPage((p) => Math.min(totalBusinessPages, p + 1))} style={{ padding: '6px 14px', fontSize: '12px' }}>Next</button>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </div>
                 )}
@@ -11224,7 +11547,7 @@ const handleGenerateCredentials = async (resident) => {
                     )}
 
                     {/* TOOLBAR: Search, Filter, Sort + Register Trigger */}
-                    <div className="tb" style={{ background: 'rgba(26, 29, 36, 0.4)', backdropFilter: 'blur(8px)', border: '1px solid rgba(79, 142, 247, 0.2)', marginBottom: '20px', gap: '10px', flexWrap: 'wrap', padding: '12px', borderRadius: '8px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div className="tb" style={{ background: 'transparent', border: 'none', maxWidth: '1400px', margin: '0 auto 20px', gap: '10px', flexWrap: 'wrap', padding: '0', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                       <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', flex: 1 }}>
                         <div className="sb-box" style={{ flex: 2, minWidth: '220px', display: 'flex', alignItems: 'center', gap: '8px' }}>
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -11271,299 +11594,272 @@ const handleGenerateCredentials = async (resident) => {
                       <div style={{ maxWidth: '1400px', margin: '0 auto' }}>
                         <div className="thc" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '16px' }}>
                           {processedPrograms.map((prog) => {
-                            const percent = Math.min(100, Math.round((prog.current / prog.target) * 100)) || 0;
-                            const readyToComplete = prog.status === 'Active' && percent >= 100;
-                            let statusBadgeClass = "badge g";
-                            if (prog.status === 'Completed') statusBadgeClass = "badge t";
-                            else if (prog.status === 'Upcoming') statusBadgeClass = "badge a";
-                            else if (prog.status === 'Archived') statusBadgeClass = "badge r";
+  // Count actual progress from aidLogs instead of prog.current
+  const programLogs = (aidLogs || []).filter(
+    (log) => log.programId === prog.id || log.programId === prog._id
+  );
+  const actualCurrent = programLogs.length;
 
-                            return (
-                              <div
-                                className="card"
-                                key={prog.id}
-                                style={{
-                                  border: readyToComplete ? '1px solid #10b981' : '1px solid rgba(79, 142, 247, 0.2)',
-                                  boxShadow: readyToComplete ? '0 0 6px rgba(16, 185, 129, 0.2)' : 'none',
-                                   background: 'var(--surface)',
-                                  backdropFilter: 'blur(8px)',
-                                  borderRadius: '8px',
-                                  padding: '16px',
-                                  position: 'relative'
-                                }}
-                              >
-                                <div>
-                                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
-                                    <span className={statusBadgeClass}>{prog.status}</span>
-                                    <span className="badge gr">{prog.dateLabel || 'Campaign'}</span>
-                                  </div>
-                                  <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>{prog.title}</div>
-                                  <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)', marginBottom: '10px' }}>{prog.id}</div>
+  const percent = Math.min(100, Math.round((actualCurrent / prog.target) * 100)) || 0;
+  const readyToComplete = prog.status === 'Active' && percent >= 100;
 
-                                  {/* NEW: Ready-to-complete hint */}
-                                  {readyToComplete && (
-                                    <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                                      Target reached — ready to mark Complete
-                                    </div>
-                                  )}
+  let statusBadgeClass = "badge g";
+  if (prog.status === 'Completed') statusBadgeClass = "badge t";
+  else if (prog.status === 'Upcoming') statusBadgeClass = "badge a";
+  else if (prog.status === 'Archived') statusBadgeClass = "badge r";
 
-                                  {/* Progress Bar */}
-                                  <div style={{ margin: '10px 0', background: 'var(--border2)', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
-                                    <div style={{ width: `${percent}%`, height: '100%', background: readyToComplete ? 'var(--green)' : prog.status === 'Completed' ? 'var(--green)' : prog.status === 'Upcoming' ? 'var(--hint)' : '#3b82f6' }} />
-                                  </div>
-                                  <div style={{ fontSize: '11px', color: 'var(--muted)', display: 'flex', justifyContent: 'space-between' }}>
-                                    <span>{prog.current} / {prog.target} targets</span>
-                                    <strong>{percent}%</strong>
-                                  </div>
-                                </div>
+  return (
+    <div
+      className="card"
+      key={prog.id}
+      style={{
+        border: readyToComplete ? '1px solid #10b981' : '1px solid rgba(79, 142, 247, 0.2)',
+        boxShadow: readyToComplete ? '0 0 6px rgba(16, 185, 129, 0.2)' : 'none',
+        background: 'var(--surface)',
+        backdropFilter: 'blur(8px)',
+        borderRadius: '8px',
+        padding: '16px',
+        position: 'relative'
+      }}
+    >
+      <div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px', alignItems: 'center' }}>
+          <span className={statusBadgeClass}>{prog.status}</span>
+          <span className="badge gr">{prog.dateLabel || 'Campaign'}</span>
+        </div>
+        <div style={{ fontWeight: 'bold', fontSize: '15px', color: 'var(--text)', marginBottom: '4px' }}>{prog.title}</div>
+        <div style={{ fontFamily: 'var(--mono)', fontSize: '11px', color: 'var(--muted)', marginBottom: '10px' }}>{prog.id}</div>
 
-                                {/* Compact action row */}
-                                <div style={{ display: 'flex', gap: '6px', marginTop: '16px', borderTop: '1px solid rgba(79, 142, 247, 0.2)', paddingTop: '12px', alignItems: 'center' }}>
-                                  {prog.status === 'Active' && (
-                                  <>
-                                    <button className="btn btn-p btn-sm" onClick={() => { setSelectedProgramId(prog.id); nav('aid-encode'); }} > Encode </button>
-                                    <button className="btn btn-g btn-sm" onClick={() => nav('aid-logs')}>Logs</button>
+        {/* Ready-to-complete hint */}
+        {readyToComplete && (
+          <div style={{ fontSize: '11px', color: '#10b981', fontWeight: 'bold', marginBottom: '8px', display: 'flex', alignItems: 'center', gap: '4px' }}>
+            Target reached — ready to mark Complete
+          </div>
+        )}
 
-                                    {readyToComplete && (
-                                      <button
-                                        className="btn btn-sm"
-                                        style={{ background: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}
-                                        onClick={() => {
-                                          const updated = programsList.map(p => p.id === prog.id ? { ...p, status: 'Completed' } : p);
-                                          setProgramsList(updated);
-                                        }}
-                                      >
-                                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
-                                          <polyline points="20 6 9 17 4 12" />
-                                        </svg>
-                                        Complete
-                                      </button>
-                                    )}
+        {/* Progress Bar */}
+        <div style={{ margin: '10px 0', background: 'var(--border2)', borderRadius: '4px', height: '8px', overflow: 'hidden' }}>
+          <div style={{ width: `${percent}%`, height: '100%', background: readyToComplete ? 'var(--green)' : prog.status === 'Completed' ? 'var(--green)' : prog.status === 'Upcoming' ? 'var(--hint)' : '#3b82f6' }} />
+        </div>
+        <div style={{ fontSize: '11px', color: 'var(--muted)', display: 'flex', justifyContent: 'space-between' }}>
+          <span>{actualCurrent} / {prog.target} targets</span>
+          <strong>{percent}%</strong>
+        </div>
+      </div>
 
-                                        {/* Kebab menu for secondary actions */}
-                                        <div style={{ 
-                                          position: 'relative', 
-                                          marginLeft: 'auto',
-                                          zIndex: 100 
-                                        }}>
-                                        {/* Kebab button */}
-                                        <button 
-                                          data-kebab-btn 
-                                          className="btn btn-sm" 
-                                          style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '6px 10px', display: 'flex', alignItems: 'center', zIndex: 101 }} 
-                                          onClick={() => setOpenActionMenu(openActionMenu === prog.id ? null : prog.id)}
-                                        >
-                                          <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
-                                            <circle cx="12" cy="5" r="2" />
-                                            <circle cx="12" cy="12" r="2" />
-                                            <circle cx="12" cy="19" r="2" />
-                                          </svg>
-                                        </button>
+      {/* Compact action row */}
+      <div style={{ display: 'flex', gap: '6px', marginTop: '16px', borderTop: '1px solid rgba(79, 142, 247, 0.2)', paddingTop: '12px', alignItems: 'center' }}>
+        {prog.status === 'Active' && (
+          <>
+            <button className="btn btn-p btn-sm" onClick={() => { setSelectedProgramId(prog.id); nav('aid-encode'); }}>Encode</button>
+            <button className="btn btn-g btn-sm" onClick={() => nav('aid-logs')}>Logs</button>
 
-                                        {/* Dropdown menu */}
-                                      {openActionMenu === prog.id && (
-                                      <div 
-                                        data-kebab-menu 
-                                        style={{ 
-                                          position: 'absolute', 
-                                          right: 0, 
-                                          top: '100%',
-                                          marginTop: '4px',
-                                          background: 'var(--surface)', 
-                                          border: '1px solid rgba(79, 142, 247, 0.3)', 
-                                          borderRadius: '6px', 
-                                          minWidth: '150px', 
-                                          zIndex: 9999, 
-                                          boxShadow: '0 8px 24px rgba(0,0,0,0.5)', 
-                                          overflow: 'hidden', 
-                                          animation: 'dp-fadeIn 0.15s ease' 
-                                        }}
-                                      >
-                                        {/* Edit Button */}
-                                        <button 
-                                          style={{ 
-                                            width: '100%', 
-                                            textAlign: 'left', 
-                                            padding: '8px 12px', 
-                                            background: 'transparent', 
-                                            border: 'none', 
-                                            color: 'var(--text)', 
-                                            cursor: 'pointer', 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            gap: '8px', 
-                                            fontSize: '12px',
-                                            transition: 'background 0.15s ease'
-                                          }}
-                                          onClick={() => { 
-                                            setEditingProgram(prog); 
-                                            setOpenActionMenu(null); 
-                                          }}
-                                          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'}
-                                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                        >
-                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                          </svg>
-                                          Edit
-                                        </button>
+            {readyToComplete && (
+              <button
+                className="btn btn-sm"
+                style={{ background: '#10b981', display: 'flex', alignItems: 'center', gap: '4px' }}
+                onClick={() => {
+                  const updated = programsList.map(p => p.id === prog.id ? { ...p, status: 'Completed' } : p);
+                  setProgramsList(updated);
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+                Complete
+              </button>
+            )}
 
-                                        {/* Mark Complete Button (only if not ready to complete) */}
-                                        {!readyToComplete && (
-                                          <button 
-                                            style={{ 
-                                              width: '100%', 
-                                              textAlign: 'left', 
-                                              padding: '8px 12px', 
-                                              background: 'transparent', 
-                                              border: 'none', 
-                                              color: 'var(--text)', 
-                                              cursor: 'pointer', 
-                                              display: 'flex', 
-                                              alignItems: 'center', 
-                                              gap: '8px', 
-                                              fontSize: '12px',
-                                              transition: 'background 0.15s ease'
-                                            }}
-                                            onClick={() => { 
-                                              const updated = programsList.map(p => 
-                                                p.id === prog.id ? { ...p, status: 'Completed' } : p
-                                              ); 
-                                              setProgramsList(updated); 
-                                              setOpenActionMenu(null); 
-                                            }}
-                                            onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'}
-                                            onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                          >
-                                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                              <polyline points="20 6 9 17 4 12" />
-                                            </svg>
-                                            Mark Complete
-                                          </button>
-                                        )}
+            {/* Kebab menu for secondary actions */}
+            <div style={{ position: 'relative', marginLeft: 'auto', zIndex: 100 }}>
+              {/* Kebab button */}
+              <button
+                data-kebab-btn
+                className="btn btn-sm"
+                style={{ background: 'var(--surface2)', color: 'var(--muted)', padding: '6px 10px', display: 'flex', alignItems: 'center', zIndex: 101 }}
+                onClick={() => setOpenActionMenu(openActionMenu === prog.id ? null : prog.id)}
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                  <circle cx="12" cy="5" r="2" />
+                  <circle cx="12" cy="12" r="2" />
+                  <circle cx="12" cy="19" r="2" />
+                </svg>
+              </button>
 
-                                        {/* Archive Button */}
-                                        <button 
-                                          style={{ 
-                                            width: '100%', 
-                                            textAlign: 'left', 
-                                            padding: '8px 12px', 
-                                            background: 'transparent', 
-                                            border: 'none', 
-                                            color: '#f87171', 
-                                            cursor: 'pointer', 
-                                            display: 'flex', 
-                                            alignItems: 'center', 
-                                            gap: '8px', 
-                                            fontSize: '12px',
-                                            transition: 'background 0.15s ease'
-                                          }}
-                                          onClick={async () => { 
-                                            
-                                            const updated = programsList.map(p => 
-                                              p.id === prog.id ? { ...p, status: 'Archived' } : p
-                                            ); 
-                                            setProgramsList(updated); 
-                                            setOpenActionMenu(null); 
+              {/* Dropdown menu */}
+              {openActionMenu === prog.id && (
+                <div
+                  data-kebab-menu
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '100%',
+                    marginTop: '4px',
+                    background: 'var(--surface)',
+                    border: '1px solid rgba(79, 142, 247, 0.3)',
+                    borderRadius: '6px',
+                    minWidth: '150px',
+                    zIndex: 9999,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.5)',
+                    overflow: 'hidden',
+                    animation: 'dp-fadeIn 0.15s ease'
+                  }}
+                >
+                  {/* Edit Button */}
+                  <button
+                    style={{
+                      width: '100%', textAlign: 'left', padding: '8px 12px', background: 'transparent',
+                      border: 'none', color: 'var(--text)', cursor: 'pointer', display: 'flex',
+                      alignItems: 'center', gap: '8px', fontSize: '12px', transition: 'background 0.15s ease'
+                    }}
+                    onClick={() => { setEditingProgram(prog); setOpenActionMenu(null); }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                      <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+                    </svg>
+                    Edit
+                  </button>
 
-                                              try {
-                                                const docId = `program_${prog.id}`;
-                                                const existing = await db.get(docId);
-                                                await db.put({
-                                                  ...existing,
-                                                  status: 'Archived',
-                                                  updatedAt: new Date().toISOString(),
-                                                });
-                                              } catch (err) {
-                                                console.error('Failed to archive program in PouchDB:', err);
-                                              }
-                                              
-                                            await createAuditLog({ 
-                                              action: 'ARCHIVE', 
-                                              module: 'PROGRAMS', 
-                                              recordId: prog.id, 
-                                              details: `Archived program: ${prog.title}` 
-                                            }); 
-                                          }}
-                                          onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(248, 113, 113, 0.1)'}
-                                          onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
-                                        >
-                                          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                            <polyline points="21 8 21 21 3 21 3 8" />
-                                            <rect x="1" y="3" width="22" height="5" />
-                                            <line x1="10" y1="12" x2="14" y2="12" />
-                                          </svg>
-                                          Archive
-                                        </button>
-                                      </div>
-                                    )}
-                                        </div>
-                                  </>
-                                )}
+                  {/* Mark Complete Button (only if not ready to complete) */}
+                  {!readyToComplete && (
+                    <button
+                      style={{
+                        width: '100%', textAlign: 'left', padding: '8px 12px', background: 'transparent',
+                        border: 'none', color: 'var(--text)', cursor: 'pointer', display: 'flex',
+                        alignItems: 'center', gap: '8px', fontSize: '12px', transition: 'background 0.15s ease'
+                      }}
+                      onClick={() => {
+                        const updated = programsList.map(p =>
+                          p.id === prog.id ? { ...p, status: 'Completed' } : p
+                        );
+                        setProgramsList(updated);
+                        setOpenActionMenu(null);
+                      }}
+                      onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(79, 142, 247, 0.1)'}
+                      onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                      Mark Complete
+                    </button>
+                  )}
 
-                                  {prog.status === 'Upcoming' && (
-                                    <>
-                                      <button className="btn btn-p btn-sm" onClick={() => {
-                                        const updated = programsList.map(p => p.id === prog.id ? { ...p, status: 'Active' } : p);
-                                        setProgramsList(updated);
-                                      }}>Activate</button>
-                                      <button className="btn btn-a btn-sm" onClick={() => setEditingProgram(prog)}>Edit</button>
-                                    </>
-                                  )}
-                                  
-                                  {prog.status === 'Completed' && (
-                                    <>
-                                      <button 
-                                        className="btn btn-p btn-sm" 
-                                        style={{ background: '#6366f1', display: 'flex', alignItems: 'center', gap: '4px' }} 
-                                        onClick={() => setViewingProgram(prog)}
-                                      >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                                          <circle cx="12" cy="12" r="3" />
-                                        </svg>
-                                        View
-                                      </button>
+                  {/* Archive Button */}
+                  <button
+                    style={{
+                      width: '100%', textAlign: 'left', padding: '8px 12px', background: 'transparent',
+                      border: 'none', color: '#f87171', cursor: 'pointer', display: 'flex',
+                      alignItems: 'center', gap: '8px', fontSize: '12px', transition: 'background 0.15s ease'
+                    }}
+                    onClick={async () => {
+                      const updated = programsList.map(p =>
+                        p.id === prog.id ? { ...p, status: 'Archived' } : p
+                      );
+                      setProgramsList(updated);
+                      setOpenActionMenu(null);
 
-                                      <button 
-                                        className="btn btn-a btn-sm" 
-                                        onClick={() => {
-                                          const updated = programsList.map(p => 
-                                            p.id === prog.id ? { ...p, status: 'Active' } : p
-                                          );
-                                          setProgramsList(updated);
-                                          // Optional: Add audit log
-                                          createAuditLog({
-                                            action: 'REOPEN',
-                                            module: 'PROGRAMS',
-                                            recordId: prog.id,
-                                            details: `Reopened completed program: ${prog.title}`
-                                          });
-                                        }}
-                                      >
-                                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                                          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                                          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-                                        </svg>
-                                        Reopen
-                                      </button>
-                                    </>
-                                  )}
+                      try {
+                        const docId = `program_${prog.id}`;
+                        const existing = await db.get(docId);
+                        const cleanDoc = { ...existing };
+                        delete cleanDoc.current;
+                        await db.put({
+                          ...cleanDoc,
+                          status: 'Archived',
+                          updatedAt: new Date().toISOString(),
+                        });
+                      } catch (err) {
+                        console.error('Failed to archive program in PouchDB:', err);
+                      }
 
-                                  {prog.status === 'Archived' && (
-                                    <>
-                                      <button className="btn btn-p btn-sm" style={{ background: '#6366f1' }} onClick={() => setViewingProgram(prog)}>View</button>
-                                      <button className="btn btn-g btn-sm" onClick={() => {
-                                        const updated = programsList.map(p => p.id === prog.id ? { ...p, status: 'Active' } : p);
-                                        setProgramsList(updated);
-                                      }}>Restore</button>
-                                    </>
-                                  )}
-                                </div>
-                              </div>
-                            );
-                          })}
+                      await createAuditLog({
+                        action: 'ARCHIVE',
+                        module: 'PROGRAMS',
+                        recordId: prog.id,
+                        details: `Archived program: ${prog.title}`
+                      });
+                    }}
+                    onMouseEnter={(e) => e.currentTarget.style.background = 'rgba(248, 113, 113, 0.1)'}
+                    onMouseLeave={(e) => e.currentTarget.style.background = 'transparent'}
+                  >
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <polyline points="21 8 21 21 3 21 3 8" />
+                      <rect x="1" y="3" width="22" height="5" />
+                      <line x1="10" y1="12" x2="14" y2="12" />
+                    </svg>
+                    Archive
+                  </button>
+                </div>
+              )}
+            </div>
+          </>
+        )}
+
+        {prog.status === 'Upcoming' && (
+          <>
+            <button className="btn btn-p btn-sm" onClick={() => {
+              const updated = programsList.map(p => p.id === prog.id ? { ...p, status: 'Active' } : p);
+              setProgramsList(updated);
+            }}>Activate</button>
+            <button className="btn btn-a btn-sm" onClick={() => setEditingProgram(prog)}>Edit</button>
+          </>
+        )}
+
+        {prog.status === 'Completed' && (
+          <>
+            <button
+              className="btn btn-p btn-sm"
+              style={{ background: '#6366f1', display: 'flex', alignItems: 'center', gap: '4px' }}
+              onClick={() => setViewingProgram(prog)}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                <circle cx="12" cy="12" r="3" />
+              </svg>
+              View
+            </button>
+
+            <button
+              className="btn btn-a btn-sm"
+              onClick={() => {
+                const updated = programsList.map(p =>
+                  p.id === prog.id ? { ...p, status: 'Active' } : p
+                );
+                setProgramsList(updated);
+                createAuditLog({
+                  action: 'REOPEN',
+                  module: 'PROGRAMS',
+                  recordId: prog.id,
+                  details: `Reopened completed program: ${prog.title}`
+                });
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              Reopen
+            </button>
+          </>
+        )}
+
+        {prog.status === 'Archived' && (
+          <>
+            <button className="btn btn-p btn-sm" style={{ background: '#6366f1' }} onClick={() => setViewingProgram(prog)}>View</button>
+            <button className="btn btn-g btn-sm" onClick={() => {
+              const updated = programsList.map(p => p.id === prog.id ? { ...p, status: 'Active' } : p);
+              setProgramsList(updated);
+            }}>Restore</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+})}
                         </div>
                       </div>
                     )}
@@ -11603,31 +11899,24 @@ const handleGenerateCredentials = async (resident) => {
 
     {/* ── 2. CONTEXT HEADER (Currently Encoding For) ── */}
     {(() => {
-      const currentProg = programsList.find(p => p.id === selectedProgramId);
-      return currentProg ? (
-        <div style={{ 
-          background: 'var(--surface2)', 
-          border: '1px solid var(--border)', 
-          borderRadius: '8px', 
-          padding: '16px', 
-          marginBottom: '20px',
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center'
-        }}>
-          <div>
-            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 700 }}>Currently Encoding For</div>
-            <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text)' }}>{currentProg.title}</div>
-          </div>
-          <div style={{ textAlign: 'right' }}>
-            <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Progress</div>
-            <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--primary)' }}>
-              {currentProg.current} / {currentProg.target}
-            </div>
-          </div>
+  const currentProg = programsList.find(p => p.id === selectedProgramId);
+  if (!currentProg) return null;
+  const actualCurrent = aidLogs.filter(log => log.programId === currentProg.id).length;
+  return (
+    <div style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px', padding: '16px', marginBottom: '20px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+      <div>
+        <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', fontWeight: 700 }}>Currently Encoding For</div>
+        <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--text)' }}>{currentProg.title}</div>
+      </div>
+      <div style={{ textAlign: 'right' }}>
+        <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Progress</div>
+        <div style={{ fontSize: '16px', fontWeight: 800, color: 'var(--primary)' }}>
+          {actualCurrent} / {currentProg.target}
         </div>
-      ) : null;
-    })()}
+      </div>
+    </div>
+  );
+})()}
 
     {/* ── 3. MAIN GRID LAYOUT (Form Left, Logs Right) ── */}
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '24px', alignItems: 'start' }}>
@@ -11651,10 +11940,11 @@ const handleGenerateCredentials = async (resident) => {
             >
               <option value="" disabled hidden>Select active relief program...</option>
               {programsList.filter((prog) => prog.status === 'Active').map((prog) => {
-                const isFull = (prog.current || 0) >= (prog.target || 1);
+                const actualCurrent = aidLogs.filter(log => log.programId === prog.id).length;
+                const isFull = actualCurrent >= (prog.target || 1);
                 return (
                   <option key={prog.id} value={prog.id} disabled={isFull}>
-                    {prog.title} ({prog.id}) — {prog.current}/{prog.target} {isFull ? '• FULL' : ''}
+                    {prog.title} ({prog.id}) — {actualCurrent}/{prog.target} {isFull ? '• FULL' : ''}
                   </option>
                 );
               })}
@@ -11666,11 +11956,14 @@ const handleGenerateCredentials = async (resident) => {
           <div className="fg" style={{ marginBottom: '16px' }}>
             <label className="fl">Beneficiary Resident <span style={{ color: 'var(--red)' }}>*</span></label>
             <ResidentCombobox 
-              residents={residentsList} 
-              value={selectedResidentId} 
-              onChange={(res) => setSelectedResidentId(res ? res.id : '')} 
-              placeholder="Search by name, ID, or purok..." 
-            />
+  residents={residentsList} 
+  value={selectedResidentId} 
+  onChange={(res) => {
+    const id = res?.id || res?._id || res || '';
+    setSelectedResidentId(id);
+  }} 
+  placeholder="Search by name, ID, or purok..." 
+/>
             {/* ✅ FIX: Duplicate Alert moved here for immediate feedback! */}
             {selectedResidentId && duplicateAlert && (
               <div className="note note-e" style={{ marginTop: '8px', padding: '8px 12px', fontSize: '12px' }}>
@@ -13723,7 +14016,18 @@ const handleGenerateCredentials = async (resident) => {
 
                   </div>
                 )}
-
+                
+                {screen === 'events-manage' && (
+  <EventsManagerScreen
+    db={db}
+    role={role}
+    currentUser={currentUser}
+    showToast={showToast}
+    createAuditLog={createAuditLog}
+    notifyDesktop={notifyDesktop}
+    residentsList={residentsList}
+  />
+)}
             {/* ════════════════════════════════════════
                 SCREEN: CONFLICT RESOLUTION (Admin only)
                 ════════════════════════════════════════ */}
@@ -14276,17 +14580,17 @@ const handleGenerateCredentials = async (resident) => {
                           select: ['April 2026', 'March 2026', 'February 2026'],
                           module: 'certificates'
                         },
+                        { title: 'Aid Distribution', desc: 'Beneficiary list per program', 
+                          select: ['All Months', 'October 2026', 'September 2026', 'August 2026'], 
+                          module: 'aid' },
+                        { title: 'Resident Registry', desc: 'Full resident list by purok', 
+                          select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'], 
+                          module: 'residents' },
                         {
-                          title: 'Aid Distribution',
-                          desc: 'Beneficiary list per program',
-                          select: ['Ayuda Rice Distribution', 'Financial Assistance', 'Medical Aid'],
-                          module: 'aid'
-                        },
-                        {
-                          title: 'Resident Registry',
-                          desc: 'Full resident list by purok',
-                          select: ['All Puroks', 'Purok 1', 'Purok 2', 'Purok 3', 'Purok 4', 'Purok 5'],
-                          module: 'residents'
+                          title: 'Voter List',
+                          desc: 'Registered voters with precinct and barangay info',
+                          select: ['All Voters', 'Registered Only', 'Bustrac Residents', 'Other Barangay'],
+                          module: 'voters',
                         },
                         {
                           title: 'Blotter Summary',
@@ -14719,6 +15023,7 @@ const handleGenerateCredentials = async (resident) => {
                         <BarangayClearance
                           data={selectedPrintCert}
                           publicDomain={activeDomain}
+                          qrConfig={businessQrConfig}
                         />
                       );
                     }
@@ -15077,13 +15382,13 @@ className="modal-card"
 
             <div style={{ background: 'var(--surface2)', padding: '16px', borderRadius: '8px', marginBottom: '16px', border: '1px solid var(--border)' }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '13px', marginBottom: '8px' }}>
-                <span style={{ color: 'var(--muted)' }}>Distribution Capacity:</span> <strong>{viewingProgram.current || 0} / {viewingProgram.target} Beneficiaries</strong>
+                <span style={{ color: 'var(--muted)' }}>Distribution Capacity:</span> <strong>{programAidCount(viewingProgram)} / {viewingProgram.target} Beneficiaries</strong>
               </div>
               <div style={{ margin: '8px 0', background: 'var(--border2)', borderRadius: '4px', height: '10px', overflow: 'hidden' }}>
-                <div style={{ width: `${Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}%`, height: '100%', background: viewingProgram.status === 'Completed' ? 'var(--green)' : '#3b82f6' }} />
+                <div style={{ width: `${Math.min(100, Math.round(((programAidCount(viewingProgram) || 0) / viewingProgram.target) * 100))}%`, height: '100%', background: viewingProgram.status === 'Completed' ? 'var(--green)' : '#3b82f6' }} />
               </div>
               <div style={{ textAlign: 'right', fontSize: '12px', fontWeight: 'bold', color: 'var(--green)' }}>
-                {Math.min(100, Math.round(((viewingProgram.current || 0) / viewingProgram.target) * 100))}% Capacity Reached
+                {Math.min(100, Math.round(((programAidCount(viewingProgram) || 0) / viewingProgram.target) * 100))}% Capacity Reached
               </div>
             </div>
 
@@ -15143,8 +15448,10 @@ className="modal-card"
                 try {
                   const docId = `program_${editingProgram.id}`;
                   const existing = await db.get(docId);
+                  const cleanDoc = { ...existing };
+                  delete cleanDoc.current;
                   await db.put({
-                    ...existing,
+                    ...cleanDoc,
                     ...editingProgram,
                     updatedAt: new Date().toISOString()
                   });
@@ -15311,12 +15618,11 @@ className="modal-card"
               style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', justifyContent: 'center', backgroundColor: '#525659' }}
             >
               <div id="printable-certificate-card" style={{ width: '210mm', minHeight: '297mm', backgroundColor: '#ffffff', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
-                <A4PreviewWrapper>
-                  <BarangayClearance 
-                   data={selectedClearanceCert}
-                   publicDomain={systemSettings?.publicDomain || settingsForm?.publicDomain}
-                  />
-                </A4PreviewWrapper>
+                <BarangayClearance
+                  data={selectedClearanceCert}
+                  publicDomain={systemSettings?.publicDomain || settingsForm?.publicDomain}
+                  qrConfig={businessQrConfig}
+                />
               </div>
             </div>
 
@@ -15348,7 +15654,11 @@ className="modal-card"
               style={{ flex: 1, overflowY: 'auto', padding: '20px', display: 'flex', justifyContent: 'center', backgroundColor: '#525659' }}
             >
               <div id="printable-business-certificate-card" style={{ width: '210mm', minHeight: '297mm', backgroundColor: '#ffffff', boxShadow: '0 10px 25px rgba(0,0,0,0.5)' }}>
-                <BusinessClearanceTemplate data={selectedBusinessCert} />
+                <BusinessClearanceTemplate
+                  data={selectedBusinessCert}
+                  publicDomain={systemSettings?.publicDomain || settingsForm?.publicDomain}
+                  qrConfig={businessQrConfig}
+                />
               </div>
             </div>
             
@@ -15738,23 +16048,25 @@ className="modal-card"
       {/* Modal Body (Your ResidentForm Component) */}
       <div style={{ padding: '24px' }}>
         <ResidentForm
-          residentForm={residentForm}
-          setResidentForm={setResidentForm}
-          editingResidentId={editingResidentId}
-          photoPreviewUrl={photoPreviewUrl}
-          setPhotoPreviewUrl={setPhotoPreviewUrl}
-          handlePhotoChange={handlePhotoChange}
-          handleRemovePhoto={handleRemovePhoto}
-          updateResidentField={updateResidentField}
-          submitAddResident={(e) => {
-            submitAddResident(e); 
-            setShowAddResidentModal(false); 
-          }}
-          nav={nav}
-          setEditingResidentId={setEditingResidentId}
-          EMPTY_RESIDENT={EMPTY_RESIDENT}
-          onCancel={() => setShowAddResidentModal(false)}
-        />
+  residentForm={residentForm}
+  setResidentForm={setResidentForm}
+  editingResidentId={editingResidentId}
+  photoPreviewUrl={photoPreviewUrl}
+  setPhotoPreviewUrl={setPhotoPreviewUrl}
+  handlePhotoChange={handlePhotoChange}
+  handleRemovePhoto={handleRemovePhoto}
+  updateResidentField={updateResidentField}
+  submitAddResident={async (e) => {
+    const success = await submitAddResident(e);
+    if (success) {
+      setShowAddResidentModal(false);
+    }
+  }}
+  nav={nav}
+  setEditingResidentId={setEditingResidentId}
+  EMPTY_RESIDENT={EMPTY_RESIDENT}
+  onCancel={() => setShowAddResidentModal(false)}
+/>
       </div>
     </div>
   </div>
@@ -15800,6 +16112,8 @@ className="modal-card"
               type={printPreviewProps.printType}
               mode={printPreviewProps.mode}
               data={printPreviewProps.data}
+              publicDomain={systemSettings?.publicDomain || settingsForm?.publicDomain}
+              qrConfig={businessQrConfig}
               onClose={closePrint}
             />
           )}
@@ -15822,23 +16136,29 @@ className="modal-card"
       type={normalizeCertType(printData.certificateType || printData.certType || printData.type)}
       mode={printMode}
       data={{
+        _id: printData._id,
+        certificateType: printData.certificateType || printData.certType || printData.type,
         trackingCode: printData.trackingCode || printData._id || 'CERT-000000',
-        fullName: printData.residentName || (printData.firstName ? `${printData.firstName} ${printData.lastName}` : printData.fullName) || 'JUAN DELA CRUZ',
-        address: printData.address || printData.purok || 'Barangay Bustrac, Nabua, Camarines Sur',
-        purpose: printData.purpose || 'Local Employment',
+        fullName: printData.residentName || (printData.firstName ? `${printData.firstName} ${printData.lastName}` : printData.fullName) || '',
+        firstName: printData.firstName || '',
+        lastName: printData.lastName || '',
+        address: printData.address || printData.purok || '',
+        purpose: printData.purpose || '',
         issueDate: (() => {
           const raw = printData.issueDate || printData.issuedAt || printData.dateIssued;
           return raw
             ? new Date(raw).toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' })
             : new Date().toLocaleDateString('en-PH', { month: 'long', day: 'numeric', year: 'numeric' });
         })(),
-        orNumber: printData.orNumber ?? 'N/A',
-        ctcNumber: printData.ctc?.number ?? printData.ctcNumber ?? 'N/A',
+        orNumber: printData.orNumber ?? '',
+        ctcNumber: printData.ctc?.number ?? printData.ctcNumber ?? '',
         amountPaid: printData.amountPaid ?? printData.ctc?.amountPaid ?? 0,
-        civilStatus: printData.civilStatus || 'Single',
-        age: printData.age || 'N/A',
-        punongBarangay: printData.punongBarangay || 'HON. ANNABELLE E. RULL',
+        civilStatus: printData.civilStatus || '',
+        age: printData.age || '',
+        punongBarangay: printData.punongBarangay || '',
       }}
+      publicDomain={systemSettings?.publicDomain || settingsForm?.publicDomain}
+      qrConfig={businessQrConfig}
       onClose={() => {
         setPrintData(null);
         setSelectedCertificate(null);

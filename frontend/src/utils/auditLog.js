@@ -6,6 +6,8 @@ export async function createAuditLog({
   module,
   recordId = null,
   details = '',
+  actor: actorOverride = null,
+  meta = null,
 }) {
   try {
     const rawUser = localStorage.getItem('bustrac_user');
@@ -24,6 +26,19 @@ export async function createAuditLog({
       }
     }
 
+    if (actorOverride && typeof actorOverride === 'object') {
+      actor = {
+        ...actor,
+        username: actorOverride.username || actorOverride.residentId || actor.username,
+        role: actorOverride.role || actor.role,
+      };
+      if (actorOverride.displayName || actorOverride.fullName) {
+        actor.displayName = actorOverride.displayName || actorOverride.fullName;
+      }
+    } else if (typeof actorOverride === 'string' && actorOverride) {
+      actor.username = actorOverride;
+    }
+
     const timestamp = new Date().toISOString();
 
     const doc = {
@@ -39,6 +54,10 @@ export async function createAuditLog({
       createdAt: timestamp,
     };
 
+    if (meta && typeof meta === 'object') {
+      doc.meta = meta;
+    }
+
     await localDb.put(doc);
 
     return { success: true, entry: doc };
@@ -46,6 +65,36 @@ export async function createAuditLog({
     console.error('Audit log creation failed:', err);
     return { success: false, entry: null, error: err };
   }
+}
+
+export async function logConflictResolution({
+  docId,
+  module,
+  strategy,
+  winnerRev = null,
+  loserRevs = [],
+  mergedFields = [],
+  residentName = '',
+  details = '',
+  actor = null,
+}) {
+  const labelText = Array.isArray(mergedFields) && mergedFields.length
+    ? ` · Fields: ${mergedFields.join(', ')}`
+    : '';
+  const winnerText = winnerRev ? ` · Winner: ${winnerRev}` : '';
+  const loserText = Array.isArray(loserRevs) && loserRevs.length
+    ? ` · Discarded: ${loserRevs.join(', ')}`
+    : '';
+  const baseDetails = details || `Conflict resolved${residentName ? ` for ${residentName}` : ''}`;
+
+  return createAuditLog({
+    action: 'CONFLICT_RESOLVED',
+    module: module || 'CONFLICTS',
+    recordId: docId,
+    details: `${baseDetails} (strategy: ${strategy})${winnerText}${loserText}${labelText}`,
+    actor,
+    meta: { conflict: true, strategy, winnerRev, loserRevs, mergedFields },
+  });
 }
 
 export async function logActivity({
