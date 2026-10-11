@@ -5572,6 +5572,88 @@ const handleResolveAllConflicts = async () => {
   }
 };
 
+// ── FEATURE A: Bulk Resolution — Keep Latest by Timestamp ──
+const handleResolveAllKeepLatest = async () => {
+  if (conflictsList.length === 0) {
+    showToast('No conflicts to resolve.', 'info');
+    return;
+  }
+
+  const result = await Swal.fire({
+    title: 'Resolve All — Keep Latest?',
+    html: 'This will compare timestamps and keep the NEWER version for each conflict. Conflicts with the same timestamp will be skipped for manual review. Continue?',
+    showCancelButton: true,
+    confirmButtonText: 'Yes, Resolve Latest',
+    cancelButtonText: 'Cancel',
+  });
+
+  if (!result.isConfirmed) return;
+
+  setLoadingConflicts(true);
+  let resolvedCount = 0;
+  let skippedCount = 0;
+  let errorCount = 0;
+  const skippedList = [];
+
+  for (const c of conflictsList) {
+    // Skip ambiguous conflicts (missing or equal timestamps)
+    if (!c.timeA || !c.timeB || c.timeA === c.timeB) {
+      skippedCount += 1;
+      skippedList.push(c.docId);
+      continue;
+    }
+
+    const winner = c.timeA > c.timeB ? 'A' : 'B';
+
+    try {
+      if (winner === 'A') {
+        await db.remove(c.docId, c.conflictRev);
+      } else {
+        const docB = await db.get(c.docId, { rev: c.conflictRev });
+        const currentDoc = await db.get(c.docId);
+        await db.put({ ...docB, _id: c.docId, _rev: currentDoc._rev });
+        await db.remove(c.docId, c.conflictRev);
+      }
+
+      resolvedCount += 1;
+
+      try {
+        await logConflictResolution({
+          docId: c.docId,
+          module: c.moduleLabel || 'CONFLICTS',
+          strategy: 'keep-latest',
+          winnerRev: winner === 'A' ? c.winningRev : c.conflictRev,
+          loserRevs: winner === 'A' ? [c.conflictRev] : [c.winningRev],
+          mergedFields: c.changedFields || [],
+          residentName: c.residentName,
+          details: `Auto-resolved (keep-latest): kept version ${winner} for ${c.residentName}`,
+        });
+      } catch (auditErr) {
+        console.warn('Bulk keep-latest audit log failed:', auditErr);
+      }
+    } catch (err) {
+      // 404 = already deleted, 409 = already resolved by background sync
+      if (err.status === 404 || err.status === 409) {
+        resolvedCount += 1;
+      } else {
+        console.warn(`⚠️ Failed to resolve ${c.docId}:`, err);
+        errorCount += 1;
+      }
+    }
+  }
+
+  setLoadingConflicts(false);
+
+  showToast(
+    `Bulk resolve (Latest) — Resolved: ${resolvedCount}, Skipped: ${skippedCount}, Errors: ${errorCount}`,
+    'success'
+  );
+
+  if (typeof fetchDatabaseConflicts === 'function') {
+    await fetchDatabaseConflicts();
+  }
+};
+
 // Resolve Conflict: Keep Version B (Override current doc with revision B's data)
 const handleKeepVersionB = async (conflict) => {
   try {
@@ -14081,17 +14163,31 @@ const handleGenerateCredentials = async (resident) => {
                           {conflictsList.length} conflict(s) detected. Review and choose the correct version.
                         </p>
                       </div>
-                      {conflictsList.length > 0 && (
-                        <button
-                          type="button"
-                          className="btn btn-d"
-                          onClick={handleResolveAllConflicts}
-                          disabled={loadingConflicts}
-                          style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: loadingConflicts ? 0.6 : 1 }}
-                        >
-                          {loadingConflicts ? 'Resolving...' : '🧹 Resolve All (Keep Local Version)'}
-                        </button>
-                      )}
+                      <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                        {conflictsList.length > 0 && (
+                          <button
+                            type="button"
+                            className="btn btn-p"
+                            onClick={handleResolveAllKeepLatest}
+                            disabled={loadingConflicts}
+                            title="Automatically keep the newer version based on timestamp. Skips same-timestamp conflicts."
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: loadingConflicts ? 0.6 : 1 }}
+                          >
+                            {loadingConflicts ? 'Resolving...' : '⏳ Resolve All (Keep Latest)'}
+                          </button>
+                        )}
+                        {conflictsList.length > 0 && (
+                          <button
+                            type="button"
+                            className="btn btn-d"
+                            onClick={handleResolveAllConflicts}
+                            disabled={loadingConflicts}
+                            style={{ display: 'flex', alignItems: 'center', gap: '6px', opacity: loadingConflicts ? 0.6 : 1 }}
+                          >
+                            {loadingConflicts ? 'Resolving...' : '🧹 Resolve All (Keep Local Version)'}
+                          </button>
+                        )}
+                      </div>
                     </div>
 
                     {conflictsList.length === 0 ? (
