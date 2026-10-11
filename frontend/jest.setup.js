@@ -1,4 +1,14 @@
 // frontend/jest.setup.js
+// Polyfill WebCrypto for Jest (jsdom does not expose crypto.subtle)
+if (typeof globalThis.crypto === 'undefined' || !globalThis.crypto.subtle) {
+  const { webcrypto } = require('crypto');
+  Object.defineProperty(globalThis, 'crypto', {
+    value: webcrypto,
+    configurable: true,
+    writable: true,
+  });
+}
+
 import 'whatwg-fetch';
 import '@testing-library/jest-dom';
 import { TextEncoder, TextDecoder } from 'util';
