@@ -1,7 +1,9 @@
 import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { localDb as db, forceSyncToRemote, remoteDb } from '../services/db';
+import { localDb as db, forceSyncToRemote, remoteDb, stopPouchDBSync, onSyncStatusChange } from '../services/db';
 import { createAuditLog } from '../utils/auditLog';
+import { clearToken } from '../utils/tokenStore';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
 import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt } from "react-icons/fa";
@@ -27,6 +29,7 @@ import ResidentFeedback from '../components/Resident/ResidentFeedback';
 import ResidentBlotter from '../components/Resident/ResidentBlotter';
 import ResidentAssistance from '../components/Resident/ResidentAssistance';
 import ResidentProfile from '../components/Resident/ResidentProfile';
+import SyncStatusIndicator from '../components/SyncStatusIndicator';
 
 const CERT_FORM_INITIAL = { certType: '', certPurpose: '' };
 
@@ -49,6 +52,14 @@ const safePut = async (doc) => {
     throw new Error('Max retries reached: Document conflict unresolved');
   };
 
+// Move focus out of any subtree before opening a SweetAlert2 popup. SweetAlert2
+// marks the app background (e.g. #root) as aria-hidden; if a descendant keeps
+// focus, the browser logs a "Blocked aria-hidden ... descendant retained focus"
+// violation.
+const blurActiveElement = () => {
+  const el = typeof document !== 'undefined' ? document.activeElement : null;
+  if (el && typeof el.blur === 'function') el.blur();
+};
 
 export default function ResidentUI() {
   const navigate = useNavigate();
@@ -70,6 +81,10 @@ export default function ResidentUI() {
   const [myAssistance, setMyAssistance] = useState([]);
   const [announcements, setAnnouncements] = useState([]);
   const [lastSync, setLastSync] = useState(null);
+  const [syncState, setSyncState] = useState(typeof navigator !== 'undefined' && navigator.onLine ? 'synced' : 'offline');
+  const [pendingCount, setPendingCount] = useState(0);
+  const [syncDetail, setSyncDetail] = useState(null);
+  const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
 
@@ -96,6 +111,7 @@ export default function ResidentUI() {
   const isFetchingRef = useRef(false);
   const notifiedCertIds = useRef(new Set());
   const reloadTimerRef = useRef(null);
+  const editModalRef = useRef(null);
 
   /* ═══════════════════════════════════════════════════════════
      SECTION 3: SIMPLE useEffect (no interdependencies)
@@ -144,6 +160,25 @@ useEffect(() => {
     return () => {
       window.removeEventListener('online', onOnline);
       window.removeEventListener('offline', onOffline);
+    };
+  }, []);
+
+  // 3d-2. Cloud sync status — shared PouchDB sync events from services/db.
+  useEffect(() => {
+    const unsubscribe = onSyncStatusChange(({ status, pending, detail }) => {
+      setSyncState(status);
+      setSyncDetail(detail ?? null);
+      if (typeof pending === 'number' && pending !== 999) {
+        setPendingCount(pending);
+      }
+      if (status === 'synced' || status === 'success') {
+        setLastSync(new Date());
+        setPendingCount(0);
+        setSyncDetail(null);
+      }
+    });
+    return () => {
+      if (typeof unsubscribe === 'function') unsubscribe();
     };
   }, []);
 
@@ -282,7 +317,11 @@ const showToast = useCallback((message, type = 'success') => {
     }).then((result) => {
       if (result.isConfirmed) {
         clearStoredUser();
-        navigate('/');
+        clearToken();
+        stopPouchDBSync();
+        // Keep the offline_auth cache so offline login still works next time.
+        localStorage.removeItem('bustrac_loginTime');
+        navigate('/login');
       }
     });
   }, [navigate]);
@@ -581,7 +620,8 @@ const showToast = useCallback((message, type = 'success') => {
 
     const currentUser = loggedInUserRef.current || loggedInUser;
     const safeComplainant = currentUser?.fullName || currentUser?.name || 'Anonymous Resident';
-    const safeResidentId = currentUser?.residentId || currentUser?.id || 'RES-UNKNOWN';
+    const safeResidentId = currentUser?.residentId || '';
+    const safeUsername = currentUser?.username || '';
 
     // 🛡️ ANTI-SPAM + 🧾 DUPLICATE / PRELIMINARY BLOTTER CHECK.
     // Anti-spam runs FIRST and short-circuits the duplicate guard. The guard
@@ -626,6 +666,8 @@ const showToast = useCallback((message, type = 'success') => {
       incidentType: subject.trim(),
       complainant: safeComplainant,
       complainantName: safeComplainant,
+      residentName: safeComplainant,
+      username: safeUsername,
       respondent: respondent || 'Under Investigation',
       respondentName: respondent || 'Under Investigation',
       location: location || 'Barangay Bustrac',
@@ -635,6 +677,8 @@ const showToast = useCallback((message, type = 'success') => {
       attachments: attachments || [],
       status: 'Pending',
       history: [],
+      contact: currentUser?.contact || '',
+      purok: currentUser?.purok || '',
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       timestamp: new Date().toISOString(),
@@ -650,7 +694,7 @@ const showToast = useCallback((message, type = 'success') => {
         action: 'CREATE_BLOTTER_REPORT',
         module: 'BLOTTER',
         recordId: refNumber,
-        actor: { username: safeResidentId || 'resident', role: 'resident', fullName: safeComplainant || 'Resident' },
+        actor: { username: safeUsername || safeResidentId || 'resident', role: 'resident', fullName: safeComplainant || 'Resident' },
         details: `Filed incident report (${subject.trim()}) with ${(attachments || []).length} attachment(s)`,
       });
       await createAuditLog(auditPayload);
@@ -714,6 +758,7 @@ const showToast = useCallback((message, type = 'success') => {
     const editableStatuses = ['pending', 'needs revision', 'returned', 'open'];
     const currentStatus = (report.status || '').toLowerCase();
     if (!editableStatuses.includes(currentStatus)) {
+      blurActiveElement();
       Swal.fire('Action Denied', `Editing is locked because this report is under status: "${report.status}".`, 'warning');
       return;
     }
@@ -731,6 +776,14 @@ const showToast = useCallback((message, type = 'success') => {
       respondent: report.respondent || report.respondentName || '',
     });
   }, []);
+
+  // Closes the edit modal without any confirmation. Used after a successful
+  // save (the form is intentionally left "modified" vs the stale editingReport,
+  // so reusing closeEditModal would wrongly prompt "Discard changes?").
+  const resetEditModal = useCallback(() => {
+    setEditingReport(null);
+    setEditForm({ subject: '', details: '', incidentDate: '', zone: 'Zone 1', street: '', respondent: '' });
+  }, []);
  
   const closeEditModal = useCallback(() => {
   const rawLoc = editingReport?.location || editingReport?.purok || '';
@@ -747,6 +800,7 @@ const showToast = useCallback((message, type = 'success') => {
     editForm.street.trim() !== detectedStreet.trim();
 
   if (isModified) {
+    blurActiveElement();
     Swal.fire({
       title: 'Discard changes?',
       text: 'You have unsaved changes in this report.',
@@ -758,15 +812,13 @@ const showToast = useCallback((message, type = 'success') => {
       cancelButtonText: 'Keep editing'
     }).then((result) => {
       if (result.isConfirmed) {
-        setEditingReport(null);
-        setEditForm({ subject: '', details: '', incidentDate: '', zone: 'Zone 1', street: '', respondent: '' });
+        resetEditModal();
       }
     });
   } else {
-    setEditingReport(null);
-    setEditForm({ subject: '', details: '', incidentDate: '', zone: 'Zone 1', street: '', respondent: '' });
+    resetEditModal();
   }
-}, [editForm, editingReport]);
+}, [editForm, editingReport, resetEditModal]);
 
   // 5j. handleSaveEdit — deps: editingReport, editForm, loadData ✅
   const handleSaveEdit = useCallback(
@@ -776,6 +828,7 @@ const showToast = useCallback((message, type = 'success') => {
     if (!db || !editingReport) return;
 
     if (!editForm.subject.trim() || !editForm.details.trim()) {
+      blurActiveElement();
       Swal.fire('Missing Fields', 'Please fill in all required fields (Subject and Details).', 'warning');
       return;
     }
@@ -813,16 +866,21 @@ const showToast = useCallback((message, type = 'success') => {
 
       await safePut(updatedDoc); 
 
+      // Close the modal first (unmounts the focused Save button and clears the
+      // stale edit state) so the success alert is not blocked behind the modal
+      // and no aria-hidden focus violation is triggered.
+      resetEditModal();
+      blurActiveElement();
       Swal.fire('Success', 'Report updated successfully! Changes will sync to the Barangay Admin.', 'success');
-      closeEditModal();
       await loadData();
     } catch (err) {
       console.error('Error updating report:', err);
+      blurActiveElement();
       Swal.fire('Error', 'Failed to update the report. Please try again.', 'error');
     } finally {
       setIsSavingEdit(false); // ✅ ADD THIS
     }
-    }, [editForm, editingReport, db, loggedInUser, loadData, closeEditModal, isSavingEdit]);
+    }, [editForm, editingReport, db, loggedInUser, loadData, resetEditModal, isSavingEdit]);
 
   // 5k. handleSaveProfileEdit — deps: db, residentProfile, loggedInUser
   const handleSaveProfileEdit = useCallback(
@@ -1048,6 +1106,22 @@ useEffect(() => {
   return () => window.removeEventListener('keydown', handleEsc);
 }, [editingReport, closeEditModal]);
 
+// Focus management for the edit modal: move focus into the dialog when it
+// opens and restore it to the opener when it closes.
+useEffect(() => {
+  if (!editingReport) return undefined;
+  const previouslyFocused = typeof document !== 'undefined' ? document.activeElement : null;
+  const focusTimer = setTimeout(() => {
+    if (editModalRef.current) editModalRef.current.focus();
+  }, 0);
+  return () => {
+    clearTimeout(focusTimer);
+    if (previouslyFocused && typeof previouslyFocused.focus === 'function' && document.contains(previouslyFocused)) {
+      previouslyFocused.focus();
+    }
+  };
+}, [editingReport]);
+
   // 7b. Tab routing mula sa navigate state
   useEffect(() => {
     if (location.state?.activeTab) {
@@ -1136,18 +1210,57 @@ useEffect(() => {
     <div className="resident-root-container">
       <div id="app">
         {/* Top Header */}
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 16px', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <img src={logo} alt="Barangay Logo" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'contain' }} />
-            <span style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', letterSpacing: '0.3px' }}>Bustrac Hub</span>
+        <div className="resident-header" style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', alignItems: 'center', gap: 8, padding: '12px 16px', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+          <div className="resident-header__brand" style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: '1 1 auto' }}>
+            <img src={logo} alt="Barangay Logo" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'contain', flexShrink: 0 }} />
+            <span className="resident-header__title" style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', letterSpacing: '0.3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Bustrac Hub</span>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            {lastSync && (
-              <span style={{ fontSize: 10, color: 'var(--muted)', display: 'flex', alignItems: 'center', gap: 4 }}>
-                <span style={{ width: 6, height: 6, borderRadius: '50%', background: isOffline ? 'var(--amber)' : 'var(--green)', display: 'inline-block' }} />
-                {isOffline ? 'Offline' : 'Synced'}
+          <div className="resident-header__actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: 'auto' }}>
+            <SyncStatusIndicator syncState={syncState} pendingCount={pendingCount} lastSynced={lastSync} detail={syncDetail} />
+            <button
+              type="button"
+              onClick={async () => {
+                setIsSyncing(true);
+                try {
+                  await forceSyncToRemote();
+                  if (Swal && Swal.fire) {
+                    Swal.fire({ icon: 'success', toast: true, position: 'top-end', timer: 2000, showConfirmButton: false, title: 'Sync complete' });
+                  }
+                } catch {
+                  if (Swal && Swal.fire) {
+                    Swal.fire({ icon: 'error', toast: true, position: 'top-end', timer: 2500, showConfirmButton: false, title: 'Sync failed — will retry' });
+                  }
+                } finally {
+                  setIsSyncing(false);
+                }
+              }}
+              className={`resident-header__sync-btn${isSyncing ? ' resident-header__sync-btn--syncing' : ''}`}
+              disabled={isSyncing || (syncState === 'offline' && syncDetail !== 'forbidden')}
+              style={{
+                background: 'var(--surface2)',
+                border: '1px solid var(--border)',
+                color: 'var(--text)',
+                borderRadius: 8,
+                padding: '6px 12px',
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: isSyncing || (syncState === 'offline' && syncDetail !== 'forbidden') ? 'not-allowed' : 'pointer',
+                opacity: isSyncing || (syncState === 'offline' && syncDetail !== 'forbidden') ? 0.6 : 1,
+              }}
+              aria-label={syncState === 'offline' && syncDetail !== 'forbidden'
+                ? 'Offline — sync will resume automatically when connection returns'
+                : isSyncing
+                ? 'Sync in progress'
+                : 'Retry sync (optional manual retry)'}
+            >
+              <span className="resident-header__sync-label-full">{isSyncing ? 'Syncing…' : pendingCount > 0 ? `Retry Sync (${pendingCount})` : 'Retry Sync'}</span>
+              <span className="resident-header__sync-label-short" aria-hidden="true">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
+                  <polyline points="21 3 21 9 15 9" />
+                </svg>
               </span>
-            )}
+            </button>
             <button
               type="button"
               onClick={toggleTheme}
@@ -1262,10 +1375,13 @@ useEffect(() => {
         </footer>
       </div>
 
-      {/* Blotter Edit Modal */}
-      {editingReport && (
-        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 9999, padding: '48px 16px 16px', overflowY: 'auto' }} onClick={closeEditModal}>
-          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', padding: 20, marginBottom: 48 }} onClick={(e) => e.stopPropagation()}>
+      {/* Blotter Edit Modal — portaled to document.body so SweetAlert2's
+          aria-hidden on #root never hides an element that still holds focus.
+          zIndex (1000) is kept below SweetAlert2's popup (1060) so confirmation
+          dialogs (e.g. the "Discard changes?" prompt) render above the modal. */}
+      {editingReport && createPortal(
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1000, padding: '48px 16px 16px', overflowY: 'auto' }} onClick={closeEditModal} role="presentation">
+          <div ref={editModalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`Edit blotter report ${editingReport.refNumber || editingReport._id}`} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', padding: 20, marginBottom: 48, outline: 'none' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
               <span>Edit Report — {editingReport.refNumber || editingReport._id}</span>
               <button onClick={closeEditModal}  style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 20, cursor: 'pointer' }}>✕</button>
@@ -1328,7 +1444,8 @@ useEffect(() => {
               </div>
             </form>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

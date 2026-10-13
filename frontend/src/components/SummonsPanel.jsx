@@ -28,7 +28,7 @@ export function SummonsPanel({ currentCase, db, setBlotterList }) {
   }, [currentCase]);
 
   const currentCount = currentCase?.summonCount || 0;
-  const isCaseFinalized = currentCase?.status === 'Settled / Closed' || currentCase?.status === 'Dismissed';
+  const isCaseFinalized = currentCase?.status === 'Settled / Resolved' || currentCase?.status === 'Settled' || currentCase?.status === 'Resolved' || currentCase?.status === 'Dismissed';
 
   const handleScheduleDateChange = (e) => {
     const selectedValue = e.target.value;

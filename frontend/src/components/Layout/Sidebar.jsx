@@ -9,6 +9,8 @@ const Sidebar = React.memo(function Sidebar({
   isAidOpen,
   setIsAidOpen,
   screen,
+  setScreen,
+  setShowUserMenu,
   nav,
   role,
   displayName,

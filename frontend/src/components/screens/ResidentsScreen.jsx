@@ -8,7 +8,7 @@ const ResidentsScreen = React.memo(function ResidentsScreen({
   sortedFilteredResidents,
   isResidentsLoading,
   viewMode,
-  setViewMode,           // ✅ IDAGDAG
+  setViewMode,          
   role,
 
   // Filters
@@ -376,7 +376,19 @@ const ResidentsScreen = React.memo(function ResidentsScreen({
                               </button>
                             )}
                             {role === 'admin' && (
-                              <button className="btn btn-sm action-btn-delete" onClick={() => handleArchiveResident(res.id, res.name)} title="Archive Resident">
+                              <button
+  className="btn btn-sm action-btn-delete"
+  onClick={() => {
+    console.log('[ARCHIVE CLICK] typeof handleArchiveResident:', typeof handleArchiveResident);
+    if (typeof handleArchiveResident !== 'function') {
+      console.error('[ARCHIVE CLICK] handleArchiveResident is not a function! Value:', handleArchiveResident);
+      showToast('Archive function not loaded. Please reload the page.', 'error');
+      return;
+    }
+    handleArchiveResident(res.id, res.name);
+  }}
+  title="Archive Resident"
+>
                                 <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polyline points="21 8 21 21 3 21 3 8" /><rect x="1" y="3" width="22" height="5" /><line x1="10" y1="12" x2="14" y2="12" /></svg>
                               </button>
                             )}

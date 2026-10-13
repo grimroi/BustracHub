@@ -593,36 +593,7 @@ export const mapDocToBlotter = (doc) => {
     rawDoc: doc
   };
 };
-
-// ── Helper: Kunin ang next Business ID at i-increment ang sequence (TOTOONG SAVE) ──
-const getNextBusinessSequence = async () => {
-  const existing = businessMasterlist.map((r) => r.bcIdNo);
-  for (let attempt = 0; attempt < 5; attempt += 1) {
-    try {
-      let seqDoc;
-      try {
-        seqDoc = await db.get('seq_business_clearance');
-      } catch (err) {
-        if (err.name === 'not_found') {
-          // Start at 155 para ang next ay maging 0156
-          seqDoc = { _id: 'seq_business_clearance', lastNumber: 155 };
-        } else {
-          throw err;
-        }
-      }
-      const nextNumber = (seqDoc.lastNumber || 155) + 1;
-      await db.put({ ...seqDoc, lastNumber: nextNumber });
-      return nextAvailableBusinessId(existing, String(nextNumber).padStart(4, '0'));
-    } catch (err) {
-      if (err && (err.status === 409 || err.name === 'conflict')) continue;
-      console.error('Failed to get business sequence:', err);
-      break;
-    }
-  }
-  // Fallback kung may error sa DB
-  return nextAvailableBusinessId(existing, String(Date.now()).slice(-4));
-};
-
+ 
 // ── HELPER: Convert Base64 Data URL to Blob for PouchDB Native Attachments ──
 const dataURLtoBlob = (dataURL) => {
   try {
@@ -824,11 +795,75 @@ const handlePrintBusinessDocument = async () => {
     }, 300);
   }
 };
-  const [blotterList, setBlotterList] = useState([]);
+  const [blotterList, setBlotterList] = useState([
+  {
+    _id: 'BLT-2026-001',
+    id: 'BLT-2026-001',
+    type: 'Noise Complaint',
+    incidentType: 'Noise Complaint',
+    complainant: 'Juan Dela Cruz',
+    complainantName: 'Juan Dela Cruz',
+    respondent: 'Pedro Santos',
+    respondentName: 'Pedro Santos',
+    location: 'Purok 3',
+    purok: 'Purok 3',
+    date: '2026-01-15',
+    incidentDate: '2026-01-15',
+    status: 'Open',
+    summonCount: 0,
+    cfaIssued: false,
+    isVawc: false,
+    createdAt: '2026-01-15T09:30:00.000Z',
+    updatedAt: '2026-01-15T09:30:00.000Z'
+  },
+  {
+    _id: 'BLT-2026-002',
+    id: 'BLT-2026-002',
+    type: 'Property Dispute',
+    incidentType: 'Property Dispute',
+    complainant: 'Maria Santos',
+    complainantName: 'Maria Santos',
+    respondent: 'Jose Reyes',
+    respondentName: 'Jose Reyes',
+    location: 'Zone 6',
+    purok: 'Zone 6',
+    date: '2026-02-20',
+    incidentDate: '2026-02-20',
+    status: 'Under Mediation / Summons',
+    summonCount: 2,
+    cfaIssued: false,
+    isVawc: false,
+    createdAt: '2026-02-20T14:15:00.000Z',
+    updatedAt: '2026-03-10T10:00:00.000Z'
+  },
+  {
+    _id: 'BLT-2026-003',
+    id: 'BLT-2026-003',
+    type: 'Public Disturbance',
+    incidentType: 'Public Disturbance',
+    complainant: 'Barangay Tanod',
+    complainantName: 'Barangay Tanod',
+    respondent: 'Mark Garcia',
+    respondentName: 'Mark Garcia',
+    location: 'Purok 1',
+    purok: 'Purok 1',
+    date: '2026-03-05',
+    incidentDate: '2026-03-05',
+    status: 'Settled / Resolved',
+    summonCount: 1,
+    cfaIssued: false,
+    isVawc: false,
+    createdAt: '2026-03-05T16:45:00.000Z',
+    updatedAt: '2026-03-12T09:00:00.000Z'
+  }
+]);
+  const [auditLogs, setAuditLogs] = useState([]);
 
 const getStatusBadge = (status) => {
   switch (status) {
-    case 'Settled / Closed':
+    case 'Settled / Resolved':
+    case 'Settled':
+    case 'Resolved':
       return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#dcfce7', color: '#15803d', fontWeight: 'bold' }}>✓ Settled</span>;
     case 'Referred to Lupon':
       return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#fef3c7', color: '#b45309', fontWeight: 'bold' }}>⚠️ Referred to Lupon</span>;
@@ -889,9 +924,103 @@ const [feedbackList, setFeedbackList] = useState([
   }
 ]);
 
+  // ── ROBUST LOCAL STATS (offline-first) ──
+  // The dashboard cards used to derive Residents/Households/Voters from a
+  // Mango find() whose $or selector often returned nothing, leaving the cards
+  // at 0 even though localDb held the data. We now count straight from
+  // localDb.allDocs() (the same source window.localDb exposes) and recompute
+  // whenever replication reports it is synced.
+  const [dashboardStats, setDashboardStats] = useState({
+    residents: 0,
+    households: 0,
+    voters: 0,
+    openBlotters: 0,
+  });
+
+  const computeDashboardStats = useCallback(async () => {
+    if (typeof db === 'undefined' || !db || typeof db.allDocs !== 'function') return null;
+    try {
+      const res = await db.allDocs({ include_docs: true });
+      const rows = res.rows
+        .map((r) => r.doc)
+        .filter((doc) => doc && doc._id && doc._deleted !== true)
+        .filter(
+          (doc) =>
+            !String(doc._id).startsWith('_local/') &&
+            !String(doc._id).startsWith('_design/')
+        );
+
+      // Robust resident/household counts — match the real doc shape and skip
+      // archived docs (isArchived may be absent on live docs).
+      const residents = rows.filter(
+        (doc) => doc.type === 'resident' && doc.isArchived !== true
+      );
+      const households = rows.filter(
+        (doc) => doc.type === 'household' && doc.isArchived !== true
+      );
+      // Both field names are used across the codebase.
+      const voters = residents.filter(
+        (doc) => doc.isRegisteredVoter === true || doc.voter === true
+      );
+
+      const isBlotterDoc = (doc) =>
+        doc.type === 'blotter' ||
+        doc.type === 'blotter_record' ||
+        doc.type === 'blotter_report' ||
+        doc.docType === 'blotter' ||
+        (typeof doc._id === 'string' && doc._id.toUpperCase().startsWith('BLT-'));
+
+      // OPEN BLOTTER = Open / Pending / Under Mediation only. Resolved,
+      // Settled, Dismissed and CFA-referred cases are excluded.
+      const openBlotters = rows.filter((doc) => {
+        if (!isBlotterDoc(doc)) return false;
+        const status = String(doc.status || '').trim().toLowerCase();
+        if (doc.cfaIssued === true) return false;
+        if (/resolved|settled|dismissed|cfa|referred/.test(status)) return false;
+        return (
+          status === 'open' ||
+          status === 'pending' ||
+          status.startsWith('under mediation')
+        );
+      });
+
+      const next = {
+        residents: residents.length,
+        households: households.length,
+        voters: voters.length,
+        openBlotters: openBlotters.length,
+      };
+      setDashboardStats((prev) =>
+        prev.residents === next.residents &&
+        prev.households === next.households &&
+        prev.voters === next.voters &&
+        prev.openBlotters === next.openBlotters
+          ? prev
+          : next
+      );
+      console.log('[dashboard-stats] local PouchDB counts:', next);
+      return next;
+    } catch (err) {
+      console.warn('[dashboard-stats] Failed to compute local stats:', err?.message || err);
+      return null;
+    }
+  }, []);
+
+  // Compute on mount and shortly after — replication may still be settling and
+  // the initial find()/allDocs loads may not have finished on first render.
+  useEffect(() => {
+    computeDashboardStats();
+    const t1 = setTimeout(computeDashboardStats, 1000);
+    const t2 = setTimeout(computeDashboardStats, 3500);
+    return () => {
+      clearTimeout(t1);
+      clearTimeout(t2);
+    };
+  }, [computeDashboardStats]);
+
   const settledBlotterCount = blotterList.filter(b => b.status === 'Settled / Resolved' || b.status === 'Settled').length;
   const cfaBlotterCount = blotterList.filter(b => b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)').length;
-  const activeBlotterCount = blotterList.filter(b => b.status === 'Pending' || b.status === 'Open' || b.status === 'Under Mediation').length;
+  const activeBlotterCount = dashboardStats.openBlotters;
 
   const feedbackSummary = {
   complaint: feedbackList.filter(f => (f.type || f.feedbackType) === 'Complaint').length,
@@ -912,6 +1041,8 @@ const handleOpenPrint = (blotterItem) => {
   const [selectedPrintCert, setSelectedPrintCert] = useState(null);
   const [printData, setPrintData] = useState(null);
   const [printMode, setPrintMode] = useState('original');
+  const [showIndigencyPrintModal, setShowIndigencyPrintModal] = useState(false);
+  const [selectedIndigencyCert, setSelectedIndigencyCert] = useState(null);
   const handleOpenPrintModal = useCallback((certData) => {
   setSelectedPrintCert(certData);
   setShowPrintModal(true);
@@ -952,12 +1083,14 @@ const initials = displayName
   
   // ── Navigation State ──
   const [screen,  setScreen]  = useState('dashboard');
+  const [showUserMenu, setShowUserMenu] = useState(false);
   const [selectedCertificate, setSelectedCertificate] = useState(null);
 
   const [syncState, setSyncState] = useState(navigator.onLine ? 'synced' : 'offline');
   const [isDbProcessing, setIsDbProcessing] = useState(false);
   const [lastSynced, setLastSynced] = useState(null);     
 const [pendingCount, setPendingCount] = useState(0);  
+    const [syncDetail, setSyncDetail] = useState(null);
     const [toasts, setToasts] = useState([]);
 
   const showToast = useCallback((message, type = 'success') => {
@@ -1592,6 +1725,8 @@ const handleCreateProgram = async (e) => {
   const [editingResidentId, setEditingResidentId] = useState(null);
   
   const [issuedCertificates, setIssuedCertificates] = useState([]);
+  const [approvedCertificates, setApprovedCertificates] = useState([]);
+  const [certificates, setCertificates] = useState([]);
   const [issuedHistorySearch, setIssuedHistorySearch] = useState('');
   const [issuedCertificateSearch, setIssuedCertificateSearch] = useState('');
   
@@ -1657,6 +1792,7 @@ const filteredIssuedCertificates = issuedCertificates.filter((cert) => {
 });
 
 const safeFilteredCerts = filteredIssuedCertificates || [];
+const filteredAuditLogs = auditLogs;
 const indexOfLastItem = currentPage * itemsPerPage;
 const indexOfFirstItem = indexOfLastItem - itemsPerPage;
 const currentItems = safeFilteredCerts.slice(indexOfFirstItem, indexOfLastItem);
@@ -2213,22 +2349,29 @@ const handleArchiveResident = async (residentId, residentName) => {
     };
     await db.put(archivedDoc);
 
-    // ✅ OPTIMISTIC UPDATE: Update local state directly
-    setResidentsList((prev) =>
-      prev.map((r) =>
-        (r.id === residentId || r._id === residentId)
-          ? { ...r, isArchived: true, archivedAt: archivedDoc.archivedAt }
-          : r
-      )
-    );
+    // ✅ GUARDED — skip kung undefined
+    if (typeof setResidentsList === 'function') {
+      setResidentsList((prev) =>
+        prev.map((r) =>
+          (r.id === residentId || r._id === residentId)
+            ? { ...r, isArchived: true, archivedAt: archivedDoc.archivedAt }
+            : r
+        )
+      );
+    }
 
+    // ✅ GUARDED
     if (typeof createAuditLog === 'function') {
-      await createAuditLog({
-        action: 'ARCHIVE_RESIDENT',
-        module: 'RESIDENTS',
-        recordId: residentId,
-        details: `Archived resident: ${residentName}`,
-      });
+      try {
+        await createAuditLog({
+          action: 'ARCHIVE_RESIDENT',
+          module: 'RESIDENTS',
+          recordId: residentId,
+          details: `Archived resident: ${residentName}`,
+        });
+      } catch (auditErr) {
+        console.warn('Audit log failed (non-blocking):', auditErr);
+      }
     }
 
     Swal.fire({
@@ -2341,7 +2484,7 @@ const submitAddResident = async (e) => {
     (res) => res.rbiId?.trim().toUpperCase() === normalizedRbiId && res.id !== editingResidentId
   );
   if (duplicateRbiId) {
-  showToast(`RBI ID ${normalizedRbiId} is already assigned to another resident.`, 'error');
+    showToast(`RBI ID ${normalizedRbiId} is already assigned to another resident.`, 'error');
     return false;
   }
 
@@ -2415,120 +2558,124 @@ const submitAddResident = async (e) => {
   }
 
   // =========================================================
-// SCENARIO A: UPDATE EXISTING RESIDENT
-// =========================================================
-if (editingResidentId) {
+  // SCENARIO A: UPDATE EXISTING RESIDENT
+  // =========================================================
+  if (editingResidentId) {
     const updatedList = residentsList.map((res) => {
-    if (res.id !== editingResidentId) return res;
-    return {
-      ...res,
-      rbiId: normalizedRbiId,
-      firstName: firstName.trim(),
-      middleName: middleName.trim(),
-      lastName: lastName.trim(),
-      name: fullName,
-      birthdate,
-      gender: sex,
-      civilStatus,
-      contact: contactNo.trim(),
-      purok: purokZoneAddress,
-      purokClass: dynamicPurokClass,
-      age: calculateAge(birthdate),
-      household: assignedHouseholdId,
-      householdNo: assignedHouseholdId,
-      householdHead: Boolean(isHouseholdHead),
-      voter: Boolean(isRegisteredVoter),
-      photoUrl: residentForm.photoUrl || res.photoUrl || '',
-      email: residentForm.email || res.email || '', 
-    };
-  });
-  setResidentsList(updatedList);
+      if (res.id !== editingResidentId) return res;
+      return {
+        ...res,
+        rbiId: normalizedRbiId,
+        firstName: firstName.trim(),
+        middleName: middleName.trim(),
+        lastName: lastName.trim(),
+        name: fullName,
+        birthdate,
+        gender: sex,
+        civilStatus,
+        contact: contactNo.trim(),
+        contactNo: contactNo.trim(), // ✅ FIX 1: Added contactNo to prevent stale state
+        purok: purokZoneAddress,
+        purokClass: dynamicPurokClass,
+        age: calculateAge(birthdate),
+        household: assignedHouseholdId,
+        householdNo: assignedHouseholdId,
+        householdHead: Boolean(isHouseholdHead),
+        voter: Boolean(isRegisteredVoter),
+        photoUrl: residentForm.photoUrl || res.photoUrl || '',
+        email: residentForm.email || res.email || '', 
+      };
+    });
+    setResidentsList(updatedList);
   
     try {
-    const existingDoc = await db.get(editingResidentId);
-    await db.put({
-      ...existingDoc,
-      rbiId: normalizedRbiId,
-      firstName: firstName.trim(),
-      middleName: middleName.trim(),
-      lastName: lastName.trim(),
-      name: fullName,
-      birthdate,
-      gender: sex,
-      civilStatus,
-      contact: contactNo.trim(),
-      purok: purokZoneAddress,
-      household: assignedHouseholdId,
-      householdNo: assignedHouseholdId,
-      householdHead: Boolean(isHouseholdHead),
-      voter: Boolean(isRegisteredVoter),
-      age: calculateAge(birthdate),
-      photoUrl: residentForm.photoUrl || existingDoc.photoUrl || '',
-      email: residentForm.email || existingDoc.email || '', 
-      updatedAt: new Date().toISOString(),
+      const existingDoc = await db.get(editingResidentId);
+      await db.put({
+        ...existingDoc,
+        rbiId: normalizedRbiId,
+        firstName: firstName.trim(),
+        middleName: middleName.trim(),
+        lastName: lastName.trim(),
+        name: fullName,
+        birthdate,
+        gender: sex,
+        civilStatus,
+        contact: contactNo.trim(),
+        contactNo: contactNo.trim(), // ✅ FIX 2: Added contactNo to DB
+        purok: purokZoneAddress,
+        purokClass: dynamicPurokClass, // ✅ FIX 2: Added purokClass to DB
+        household: assignedHouseholdId,
+        householdNo: assignedHouseholdId,
+        householdHead: Boolean(isHouseholdHead),
+        voter: Boolean(isRegisteredVoter),
+        age: calculateAge(birthdate),
+        photoUrl: residentForm.photoUrl || existingDoc.photoUrl || '',
+        email: residentForm.email || existingDoc.email || '', 
+        updatedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      console.warn('Resident not yet in PouchDB (local update only):', err);
+    }
+  
+    await createAuditLog({
+      action: 'UPDATE',
+      module: 'RESIDENTS',
+      recordId: editingResidentId,
+      details: `Updated resident record: ${fullName}`,
     });
-  } catch (err) {
-    console.warn('Resident not yet in PouchDB (local update only):', err);
+    showToast('success', `Resident ${editingResidentId} updated successfully!`);
+    setEditingResidentId(null);
+    setResidentForm(EMPTY_RESIDENT);
+    setHouseholdAssignmentMode('existing');
+    setHouseholdForm(EMPTY_HOUSEHOLD);
+    nav('residents');
+    return true;
   }
-  
-  await createAuditLog({
-    action: 'UPDATE',
-    module: 'RESIDENTS',
-    recordId: editingResidentId,
-    details: `Updated resident record: ${fullName}`,
-  });
- showToast('success', `Resident ${editingResidentId} updated successfully!`);
-  setEditingResidentId(null);
-  setResidentForm(EMPTY_RESIDENT);
-  setHouseholdAssignmentMode('existing');
-  setHouseholdForm(EMPTY_HOUSEHOLD);
-  nav('residents');
-  return true;
-}
 
-// ✅ DUPLICATE DETECTION CHECK
-const normalizedFirstName = firstName.trim().toLowerCase();
-const normalizedLastName = lastName.trim().toLowerCase();
-const normalizedBirthdate = birthdate;
+  // ✅ DUPLICATE DETECTION CHECK
+  const normalizedFirstName = firstName.trim().toLowerCase();
+  const normalizedLastName = lastName.trim().toLowerCase();
+  const normalizedBirthdate = birthdate;
 
-const possibleDuplicate = residentsList.find(res => {
-  const resFirst = (res.firstName || '').toLowerCase();
-  const resLast = (res.lastName || '').toLowerCase();
-  const resBirth = res.birthdate;
-  
-  // Match kung pareho ang First Name, Last Name, AT Birthdate
-  return resFirst === normalizedFirstName && 
-         resLast === normalizedLastName && 
-         resBirth === normalizedBirthdate;
-});
-
-if (possibleDuplicate && !editingResidentId) {
-  // Huwag agad mag-block, magbigay ng warning para i-review ng admin
-  const confirmDuplicate = await Swal.fire({
-    title: 'Possible Duplicate Detected!',
-    html: `May existing record na for <strong>${firstName} ${lastName}</strong> born on <strong>${birthdate}</strong>.<br><br>Gusto mo bang ituloy ang pag-add bilang bagong record, o i-review muna ang existing record?`,
-    icon: 'warning',
-    showCancelButton: true,
-    confirmButtonText: 'Continue Anyway (Different Person)',
-    cancelButtonText: 'Review Existing Record',
-    confirmButtonColor: '#3b82f6',
-    cancelButtonColor: '#ef4444'
+  const possibleDuplicate = residentsList.find(res => {
+    const resFirst = (res.firstName || '').toLowerCase();
+    const resLast = (res.lastName || '').toLowerCase();
+    const resBirth = res.birthdate;
+    
+    // Match kung pareho ang First Name, Last Name, AT Birthdate
+    return resFirst === normalizedFirstName && 
+           resLast === normalizedLastName && 
+           resBirth === normalizedBirthdate;
   });
 
-  if (!confirmDuplicate.isConfirmed) {
-    // I-redirect sa view ng existing resident
-    setSelectedResidentId(possibleDuplicate.id);
-    nav('view-resident');
-    return false; // Stop the submission
+  if (possibleDuplicate && !editingResidentId) {
+    // Huwag agad mag-block, magbigay ng warning para i-review ng admin
+    const confirmDuplicate = await Swal.fire({
+      title: 'Possible Duplicate Detected!',
+      html: `May existing record na for <strong>${firstName} ${lastName}</strong> born on <strong>${birthdate}</strong>.<br><br>Gusto mo bang ituloy ang pag-add bilang bagong record, o i-review muna ang existing record?`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Continue Anyway (Different Person)',
+      cancelButtonText: 'Review Existing Record',
+      confirmButtonColor: '#3b82f6',
+      cancelButtonColor: '#ef4444'
+    });
+
+    if (!confirmDuplicate.isConfirmed) {
+      // I-redirect sa view ng existing resident
+      setSelectedResidentId(possibleDuplicate.id);
+      nav('view-resident');
+      return false; // Stop the submission
+    }
   }
-}
+
   // =========================================================
   // SCENARIO B: CREATE NEW RESIDENT
   // =========================================================
-   const newResidentId = generateUUID();
-const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()}`;  
+  const newResidentId = generateUUID();
+  const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()}`;  
 
-    const newResident = {
+  const newResident = {
     id: newResidentId,
     rbiId: normalizedRbiId,
     firstName: firstName.trim(),
@@ -2539,10 +2686,12 @@ const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()
     gender: sex,
     civilStatus,
     contact: contactNo.trim(),
+    contactNo: contactNo.trim(), // Added for consistency
     purok: purokZoneAddress,
     purokClass: dynamicPurokClass,
     age: calculateAge(birthdate),
     household: assignedHouseholdId,
+    householdNo: assignedHouseholdId, // ✅ BONUS FIX: Added householdNo
     householdHead: Boolean(isHouseholdHead),
     voter: Boolean(isRegisteredVoter),
     conflict: false,
@@ -2552,26 +2701,28 @@ const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()
   };
 
   const updatedList = [...residentsList, newResident];
-setResidentsList(updatedList);
+  setResidentsList(updatedList);
 
-    const residentDoc = {
-  _id: newResidentId,
-  type: 'resident',
-  ...residentForm, // SPREAD LAHAT NG FORM FIELDS
-  residentId: newResidentId,
-  rbiId: normalizedRbiId,
-  name: fullName,
-  gender: sex,
-  contact: contactNo.trim(),
-  household: assignedHouseholdId,
-  householdNo: assignedHouseholdId,
-  householdHead: Boolean(isHouseholdHead),
-  voter: Boolean(isRegisteredVoter),
-  age: calculateAge(birthdate),
-  conflict: false,
-  createdAt: new Date().toISOString(),
-  updatedAt: new Date().toISOString(),
-};
+  const residentDoc = {
+    _id: newResidentId,
+    type: 'resident',
+    ...residentForm, // SPREAD LAHAT NG FORM FIELDS
+    residentId: newResidentId,
+    rbiId: normalizedRbiId,
+    name: fullName,
+    gender: sex,
+    contact: contactNo.trim(),
+    contactNo: contactNo.trim(), // Explicit override
+    household: assignedHouseholdId,
+    householdNo: assignedHouseholdId,
+    householdHead: Boolean(isHouseholdHead),
+    voter: Boolean(isRegisteredVoter),
+    age: calculateAge(birthdate),
+    purokClass: dynamicPurokClass, // Explicit override
+    conflict: false,
+    createdAt: new Date().toISOString(),
+    updatedAt: new Date().toISOString(),
+  };
 
   try {
     await db.put(residentDoc);
@@ -3197,33 +3348,52 @@ const handleStatusDropdownChange = async (newStatus) => {
   ];
 })();
 
-  // Dynamic computing: This looks for a match in the typed input against Name, ID, or Purok
-  const filteredResidents = residentsList.filter((res) => {
-  // View mode filter
-  const isArchived = res.isArchived === true;
-  if (viewMode === 'active' && isArchived) return false;
-  if (viewMode === 'archived' && !isArchived) return false;
-  
-  // Search filter
-  const query = searchTerm.toLowerCase();
-  const fullName = res.name || `${res.firstName || ''} ${res.middleName || ''} ${res.lastName || ''}`.trim();
-  const matchesSearch = fullName.toLowerCase().includes(query) ||
-    (res.id && String(res.id).toLowerCase().includes(query)) ||
-    (res._id && String(res._id).toLowerCase().includes(query)) ||
-    (res.rbiId && String(res.rbiId).toLowerCase().includes(query)) ||
-    (res.purok && String(res.purok).toLowerCase().includes(query));
-  
-  const matchesPurok = purokFilter === 'All Puroks' || res.purok === purokFilter;
-  
-  const matchesGender = genderFilter === 'All Gender' || res.gender === genderFilter;
+// Dynamic computing: This looks for a match in the typed input against Name, ID, or Purok
+  // Gawin mong useMemo para di mag lag sa 1000+ residents
+  const filteredResidents = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase();
+    const filterPurokNorm = purokFilter.trim().toLowerCase();
+    const filterGenderNorm = genderFilter.trim().toLowerCase();
 
-  return matchesSearch && matchesPurok && matchesGender;
-});
+    return residentsList.filter((res) => {
+      // 1. View mode
+      const isArchived = res.isArchived === true;
+      if (viewMode === 'active' && isArchived) return false;
+      if (viewMode === 'archived' && !isArchived) return false;
+
+      // 2. Normalize data - case-insensitive, trim, fallback chain
+      const fullName = (res.name || `${res.firstName || ''} ${res.middleName || ''} ${res.lastName || ''}`.trim()).toLowerCase();
+      const rPurok = String(res.purok || '').trim().toLowerCase();
+      const rawGender = res.gender ?? res.sex ?? res.genderIdentity ?? '';
+      const rGender = String(rawGender).trim().toLowerCase();
+
+      const rId = String(res.id || res._id || '').toLowerCase();
+      const rRbi = String(res.rbiId || '').toLowerCase();
+
+      // 3. Search - pag empty wag i-filter
+      const matchesSearch = !q || 
+        fullName.includes(q) || 
+        rId.includes(q) || 
+        rRbi.includes(q) || 
+        rPurok.includes(q);
+
+      // 4. Purok & Gender - case-insensitive, All options bypass
+      const isAllPurok = purokFilter === 'All Puroks';
+      const matchesPurok = isAllPurok || rPurok === filterPurokNorm;
+
+      const isAllGender = genderFilter === 'All Gender';
+      const matchesGender = isAllGender || rGender === filterGenderNorm;
+
+      return matchesSearch && matchesPurok && matchesGender;
+    });
+  }, [residentsList, viewMode, searchTerm, purokFilter, genderFilter]);
 
 // Dynamic Calculations para sa Dashboard Panels
-const totalResidents = residentsList.length;
-const totalHouseholds = householdsList.length;
-const totalVoters = residentsList.filter(r => r.voter || r.isVoter === 'Yes' || r.voterStatus === 'Yes').length;
+// KPI cards read the robust localDb counts computed by computeDashboardStats()
+// so they survive a Mango find() mismatch and refresh after sync completes.
+const totalResidents = dashboardStats.residents;
+const totalHouseholds = dashboardStats.households;
+const totalVoters = dashboardStats.voters;
 const getHouseholdMembersCount = (householdId) => {
   return residentsList.filter(r => r.household === householdId).length;
 };
@@ -3451,19 +3621,6 @@ const peekNextClearanceNo = async () => {
 };
 
 
-
-// ── Helper: Peek lang (hindi nag-i-increment) para sa preview sa form ──
-const peekNextBusinessSequence = async () => {
-  const existing = businessMasterlist.map((r) => r.bcIdNo);
-  try {
-    const seqDoc = await db.get('seq_business_clearance');
-    return nextAvailableBusinessId(existing, String((seqDoc.lastNumber || 155) + 1).padStart(4, '0'));
-  } catch (err) {
-    if (err.name === 'not_found') return nextAvailableBusinessId(existing, '0156');
-    console.warn('Peek business sequence failed:', err);
-    return nextAvailableBusinessId(existing, '0156'); // Safe fallback
-  }
-};
 
 // Save or Update Clearance Record
   const handleSaveClearance = async (e) => {
@@ -4074,39 +4231,40 @@ const [blotterForm, setBlotterForm] = useState({
 });
 
 // Master Effect para sa Admin Blotter Management sa DashboardPortal.jsx
+  const fetchBlotters = useCallback(async () => {
+    if (!db) return;
+    setIsBlottersLoading(true);
+    try {
+      // ✅ Mango indexed query
+      const res = await db.find({
+        selector: {
+          $or: [
+            { type: 'blotter' },
+            { type: 'blotter_record' },
+            { type: 'blotter_report' },
+            { docType: 'blotter' },
+            { _id: { $gte: 'BLT-', $lt: 'BLT-\uffff' } }, // ✅ Para sa legacy docs na may BLT- prefix
+          ],
+        },
+        limit: 1000,
+      });
+      const blotterDocs = res.docs
+        .map(mapDocToBlotter)
+        .filter(Boolean)
+        .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
+      setBlotterList(blotterDocs);
+    } catch (err) {
+      console.error('Error fetching blotter records from PouchDB:', err);
+    } finally {
+      setIsBlottersLoading(false);
+    }
+  }, [db]);
+
   useEffect(() => {
     if (!db) return;
-    const fetchBlotters = async () => {
-  setIsBlottersLoading(true);
-  try {
-    // ✅ Mango indexed query
-    const res = await db.find({
-      selector: {
-        $or: [
-          { type: 'blotter' },
-          { type: 'blotter_record' },
-          { type: 'blotter_report' },
-          { docType: 'blotter' },
-          { _id: { $gte: 'BLT-', $lt: 'BLT-\uffff' } }, // ✅ Para sa legacy docs na may BLT- prefix
-        ],
-      },
-      limit: 1000,
-    });
-    const blotterDocs = res.docs
-      .map(mapDocToBlotter)
-      .filter(Boolean)
-      .sort((a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime());
-    setBlotterList(blotterDocs);
-  } catch (err) {
-    console.error('Error fetching blotter records from PouchDB:', err);
-  } finally {
-    setIsBlottersLoading(false);
-  }
-};
-    
     const timer = setTimeout(fetchBlotters, 500);
-  return () => clearTimeout(timer);
-  }, [db]);
+    return () => clearTimeout(timer);
+  }, [db, fetchBlotters]);
 
 const [complainantQuery, setComplainantQuery] = useState('');
 const [respondentQuery, setRespondentQuery] = useState('');
@@ -4556,7 +4714,7 @@ const uniqueIssuedCertificates = useMemo(() => {
   return Array.from(map.values());
 }, [issuedCertificates]);
 
-const approvedCertificates = useMemo(() => 
+const approvedCertificatesMemo = useMemo(() => 
   (issuedCertificates || []).filter(cert => 
     (Number(cert.step) === 4 || cert.status === 'Approved' || cert.status?.toLowerCase() === 'approved') && 
     cert.status !== 'Issued' && 
@@ -6309,6 +6467,48 @@ const [businessMasterlist, setBusinessMasterlist] = useState([]);
 const [businessClearanceSearch, setBusinessClearanceSearch] = useState('');
 const [businessPage, setBusinessPage] = useState(1);
 
+// ── Helper: Kunin ang next Business ID at i-increment ang sequence (TOTOONG SAVE) ──
+const getNextBusinessSequence = async () => {
+  const existing = businessMasterlist.map((r) => r.bcIdNo);
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    try {
+      let seqDoc;
+      try {
+        seqDoc = await db.get('seq_business_clearance');
+      } catch (err) {
+        if (err.name === 'not_found') {
+          // Start at 155 para ang next ay maging 0156
+          seqDoc = { _id: 'seq_business_clearance', lastNumber: 155 };
+        } else {
+          throw err;
+        }
+      }
+      const nextNumber = (seqDoc.lastNumber || 155) + 1;
+      await db.put({ ...seqDoc, lastNumber: nextNumber });
+      return nextAvailableBusinessId(existing, String(nextNumber).padStart(4, '0'));
+    } catch (err) {
+      if (err && (err.status === 409 || err.name === 'conflict')) continue;
+      console.error('Failed to get business sequence:', err);
+      break;
+    }
+  }
+  // Fallback kung may error sa DB
+  return nextAvailableBusinessId(existing, String(Date.now()).slice(-4));
+};
+
+// ── Helper: Peek lang (hindi nag-i-increment) para sa preview sa form ──
+const peekNextBusinessSequence = async () => {
+  const existing = businessMasterlist.map((r) => r.bcIdNo);
+  try {
+    const seqDoc = await db.get('seq_business_clearance');
+    return nextAvailableBusinessId(existing, String((seqDoc.lastNumber || 155) + 1).padStart(4, '0'));
+  } catch (err) {
+    if (err.name === 'not_found') return nextAvailableBusinessId(existing, '0156');
+    console.warn('Peek business sequence failed:', err);
+    return nextAvailableBusinessId(existing, '0156'); // Safe fallback
+  }
+};
+
 const filteredBusinessClearances = businessMasterlist.filter((record) => {
   const query = businessClearanceSearch.toLowerCase().trim();
 
@@ -6697,10 +6897,14 @@ const handleResidentSort = (key) => {
 };
 
 const sortedFilteredResidents = [...filteredResidents].sort((a, b) => {
+  // ═══ DEFAULT: Sort by createdAt descending (newest first) ═══
+  // Kapag walang active sort key, latest-added residents ang nasa top.
   if (!residentSort.key || residentSort.direction === 'none') {
-    return 0;
+    const createdA = new Date(a.createdAt || 0).getTime();
+    const createdB = new Date(b.createdAt || 0).getTime();
+    return createdB - createdA;   // descending — pinakabago sa taas
   }
-
+  
   const key = residentSort.key;
   let valueA = a[key];
   let valueB = b[key];
@@ -6752,34 +6956,44 @@ const sortedFilteredResidents = [...filteredResidents].sort((a, b) => {
   return 0;
 });
 
-const handleExportResidentsExcel = async () => { try { // Kung may selected residents, export lang ang selected // Kung wala, export lahat ng currently filtered const dataToExport = selectedResidents.length > 0 ? sortedFilteredResidents.filter((r) => selectedResidents.includes(r.id)) : sortedFilteredResidents;
+const handleExportResidentsExcel = async () => {
+  try {
+    // Kung may selected residents, export lang ang selected
+    // Kung wala, export lahat ng currently filtered
+    const dataToExport = selectedResidents.length > 0
+      ? sortedFilteredResidents.filter((r) => selectedResidents.includes(r.id))
+      : sortedFilteredResidents;
 
-if (dataToExport.length === 0) {
-  showToast('warning', 'No residents to export');
-  return;
-}
+    if (dataToExport.length === 0) {
+      showToast('warning', 'No residents to export');
+      return;
+    }
 
-const rows = dataToExport.map((r) => ({
-  'Resident ID': r.id,
-  'RBI ID': r.rbiId || '—',
-  'Full Name': r.name,
-  'Purok': r.purok,
-  'Age': r.age,
-  'Gender': r.gender || '—',
-  'Civil Status': r.civilStatus,
-  'Voter': r.voter ? 'Yes' : 'No',
-  'Household': r.household || '—',
-  'Status': viewMode === 'archived' ? 'Archived' : 'Active',
-}));
+    const rows = dataToExport.map((r) => ({
+      'Resident ID': r.id,
+      'RBI ID': r.rbiId || '—',
+      'Full Name': r.name,
+      'Purok': r.purok,
+      'Age': r.age,
+      'Gender': r.gender || '—',
+      'Civil Status': r.civilStatus,
+      'Voter': r.voter ? 'Yes' : 'No',
+      'Household': r.household || '—',
+      'Status': viewMode === 'archived' ? 'Archived' : 'Active',
+    }));
 
-await exportToExcel({
-  data: rows,
-  filename: `Bustrac_Residents_${viewMode}_${new Date().toISOString().slice(0, 10)}`,
-  sheetName: 'Residents',
-});
+    await exportToExcel({
+      data: rows,
+      filename: `Bustrac_Residents_${viewMode}_${new Date().toISOString().slice(0, 10)}`,
+      sheetName: 'Residents',
+    });
 
-showToast('success', `Exported ${rows.length} residents to Excel`);
-} catch (err) { console.error('Excel export failed:', err); showToast('error', 'Failed to export: ' + err.message); } };
+    showToast('success', `Exported ${rows.length} residents to Excel`);
+  } catch (err) {
+    console.error('Excel export failed:', err);
+    showToast('error', 'Failed to export: ' + err.message);
+  }
+};
 
 const filteredFeedback = feedbackList
   .slice()
@@ -7916,7 +8130,7 @@ const handleGenerateExcelReport = async (moduleType, selectedFilter = 'All') => 
       break;
 
     case 'certificates':
-      const allCerts = typeof issuedCertificates !== 'undefined' ? issuedCertificates : (certRequestsList || []);
+      const allCerts = issuedCertificates;
       exportData = allCerts.map(c => ({
         'Reference No': c.refNumber || c.trackingNo || c._id,
         'Resident Name': c.residentName || `${c.firstName || ''} ${c.lastName || ''}`.trim() || 'N/A',
@@ -8927,8 +9141,9 @@ useEffect(() => {
 
 useEffect(() => {
   setupPouchDBSync();
-  const unsubscribe = onSyncStatusChange(({ status, pending }) => {
+  const unsubscribe = onSyncStatusChange(({ status, pending, detail }) => {
     setSyncState(status);
+    setSyncDetail(detail ?? null);
     
     if (pending !== undefined && pending !== 999) {
       setPendingCount(pending);
@@ -8939,11 +9154,14 @@ useEffect(() => {
       setLastSynced(now);
       localStorage.setItem('bustrac_last_synced', now); // ✅ DITO ANG DAGDAG
       setPendingCount(0);
+      setSyncDetail(null);
+      // Ensure the KPI cards reflect freshly synced local data.
+      if (typeof computeDashboardStats === 'function') computeDashboardStats();
     }
   });
   setSyncState(navigator.onLine ? 'synced' : 'offline');
   return () => unsubscribe();
-}, []);
+}, [computeDashboardStats]);
 
 useEffect(() => {
   if (role === 'admin' && db) {
@@ -8957,52 +9175,69 @@ useEffect(() => {
 }, [role, db]);
 
 const handleGenerateCredentials = async (resident) => {
+  console.log('[CREDS] === START ===', resident.name, resident.id);
   try {
-    // Auto-generate username (firstname + lastname + random numbers)
-    const firstName = resident.firstName || resident.name.split(',')[1]?.trim().split(' ')[0] || '';
-    const lastName = resident.lastName || resident.name.split(',')[0]?.trim() || '';
+    const firstName = resident.firstName || '';
+    const lastName = resident.lastName || '';
     const username = `${firstName.toLowerCase()}.${lastName.toLowerCase()}${Math.floor(Math.random() * 999)}`;
-    
-    // Auto-generate temporary password (8 characters)
     const tempPassword = `Bustrac${Math.random().toString(36).slice(-6).toUpperCase()}`;
-    
-    // Update resident record with credentials
+    console.log('[CREDS] Generated:', username);
+
+    const passwordHash = await hashPassword(tempPassword);
+    console.log('[CREDS] Hash:', passwordHash?.slice(0, 15) + '...');
+
     const existingDoc = await db.get(resident.id);
     const updatedDoc = {
       ...existingDoc,
       hasAccount: true,
-      username: username,
-      password: tempPassword, // In production, dapat hashed ito
+      username,
       accountCreatedAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
-    
     await db.put(updatedDoc);
-    
-    // Audit log
-    if (typeof createAuditLog === 'function') {
-      await createAuditLog({
-        action: 'GENERATE_RESIDENT_CREDENTIALS',
-        module: 'RESIDENTS',
-        recordId: resident.id,
-        details: `Generated credentials for ${resident.name} (Username: ${username})`,
-      });
-    }
-    
-    // Show credentials modal
+    console.log('[CREDS] Resident doc updated');
+
+    const userDocId = `user_${username.toLowerCase()}`;
+    console.log('[CREDS] Creating:', userDocId);
+    let existingUserDoc = null;
+    try { existingUserDoc = await db.get(userDocId); } catch (e) { /* ok */ }
+
+    const userDoc = {
+      ...(existingUserDoc || {}),
+      _id: userDocId,
+      type: 'user',
+      docType: 'user',
+      username,
+      passwordHash,
+      role: 'resident',
+      status: 'Active',
+      fullName: resident.name,
+      firstName,
+      lastName,
+      residentId: resident.rbiId || resident.id,
+      purok: resident.purok || '',
+      contact: resident.contact || '',
+      email: resident.email || '',
+      createdAt: existingUserDoc?.createdAt || new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    const putRes = await db.put(userDoc);
+    console.log('[CREDS] SAVED:', putRes);
+
     setCredentialsModal({
       show: true,
       residentName: resident.name,
-      username: username,
+      username,
       password: tempPassword,
     });
-    
-    // Refresh residents list
-    await loadData();
-    
+
+    await fetchResidents();
+    console.log('[CREDS] === DONE ===');
   } catch (err) {
-    console.error('Failed to generate credentials:', err);
-    showToast('Failed to generate credentials. Please try again.', 'error');
+    console.error('[CREDS] FAILED:', err?.message, err?.status, err?.name);
+    console.error('[CREDS] Full:', err);
+    showToast('Failed to generate credentials.', 'error');
   }
 };
 
@@ -9034,6 +9269,8 @@ const handleGenerateCredentials = async (resident) => {
   isAidOpen={isAidOpen}
   setIsAidOpen={setIsAidOpen}
   screen={screen}
+  setScreen={setScreen}
+  setShowUserMenu={setShowUserMenu}
   nav={nav}
   role={role}
   displayName={displayName}
@@ -9059,6 +9296,7 @@ const handleGenerateCredentials = async (resident) => {
             syncState={syncState}
             pendingCount={pendingCount}
             lastSynced={lastSynced}
+            syncDetail={syncDetail}
             logout={logout}
             forceSync={forceSyncToRemote}
           />
@@ -9090,6 +9328,7 @@ const handleGenerateCredentials = async (resident) => {
                   settledBlotterCount={settledBlotterCount}
                   cfaBlotterCount={cfaBlotterCount}
                   activeBlotterCount={activeBlotterCount}
+                  openBlotterCount={dashboardStats.openBlotters}
                   feedbackSummary={feedbackSummary}
                   residentTrend={residentTrend}
                   householdTrend={householdTrend}
@@ -9133,6 +9372,7 @@ const handleGenerateCredentials = async (resident) => {
                       sortedFilteredResidents={sortedFilteredResidents}
                       isResidentsLoading={isResidentsLoading}
                       viewMode={viewMode}
+                      setViewMode={setViewMode}
                       role={role}
                       searchTerm={searchTerm}
                       setSearchTerm={setSearchTerm}
@@ -10333,7 +10573,7 @@ const handleGenerateCredentials = async (resident) => {
                 {screen === 'cert-print' && (
                   <CertPrintScreen
                     issuedCertificates={uniqueIssuedCertificates}
-                    approvedCertificates={approvedCertificates}
+                    approvedCertificates={approvedCertificatesMemo}
                     selectedCertificate={selectedCertificate}
                     setSelectedCertificate={setSelectedCertificate}
                     clearSelectedCert={() => setSelectedCertificate(null)}
@@ -12899,8 +13139,8 @@ const handleGenerateCredentials = async (resident) => {
                                     </div>
                                   </td>
                                   <td>{b.type || b.incidentType ? (b.type || b.incidentType).replace('_', ' ') : 'N/A'}</td>
-                                  <td><strong>{b.complainant || b.complainantName || 'N/A'}</strong></td>
-                                  <td>{b.respondent || b.respondentName || 'Under Investigation'}</td>
+<td><strong>{b.complainant || b.complainantName || 'N/A'}</strong></td>
+                                   <td><strong>{b.respondent || b.respondentName || 'Under Investigation'}</strong></td>
                                   <td><strong>{b.location || b.purok || 'Brgy. Bustrac'}</strong></td>
                                   <td style={{ fontSize: '11px' }}>{b.date || b.incidentDate || 'N/A'}</td>
                                   <td>
@@ -13788,10 +14028,7 @@ const handleGenerateCredentials = async (resident) => {
                 SCREEN: PROFILE
                 ════════════════════════════════════════ */}
                 {screen === 'profile' && (() => {
-                const profileUser = typeof loggedInUser !== 'undefined' ? loggedInUser 
-                  : typeof user !== 'undefined' ? user 
-                  : typeof currentUser !== 'undefined' ? currentUser 
-                  : null;
+                const profileUser = currentUser;
 
                 const userPurok = profileUser?.purok || profileUser?.zone || profileUser?.address || profileUser?.purok_zone || 'N/A';
                 const userFullName = profileUser?.fullName || profileUser?.name || profileUser?.displayName || displayName || 'N/A';
@@ -15433,7 +15670,7 @@ const handleGenerateCredentials = async (resident) => {
             <BlotterForm
               onSuccess={(newDoc) => {
                 setShowBlotterModal(false);
-                if (typeof fetchBlotterRecords === 'function') fetchBlotterRecords();
+                if (typeof fetchBlotters === 'function') fetchBlotters();
               }}
             />
           </div>
@@ -16213,7 +16450,6 @@ className="modal-card"
         color: 'var(--amber, #f59e0b)',
         lineHeight: '1.5'
       }}>
-        <strong>⚠️ Important:</strong> Advise the resident to change their password immediately after first login for security purposes.
       </div>
 
       <div style={{ display: 'flex', gap: '10px' }}>

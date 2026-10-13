@@ -6,8 +6,6 @@ export async function createAuditLog({
   module,
   recordId = null,
   details = '',
-  actor: actorOverride = null,
-  meta = null,
 }) {
   try {
     const rawUser = localStorage.getItem('bustrac_user');
@@ -26,23 +24,17 @@ export async function createAuditLog({
       }
     }
 
-    if (actorOverride && typeof actorOverride === 'object') {
-      actor = {
-        ...actor,
-        username: actorOverride.username || actorOverride.residentId || actor.username,
-        role: actorOverride.role || actor.role,
-      };
-      if (actorOverride.displayName || actorOverride.fullName) {
-        actor.displayName = actorOverride.displayName || actorOverride.fullName;
-      }
-    } else if (typeof actorOverride === 'string' && actorOverride) {
-      actor.username = actorOverride;
-    }
-
     const timestamp = new Date().toISOString();
 
+    // Only admin/staff may write audit docs through the sync proxy (residents
+    // are restricted to their own data). A resident-generated audit entry is
+    // therefore kept as a _local/ doc so PouchDB never replicates it — this
+    // avoids a 403 that would otherwise fail the ENTIRE _bulk_docs batch.
+    const isPrivileged = actor.role === 'admin' || actor.role === 'staff';
+    const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+
     const doc = {
-      _id: `audit_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`,
+      _id: isPrivileged ? auditId : `_local/${auditId}`,
       type: 'audit_log',
       timestamp,
       actor,
@@ -54,10 +46,6 @@ export async function createAuditLog({
       createdAt: timestamp,
     };
 
-    if (meta && typeof meta === 'object') {
-      doc.meta = meta;
-    }
-
     await localDb.put(doc);
 
     return { success: true, entry: doc };
@@ -65,36 +53,6 @@ export async function createAuditLog({
     console.error('Audit log creation failed:', err);
     return { success: false, entry: null, error: err };
   }
-}
-
-export async function logConflictResolution({
-  docId,
-  module,
-  strategy,
-  winnerRev = null,
-  loserRevs = [],
-  mergedFields = [],
-  residentName = '',
-  details = '',
-  actor = null,
-}) {
-  const labelText = Array.isArray(mergedFields) && mergedFields.length
-    ? ` · Fields: ${mergedFields.join(', ')}`
-    : '';
-  const winnerText = winnerRev ? ` · Winner: ${winnerRev}` : '';
-  const loserText = Array.isArray(loserRevs) && loserRevs.length
-    ? ` · Discarded: ${loserRevs.join(', ')}`
-    : '';
-  const baseDetails = details || `Conflict resolved${residentName ? ` for ${residentName}` : ''}`;
-
-  return createAuditLog({
-    action: 'CONFLICT_RESOLVED',
-    module: module || 'CONFLICTS',
-    recordId: docId,
-    details: `${baseDetails} (strategy: ${strategy})${winnerText}${loserText}${labelText}`,
-    actor,
-    meta: { conflict: true, strategy, winnerRev, loserRevs, mergedFields },
-  });
 }
 
 export async function logActivity({
@@ -131,4 +89,17 @@ export async function getAuditLogs() {
     console.error('Failed to fetch audit logs:', err);
     return [];
   }
+}
+
+export async function logConflictResolution({
+  recordId,
+  strategy, // e.g., 'keep_local', 'keep_server', 'manual_merge'
+  details = '',
+}) {
+  return createAuditLog({
+    action: 'RESOLVE_CONFLICT',
+    module: 'SYNC_ENGINE',
+    recordId,
+    details: `Conflict resolved using strategy: ${strategy}. ${details}`,
+  });
 }

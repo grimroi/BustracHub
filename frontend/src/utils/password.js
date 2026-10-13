@@ -56,23 +56,26 @@ export const verifyPassword = async (password, storedHash) => {
     }
   }
 
-if (isSha256Hash(storedHash)) {
-  try {
-    const subtle = globalThis.crypto && globalThis.crypto.subtle;
-    if (!subtle) return false;
+  if (isSha256Hash(storedHash)) {
+    // Legacy SHA-256 path (matches the previous hashPassword implementation).
+    // WebCrypto's subtle API is only defined in secure contexts, so reject
+    // gracefully (rather than crash) where it is unavailable.
+    try {
+      const subtle = globalThis.crypto && globalThis.crypto.subtle;
+      if (!subtle) return false;
 
-    const encoder = new TextEncoder();
-    const data = encoder.encode(String(password));
-    const hashBuffer = await subtle.digest('SHA-256', data);
-    const digest = Array.from(new Uint8Array(hashBuffer))
-      .map((b) => b.toString(16).padStart(2, '0'))
-      .join('');
-    return digest === storedHash;
-  } catch (e) {
-    console.warn('SHA-256 verification failed:', e?.message);
-    return false;
+      const encoder = new TextEncoder();
+      const data = encoder.encode(String(password));
+      const hashBuffer = await subtle.digest('SHA-256', data);
+      const digest = Array.from(new Uint8Array(hashBuffer))
+        .map((b) => b.toString(16).padStart(2, '0'))
+        .join('');
+      return digest === storedHash;
+    } catch (e) {
+      console.warn('SHA-256 verification failed:', e?.message);
+      return false;
+    }
   }
-}
 
   // Unknown format — reject rather than fall through to plaintext match.
   return false;

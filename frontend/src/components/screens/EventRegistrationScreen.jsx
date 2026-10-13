@@ -2,6 +2,20 @@
 import React, { useState, useEffect, useMemo, useCallback, startTransition } from 'react';
 import Swal from 'sweetalert2';
 
+// Safely formats a date value for display. Malformed or nonsensical values
+// (e.g. a bad seed year like "6754") fall back to a neutral string instead of
+// breaking the card layout.
+const EVENT_MIN_VALID_YEAR = 2000;
+const EVENT_MAX_VALID_YEAR = 2100;
+const formatEventDate = (value) => {
+  if (!value) return 'Date to be announced';
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return 'Date unavailable';
+  const year = parsed.getFullYear();
+  if (year < EVENT_MIN_VALID_YEAR || year > EVENT_MAX_VALID_YEAR) return 'Date unavailable';
+  return parsed.toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' });
+};
+
 const EventRegistrationScreen = React.memo(function EventRegistrationScreen({
   db,
   loggedInUser,
@@ -99,7 +113,7 @@ const EventRegistrationScreen = React.memo(function EventRegistrationScreen({
 
     const confirm = await Swal.fire({
       title: 'Register for Event?',
-      html: `Register for <strong>${ev.title}</strong> on ${ev.date}?`,
+      html: `Register for <strong>${ev.title}</strong> on ${formatEventDate(ev.date)}?`,
       icon: 'question',
       showCancelButton: true,
       confirmButtonColor: '#3b82f6',
@@ -195,17 +209,19 @@ const EventRegistrationScreen = React.memo(function EventRegistrationScreen({
       </div>
 
       {/* Tabs */}
-      <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', borderBottom: '2px solid var(--border)' }}>
+      <div className="event-tabs">
         <button
-          className={`btn ${tab === 'available' ? 'btn-p' : 'btn-g'}`}
+          className={`btn event-tab ${tab === 'available' ? 'btn-p' : 'btn-g'}`}
           onClick={() => setTab('available')}
+          aria-pressed={tab === 'available'}
           style={{ borderRadius: '8px 8px 0 0' }}
         >
           Available Events ({availableEvents.length})
         </button>
         <button
-          className={`btn ${tab === 'my' ? 'btn-p' : 'btn-g'}`}
+          className={`btn event-tab ${tab === 'my' ? 'btn-p' : 'btn-g'}`}
           onClick={() => setTab('my')}
+          aria-pressed={tab === 'my'}
           style={{ borderRadius: '8px 8px 0 0' }}
         >
           My Registrations ({myRegistrations.length})
@@ -239,15 +255,15 @@ const EventRegistrationScreen = React.memo(function EventRegistrationScreen({
               const myReg = registrationByEvent.get(ev._id);
               return (
                 <div key={ev._id} className="card" style={{ padding: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '12px', marginBottom: '12px' }}>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ fontSize: '16px', fontWeight: 700, color: 'var(--text)', marginBottom: '4px' }}>
+                  <div className="event-card__head">
+                    <div style={{ minWidth: 0, flex: '1 1 auto' }}>
+                      <div className="event-card__title">
                         {ev.title}
                       </div>
-                      <span className="badge g" style={{ fontSize: '11px' }}>{ev.category}</span>
+                      {ev.category && <span className="badge g" style={{ fontSize: '11px' }}>{ev.category}</span>}
                     </div>
                     {myReg && (
-                      <span className={`badge ${
+                      <span className={`badge event-card__badge ${
                         myReg.status === 'Approved' ? 'g' :
                         myReg.status === 'Attended' ? 't' :
                         myReg.status === 'Rejected' ? 'r' : 'a'
@@ -258,30 +274,46 @@ const EventRegistrationScreen = React.memo(function EventRegistrationScreen({
                   </div>
 
                   {ev.description && (
-                    <div style={{ fontSize: '13px', color: 'var(--muted)', marginBottom: '10px', lineHeight: 1.6 }}>
+                    <div className="event-desc" style={{ fontSize: '13px', color: 'var(--muted)' }}>
                       {ev.description}
                     </div>
                   )}
 
-                  <div style={{ fontSize: '12px', color: 'var(--text)', display: 'flex', flexDirection: 'column', gap: '4px', background: 'var(--surface2)', padding: '10px 12px', borderRadius: '8px', marginBottom: '12px' }}>
-                    <div>📅 <strong>{ev.date}</strong> {ev.time && `• ${ev.time}`} {ev.endTime && `- ${ev.endTime}`}</div>
-                    <div>📍 {ev.location}</div>
+                  <div className="event-meta">
+                    <div className="event-meta__row">
+                      <span className="event-meta__icon" aria-hidden="true">📅</span>
+                      <span className="event-meta__text">
+                        <strong>{formatEventDate(ev.date)}</strong>{ev.time ? ` • ${ev.time}` : ''}{ev.endTime ? ` - ${ev.endTime}` : ''}
+                      </span>
+                    </div>
+                    {ev.location && (
+                      <div className="event-meta__row">
+                        <span className="event-meta__icon" aria-hidden="true">📍</span>
+                        <span className="event-meta__text" title={String(ev.location)}>{ev.location}</span>
+                      </div>
+                    )}
                     {ev.requirements?.length > 0 && (
-                      <div>📋 Requirements: {ev.requirements.join(', ')}</div>
+                      <div className="event-meta__row">
+                        <span className="event-meta__icon" aria-hidden="true">📋</span>
+                        <span className="event-meta__text" title={`Requirements: ${ev.requirements.join(', ')}`}>Requirements: {ev.requirements.join(', ')}</span>
+                      </div>
                     )}
                     {ev.contactPerson && (
-                      <div>📞 {ev.contactPerson} {ev.contactNumber && `• ${ev.contactNumber}`}</div>
+                      <div className="event-meta__row">
+                        <span className="event-meta__icon" aria-hidden="true">📞</span>
+                        <span className="event-meta__text" title={`${ev.contactPerson}${ev.contactNumber ? ` • ${ev.contactNumber}` : ''}`}>{ev.contactPerson}{ev.contactNumber ? ` • ${ev.contactNumber}` : ''}</span>
+                      </div>
                     )}
                   </div>
 
                   <div style={{ display: 'flex', gap: '8px' }}>
                     {!myReg && (
-                      <button className="btn btn-p" onClick={() => handleRegister(ev)} style={{ flex: 1 }}>
+                      <button className="btn btn-p event-action-btn" onClick={() => handleRegister(ev)} style={{ flex: 1 }}>
                         Register Now
                       </button>
                     )}
                     {myReg && (myReg.status === 'Pending' || myReg.status === 'Approved') && (
-                      <button className="btn btn-g" onClick={() => handleCancelRegistration(myReg)} style={{ flex: 1 }}>
+                      <button className="btn btn-g event-action-btn" onClick={() => handleCancelRegistration(myReg)} style={{ flex: 1 }}>
                         Cancel Registration
                       </button>
                     )}
@@ -315,9 +347,9 @@ const EventRegistrationScreen = React.memo(function EventRegistrationScreen({
               if (!ev) return null;
               return (
                 <div key={reg._id} className="card" style={{ padding: '16px' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '8px' }}>
-                    <div style={{ fontSize: '15px', fontWeight: 700 }}>{ev.title}</div>
-                    <span className={`badge ${
+                  <div className="event-card__head" style={{ marginBottom: '8px' }}>
+                    <div className="event-card__title" style={{ fontSize: '15px' }}>{ev.title}</div>
+                    <span className={`badge event-card__badge ${
                       reg.status === 'Approved' ? 'g' :
                       reg.status === 'Attended' ? 't' :
                       reg.status === 'Rejected' ? 'r' :
@@ -326,11 +358,16 @@ const EventRegistrationScreen = React.memo(function EventRegistrationScreen({
                       {reg.status}
                     </span>
                   </div>
-                  <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
-                    📅 {ev.date} • 📍 {ev.location}
+                  <div className="event-meta__row" style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                    <span className="event-meta__icon" aria-hidden="true">📅</span>
+                    <span className="event-meta__text">{formatEventDate(ev.date)}</span>
+                  </div>
+                  <div className="event-meta__row" style={{ fontSize: '12px', color: 'var(--muted)' }}>
+                    <span className="event-meta__icon" aria-hidden="true">📍</span>
+                    <span className="event-meta__text" title={String(ev.location || '')}>{ev.location}</span>
                   </div>
                   <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '6px', fontFamily: 'var(--mono)' }}>
-                    Registered: {new Date(reg.registeredAt).toLocaleDateString('en-PH', { month: 'short', day: 'numeric', year: 'numeric' })}
+                    Registered: {formatEventDate(reg.registeredAt)}
                   </div>
                 </div>
               );

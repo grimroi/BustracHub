@@ -1,0 +1,149 @@
+/* =========================================================
+   ADD RESIDENT MODAL — Desktop Admin Only (max-width 920px)
+   ========================================================= */
+
+.add-resident-modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  z-index: 10000;
+  animation: modal-fade-in 0.15s ease-out;
+}
+
+.add-resident-modal {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  width: 100%;
+  max-width: 920px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  animation: modal-slide-up 0.2s ease-out;
+  overflow: hidden;
+}
+
+/* Sticky Header */
+.add-resident-modal__header {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 20px 24px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.add-resident-modal__title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.add-resident-modal__subtitle {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.add-resident-modal__close {
+  background: none;
+  border: none;
+  color: var(--muted);
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: color 0.15s ease, background 0.15s ease;
+}
+
+.add-resident-modal__close:hover {
+  color: var(--text);
+  background: var(--surface2);
+}
+
+/* Body - scrollable */
+.add-resident-modal__body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 24px;
+  min-height: 0; /* Critical for flex overflow */
+}
+
+/* Sticky Footer */
+.add-resident-modal__footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px 24px;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.add-resident-modal__hint {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono, monospace);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.add-resident-modal__actions {
+  display: flex;
+  gap: 12px;
+}
+
+/* Animations */
+@keyframes modal-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes modal-slide-up {
+  from {
+    opacity: 0;
+    transform: translateY(20px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* Reduce motion */
+@media (prefers-reduced-motion: reduce) {
+  .add-resident-modal-overlay,
+  .add-resident-modal {
+    animation: none;
+  }
+}
+
+/* Focus visible for accessibility */
+.add-resident-modal__close:focus-visible,
+.add-resident-modal__actions button:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+}
+
+/* Form reference for Ctrl+S */
+#add-resident-form {
+  width: 100%;
+}

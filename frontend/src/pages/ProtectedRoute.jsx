@@ -1,24 +1,37 @@
 // frontend/src/pages/ProtectedRoute.jsx
 import { Navigate, useLocation } from 'react-router-dom';
+import { getToken } from '../utils/tokenStore';
 
 function normalizeRole(raw) {
   if (!raw) return '';
   let role = String(raw).trim();
-  // Tanggalin ang extra quotes kung meron
-  if ((role.startsWith('"') && role.endsWith('"')) || (role.startsWith("'") && role.endsWith("'"))) {
-    try { role = JSON.parse(role); } catch { role = role.slice(1, -1); }
+  if (
+    (role.startsWith('"') && role.endsWith('"')) ||
+    (role.startsWith("'") && role.endsWith("'"))
+  ) {
+    try {
+      role = JSON.parse(role);
+    } catch {
+      role = role.slice(1, -1);
+    }
   }
-  return String(role).trim().toLowerCase(); // ← lowercase para sure
+  return String(role).trim().toLowerCase();
 }
 
 export default function ProtectedRoute({ children, allowedRoles }) {
   const location = useLocation();
-  
-  const role = normalizeRole(localStorage.getItem('bustrac_role'));
+  const token = getToken();                          // ← RESTORED
   const rawUser = localStorage.getItem('bustrac_user');
-  const isLoggedIn = !!rawUser;
+  const role = normalizeRole(localStorage.getItem('bustrac_role'));
+
+  // BOTH token (sessionStorage) AND cached user (localStorage) must be present.
+  const isLoggedIn = !!token && !!rawUser;
 
   if (!isLoggedIn) {
+    try {
+      localStorage.removeItem('bustrac_user');
+      localStorage.removeItem('bustrac_role');
+    } catch { /* ignore */ }
     return <Navigate to="/login" state={{ redirectTo: location.pathname }} replace />;
   }
 

@@ -1,5 +1,7 @@
-import React, { useState, useEffect } from 'react';
-import { calculateAge, isValidPHMobile } from "../../utils/residentUtils";
+import React, { useState, useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
+import { calculateAge } from "../../utils/residentUtils";
+import { localDb } from '../../services/db';
+
 const formLabelStyle = { color: 'var(--text)' };
 const formFieldStyle = { backgroundColor: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)' };
 
@@ -20,7 +22,7 @@ const SectionHeading = ({ number, children }) => (
   </div>
 );
 
-export default function ResidentForm({
+export default forwardRef(function ResidentForm({
   residentForm,
   setResidentForm,
   editingResidentId,
@@ -40,11 +42,54 @@ export default function ResidentForm({
   householdForm,
   setHouseholdForm,
   canCreateHousehold = false,
-  isSaving = false // 1. Naidagdag ang isSaving prop
-}) {
-  const [householdQuery, setHouseholdQuery] = useState('');
-  const [isHouseholdSearchActive, setIsHouseholdSearchActive] = useState(false);
-  const [showHouseholdOptions, setShowHouseholdOptions] = useState(false);
+  isSaving = false
+}, ref) {
+  const firstInputRef = useRef(null);
+
+  // Expose focus method for modal Ctrl+S / autofocus
+  useImperativeHandle(ref, () => ({
+    focus: () => {
+      if (firstInputRef.current) {
+        firstInputRef.current.focus();
+      }
+    }
+  }));
+  
+  // ═══ HOUSEHOLD FALLBACK: kung empty ang prop, kumuha mula sa localDb ═══
+const [localHouseholds, setLocalHouseholds] = useState([]);
+
+useEffect(() => {
+  // Prop already has households — use it directly, never touch localDb.
+  if (households.length > 0) return;
+  let cancelled = false;
+  (async () => {
+    try {
+      const res = await localDb.allDocs({ include_docs: true });
+      const hhs = res.rows
+        .map((r) => r.doc)
+        .filter((d) => d && d.type === 'household' && !d._deleted && d.id)
+        .map((d) => ({
+          id: d.id,
+          head: d.head || '',
+          purok: d.purok || '',
+          address: d.address || '',
+          members: d.members || 0,
+        }));
+      if (!cancelled) {
+        setLocalHouseholds(hhs);
+        console.log('[ResidentForm] fallback loaded households:', hhs.length);
+      }
+    } catch (err) {
+      console.warn('[ResidentForm] fallback fetch failed:', err?.message || err);
+    }
+  })();
+  return () => { cancelled = true; };
+  // Key on the length only, not the array reference: the parent may pass a
+  // fresh array (e.g. a new `[]`) on every render, which would otherwise
+  // trigger localDb.allDocs() repeatedly.
+}, [households.length]);
+
+const effectiveHouseholds = households.length > 0 ? households : localHouseholds;
 
   const isEditMode = !!editingResidentId;
   const todayDateStr = new Date().toISOString().split('T')[0]; // Max date para sa birthdate
@@ -58,22 +103,8 @@ export default function ResidentForm({
     }
   }, [isEditMode]);
 
-  const selectedHousehold = households.find((household) => household.id === residentForm.householdNo);
-
-  const householdSearchResults = households
-    .filter((household) => {
-      const query = householdQuery.trim().toLowerCase();
-      if (!query) return true;
-      return [household.id, household.head, household.purok, household.address]
-        .some((value) => String(value || '').toLowerCase().includes(query));
-    })
-    .slice(0, 10);
-
   const updateHouseholdMode = (mode) => {
     setHouseholdAssignmentMode(mode);
-    setHouseholdQuery('');
-    setIsHouseholdSearchActive(false);
-    setShowHouseholdOptions(false);
     if (mode === 'create') setHouseholdForm({ head: '', address: '', purok: '' });
   };
 
@@ -274,7 +305,6 @@ export default function ResidentForm({
                     readOnly={isEditMode}
                     onChange={(e) => {
                       if (!isEditMode) {
-                        // Auto-uppercase at tanggalin ang mga space/special characters para malinis
                         const cleanValue = e.target.value.toUpperCase().replace(/[^A-Z0-9-]/g, '');
                         updateResidentField('rbiNo', cleanValue);
                       }
@@ -369,7 +399,7 @@ export default function ResidentForm({
                 </div>
               </div>
 
-              {/* Birthdate, Age, Birth Place - BIRTHDATE MAX VALIDATION APPLIED */}
+              {/* Birthdate, Age, Birth Place */}
               <div className="fg3" style={{ marginBottom: '16px' }}>
                 <div className="fg">
                   <label className="fl">BIRTHDATE *</label>
@@ -706,22 +736,22 @@ export default function ResidentForm({
               <SectionHeading number="E">Contact &amp; Address</SectionHeading>
               <div className="fg2" style={{ marginBottom: '16px' }}>
                 <div className="fg">
-  <label className="fl">CONTACT NOS.</label>
-  <input
-    type="tel"
-    inputMode="numeric"
-    className="fc"
-    disabled={isSaving}
-    placeholder="09123456789"
-    maxLength={11}
-    pattern="09[0-9]{9}"
-    value={residentForm.contactNo || ''}
-    onChange={(e) => {
-      const cleaned = e.target.value.replace(/\D/g, '').slice(0, 11);
-      updateResidentField('contactNo', cleaned);
-    }}
-  />
-</div>
+                  <label className="fl">CONTACT NOS.</label>
+                  <input
+                    type="tel"
+                    inputMode="numeric"
+                    className="fc"
+                    disabled={isSaving}
+                    placeholder="09123456789"
+                    maxLength={11}
+                    pattern="09[0-9]{9}"
+                    value={residentForm.contactNo || ''}
+                    onChange={(e) => {
+                      const cleaned = e.target.value.replace(/\D/g, '').slice(0, 11);
+                      updateResidentField('contactNo', cleaned);
+                    }}
+                  />
+                </div>
                 <div className="fg">
                   <label className="fl">EMAIL ADD</label>
                   <input
@@ -828,136 +858,57 @@ export default function ResidentForm({
                   </div>
                 ) : (
                   <div className="fg">
-                    <label className="fl" htmlFor="resident-household-search">Existing Household *</label>
-                    <div style={{ position: 'relative' }}>
-                      <input
-                        id="resident-household-search"
-                        type="search"
-                        className="fc"
-                        role="combobox"
-                        disabled={isSaving}
-                        aria-autocomplete="list"
-                        aria-expanded={showHouseholdOptions}
-                        aria-controls="resident-household-options"
-                        placeholder="Search by Household ID, head, Purok, or address..."
-                        value={
-                          isHouseholdSearchActive
-                            ? householdQuery
-                            : selectedHousehold
-                            ? `${selectedHousehold.id} — ${selectedHousehold.head}`
-                            : residentForm.householdNo && residentForm.householdNo !== '—'
-                            ? `Unknown Household: ${residentForm.householdNo}`
-                            : ''
-                        }
-                        onFocus={() => {
-                          setHouseholdQuery('');
-                          setIsHouseholdSearchActive(true);
-                          setShowHouseholdOptions(true);
-                        }}
-                        onBlur={() => {
-                          window.setTimeout(() => {
-                            setShowHouseholdOptions(false);
-                            setIsHouseholdSearchActive(false);
-                            setHouseholdQuery('');
-                          }, 120);
-                        }}
-                        onChange={(e) => {
-                          setHouseholdQuery(e.target.value);
-                          setIsHouseholdSearchActive(true);
-                          setShowHouseholdOptions(true);
-                        }}
-                      />
-                      {showHouseholdOptions && (
-                        <div
-                          id="resident-household-options"
-                          role="listbox"
-                          style={{
-                            position: 'absolute',
-                            top: 'calc(100% + 4px)',
-                            left: 0,
-                            right: 0,
-                            zIndex: 100,
-                            maxHeight: '240px',
-                            overflowY: 'auto',
-                            background: 'var(--surface)',
-                            border: '1px solid var(--border)',
-                            borderRadius: '6px',
-                            boxShadow: '0 8px 20px rgba(0,0,0,0.25)',
-                          }}
-                        >
-                          {householdSearchResults.length > 0 ? (
-                            householdSearchResults.map((household) => (
-                              <button
-                                key={household.id}
-                                type="button"
-                                role="option"
-                                aria-selected={residentForm.householdNo === household.id}
-                                onMouseDown={(e) => e.preventDefault()}
-                                onClick={() => {
-                                  updateResidentField('householdNo', household.id);
-                                  setHouseholdQuery('');
-                                  setIsHouseholdSearchActive(false);
-                                  setShowHouseholdOptions(false);
-                                }}
-                                style={{
-                                  display: 'block',
-                                  width: '100%',
-                                  padding: '10px 12px',
-                                  textAlign: 'left',
-                                  background: 'transparent',
-                                  border: 'none',
-                                  borderBottom: '1px solid var(--border)',
-                                  color: 'var(--text)',
-                                  cursor: 'pointer',
-                                }}
-                              >
-                                <span style={{ display: 'block', fontSize: '13px', fontWeight: 700 }}>{household.head || 'Household'}</span>
-                                <span style={{ display: 'block', marginTop: '3px', fontSize: '11px', color: 'var(--muted)' }}>
-                                  {household.id} · {[household.purok, household.address].filter(Boolean).join(' · ')}
-                                </span>
-                              </button>
-                            ))
-                          ) : (
-                            <div style={{ padding: '10px 12px', fontSize: '12px', color: 'var(--muted)' }}>No matching households found.</div>
-                          )}
-                        </div>
-                      )}
-                    </div>
+                    <label className="fl" htmlFor="resident-household-select">Existing Household *</label>
+                    <select
+                      id="resident-household-select"
+                      className="fc"
+                      required
+                      disabled={isSaving}
+                      value={
+                        residentForm.householdNo && residentForm.householdNo !== '—'
+                          ? residentForm.householdNo
+                          : ''
+                      }
+                      onChange={(e) => updateResidentField('householdNo', e.target.value)}
+                      style={{ ...formFieldStyle, cursor: isSaving ? 'not-allowed' : 'pointer' }}
+                    >
+                      <option value="">— Select a household —</option>
+                      {effectiveHouseholds.length === 0 ? (
+  <option value="" disabled>No households available</option>
+) : (
+  effectiveHouseholds.map((household) => (
+    <option key={household.id} value={household.id}>
+      {household.id} — {household.head || 'Unnamed'}
+      {household.purok ? ` (${household.purok})` : ''}
+    </option>
+  ))
+)}
+                    </select>
+                    {effectiveHouseholds.length === 0 && (
+  <div style={{ marginTop: '6px', fontSize: '11px', color: 'var(--muted)' }}>
+    No households available. Create one via Household Management first.
+  </div>
+)}
                   </div>
                 )}
 
-                <div
-                  style={{
-                    marginTop: '12px',
-                    padding: '10px 12px',
-                    borderRadius: '6px',
-                    background: 'var(--surface)',
-                    border: '1px solid var(--border)',
-                    fontSize: '12px',
-                    color: 'var(--muted)',
-                  }}
-                >
+                {/* STATUS BOX - ISA LANG */}
+                <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: 'var(--surface)', border: '1px solid var(--border)', fontSize: '12px', color: 'var(--muted)' }}>
                   {householdAssignmentMode === 'create' && canCreateHousehold ? (
                     <>A new Household ID will be generated and linked to this resident when saved.</>
-                  ) : selectedHousehold ? (
-                    <div style={{ display: 'grid', gap: '4px' }}>
-                      <div><strong style={{ color: 'var(--text)' }}>Household ID:</strong> {selectedHousehold.id}</div>
-                      <div><strong style={{ color: 'var(--text)' }}>Head of Family:</strong> {selectedHousehold.head || '—'}</div>
-                      <div><strong style={{ color: 'var(--text)' }}>Purok / Address:</strong> {[selectedHousehold.purok, selectedHousehold.address].filter(Boolean).join(' · ') || '—'}</div>
-                    </div>
                   ) : residentForm.householdNo && residentForm.householdNo !== '—' ? (
-                    <>Household ID {residentForm.householdNo} is not in the loaded household registry. Select a valid household to save.</>
+                    <>Household <strong style={{ color: 'var(--text)' }}>{residentForm.householdNo}</strong> will be linked to this resident.</>
                   ) : (
-                    <>Unassigned. Select an existing household to continue.</>
+                    <>Select an existing household to continue.</>
                   )}
                 </div>
               </section>
 
-              {/* ═══ Action Buttons - DITO NAKALAGAY ANG LOADING/SAVING STATE ═══ */}
+              {/* Action Buttons */}
               <div
                 style={{
                   display: 'flex',
-                  justify: 'flex-end',
+                  justifyContent: 'flex-end',
                   gap: '12px',
                   marginTop: '24px',
                   paddingTop: '16px',
@@ -989,4 +940,4 @@ export default function ResidentForm({
       </form>
     </div>
   );
-}
+});

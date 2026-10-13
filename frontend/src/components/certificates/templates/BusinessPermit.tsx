@@ -45,6 +45,8 @@ export interface BusinessPermitData {
   age?: number | string;
   sex?: string;
   birthdate?: string;
+  barangayAddress?: string;
+  remarks?: string;
 }
 
 interface BusinessPermitProps {

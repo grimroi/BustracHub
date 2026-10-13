@@ -18,25 +18,6 @@ export const isLoopbackHost = (host) => {
 
 const stripTrailingSlash = (value) => String(value || '').replace(/\/+$/, '');
 
-// Builds the authenticated PouchDB sync endpoint as
-// `${apiBase}/api/sync/${couchDbName}/` (explicit trailing slash).
-//
-// PouchDB's HTTP adapter derives the database name from the LAST non-empty
-// path segment of the endpoint URL and everything before it as the URL path
-// prefix (see getHost() in pouchdb-browser). It also strips a trailing slash
-// while parsing, so `…/api/sync/<dbName>` and `…/api/sync/<dbName>/` resolve
-// to the same DB URL. This helper normalizes both inputs so the endpoint is
-// always exactly `…/api/sync/<dbName>/`, making the hierarchy explicit and
-// ensuring checkpointer (`_local/...`) and changes (`_changes`) sub-requests
-// resolve under the database name rather than the bare `/api/sync` prefix.
-export const buildSyncEndpoint = (apiBase, couchDbName = 'bustrachub_db') => {
-  const base = stripTrailingSlash(apiBase);
-  const dbSlug = String(couchDbName || 'bustrachub_db')
-    .trim()
-    .replace(/^\/+|\/+$/g, '');
-  return `${base}/api/sync/${dbSlug}`;
-};
-
 // Pure + testable. `envUrl` = import.meta.env.VITE_API_URL, `location` = window.location.
 export const resolveApiBaseUrl = (envUrl, location) => {
   const env = stripTrailingSlash(envUrl || '');

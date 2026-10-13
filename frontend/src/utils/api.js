@@ -106,6 +106,14 @@ export const apiFetch = async (path, options = {}) => {
   if (response.status === 401) {
     // Always clear a stale token; the server considers it invalid.
     clearToken();
+    // Also drop the cached user object so route guards stop treating the
+    // browser as logged-in after the session has been rejected.
+    try {
+      localStorage.removeItem('bustrac_user');
+      localStorage.removeItem('bustrac_role');
+    } catch {
+      /* storage may be unavailable; ignore */
+    }
 
     if (auth && redirectOn401 && !isPublicPath()) {
       doRedirect(window.location.pathname + window.location.search);

@@ -1,17 +1,8 @@
 // frontend/jest.setup.js
-// Polyfill WebCrypto for Jest (jsdom does not expose crypto.subtle)
-if (typeof globalThis.crypto === 'undefined' || !globalThis.crypto.subtle) {
-  const { webcrypto } = require('crypto');
-  Object.defineProperty(globalThis, 'crypto', {
-    value: webcrypto,
-    configurable: true,
-    writable: true,
-  });
-}
-
 import 'whatwg-fetch';
 import '@testing-library/jest-dom';
 import { TextEncoder, TextDecoder } from 'util';
+import { webcrypto } from 'crypto';
 
 // Polyfills
 if (typeof global.TextEncoder === 'undefined') {
@@ -21,15 +12,30 @@ if (typeof global.TextDecoder === 'undefined') {
   global.TextDecoder = TextDecoder;
 }
 
+// jsdom does not expose WebCrypto's subtle API, which password.js uses to
+// verify legacy SHA-256 hashes. Provide it so tests cover the real path.
+if (webcrypto && (!global.crypto || !global.crypto.subtle)) {
+  try {
+    if (!global.crypto) {
+      global.crypto = webcrypto;
+    } else {
+      Object.defineProperty(global.crypto, 'subtle', {
+        value: webcrypto.subtle,
+        configurable: true,
+      });
+    }
+  } catch {
+    // Leave crypto as-is if the environment forbids redefinition.
+  }
+}
+
 // Global mock para sa import.meta.env
 if (typeof global.import === 'undefined') {
   global.import = {};
 }
 if (!global.import.meta) {
   global.import.meta = {
-    env: {
-      VITE_COUCHDB_URL: 'http://admin:admin@127.0.0.1:5984/bustrachub_db',
-    },
+    env: {},
   };
 }
 

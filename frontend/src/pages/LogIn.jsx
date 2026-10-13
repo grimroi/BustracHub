@@ -48,7 +48,14 @@ export default function LogIn() {
       }
 
       try {
-        const localUserDoc = await db.get(`user_${lowerUsername}`);
+        // Offline credential cache lives under _local/ (never replicated).
+        // Fall back to the legacy `user_<username>` id for older devices.
+        let localUserDoc = null;
+        try {
+          localUserDoc = await db.get(`_local/user-${lowerUsername}`);
+        } catch {
+          localUserDoc = await db.get(`user_${lowerUsername}`);
+        }
         if (localUserDoc && localUserDoc.passwordHash) {
           const matches = await verifyPassword(inputPassword, localUserDoc.passwordHash);
           if (matches) {
@@ -126,7 +133,9 @@ export default function LogIn() {
             localStorage.setItem('bustrac_offline_auth', JSON.stringify(existingOfflineAuth));
 
             const pouchUserDoc = {
-              _id: `user_${lowerUsername}`,
+              // Stored under the _local/ prefix so PouchDB NEVER replicates
+              // this cache (with its passwordHash) to the remote CouchDB.
+              _id: `_local/user-${lowerUsername}`,
               type: 'user',
               username: trimmedUsername,
               passwordHash,

@@ -95,12 +95,14 @@ export default function CertPrintScreen({
   const isInitialLoadRef = useRef(true); 
   const [blotterRecords, setBlotterRecords] = useState([]);
 const [blotterMatches, setBlotterMatches] = useState([]);
+const [isVerifying, setIsVerifying] = useState(false);
 
   const loadIssuedCertificates = useCallback(async () => {
   try {
     if (isInitialLoadRef.current) setLoading(true);
     const result = await db.allDocs({ include_docs: true });
     const allDocs = result.rows.map((row) => row.doc);
+    
     const issued = allDocs.filter(
       (doc) =>
         doc &&
@@ -150,7 +152,7 @@ const [blotterMatches, setBlotterMatches] = useState([]);
       );
     }
 
-    setIssuedCertificates((prevCerts) => {
+    setDbIssuedCertificates((prevCerts) => {
       const filtered = (prevCerts || []).filter((c) => c?._id !== doc._id);
       return [doc, ...filtered];
     });
@@ -172,7 +174,12 @@ useEffect(() => {
       const result = await db.allDocs({ include_docs: true });
       const records = result.rows
         .map((row) => row.doc)
-        .filter((doc) => doc && doc.type === 'blotter');
+        .filter((doc) => doc && (
+          doc.type === 'blotter' ||
+          doc.type === 'blotter_record' ||
+          doc.type === 'blotter_report' ||
+          doc.docType === 'blotter'
+        ));
       setBlotterRecords(records);
     } catch (err) {
       console.error('Error loading blotter records:', err);
@@ -181,6 +188,66 @@ useEffect(() => {
   };
   loadBlotter();
 }, []);
+
+// AUTO VERIFY LOGIC
+// Auto-fill query from the selected resident's last name
+useEffect(() => {
+  const lastName =
+    selectedCertificate?.lastName ||
+    (getApplicantName(selectedCertificate) || '').split(' ').pop() ||
+    issuanceMeta?.residentName?.split(' ').pop();
+  if (lastName && lastName.length >= 2) {
+    setBlotterVerifyQuery(lastName);
+  }
+}, [selectedCertificate, issuanceMeta?.residentName, setBlotterVerifyQuery]);
+
+// Compute blotter matches for the current query
+useEffect(() => {
+  const q = (blotterVerifyQuery || '').trim().toLowerCase();
+  if (!q) {
+    setBlotterMatches([]);
+    return;
+  }
+  const nameOf = (val) =>
+    typeof val === 'object' && val !== null
+      ? (val.name || val.displayName || '')
+      : (val || '');
+  const matches = blotterRecords
+    .filter((b) => {
+      const respondent = nameOf(b.respondent) || b.respondentName || b.respName || '';
+      const complainant = nameOf(b.complainant) || b.complainantName || b.compName || '';
+      return (
+        respondent.toLowerCase().includes(q) ||
+        complainant.toLowerCase().includes(q)
+      );
+    })
+    .map((b) => ({
+      id: b._id,
+      respondent: nameOf(b.respondent) || b.respondentName || b.respName || 'N/A',
+      status: b.status || 'Pending',
+    }));
+  setBlotterMatches(matches);
+}, [blotterVerifyQuery, blotterRecords]);
+
+// Auto-compute verification result
+useEffect(() => {
+  if (!blotterVerifyQuery) return;
+  setIsVerifying(true);
+  const timer = setTimeout(() => {
+    const hasOpenCase = blotterMatches.some(
+      (b) => b.status !== 'Resolved' && b.status !== 'Closed'
+    );
+    setIssuanceMeta((prev) => ({
+      ...prev,
+      noDerogatoryRecord: blotterMatches.length === 0,
+      hasDerogatory: hasOpenCase,
+      autoVerified: true,
+      verifiedAt: new Date().toISOString(),
+    }));
+    setIsVerifying(false);
+  }, 400);
+  return () => clearTimeout(timer);
+}, [blotterMatches.length]);
 
 
 
@@ -510,7 +577,7 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
                 </tr>
               </thead>
               <tbody>
-                {loading ? (
+                {loading && filteredApprovedCertificates.length === 0 ? (
                   <tr><td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)' }}>Loading approved certificates...</td></tr>
                 ) : filteredApprovedCertificates.length === 0 ? (
                   <tr><td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)' }}>No approved certificates waiting.</td></tr>
@@ -548,11 +615,11 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
         </div>
 
         {/* RIGHT PANEL: Issuance Workspace (60% Width) */}
-        <div className="cert-section-card" style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+        <div className="cert-section-card" style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0, maxHeight: '88vh' }}>
           {selectedCertificate ? (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', minHeight: 0 }}>
+            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxHeight: '88vh', overflow: 'hidden', minHeight: 0 }}>
               {/* Workspace Header */}
-              <div style={{ padding: '12px 16px', borderTop: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: '10px', justifyContent: 'flex-end', flexShrink: 0 }}>
+              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: '10px', justifyContent: 'flex-end', alignItems: 'baseline', flexShrink: 0 }}>
                 <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>
                   Issuance Workspace: {getApplicantName(selectedCertificate)}
                 </div>
@@ -562,47 +629,67 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
               </div>
               
               {/* Workspace Scrollable Content */}
-              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '16px', display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
                 
                 {/* 1. Blotter Verification */}
-                <div className="fp cert-panel" style={{ background: 'var(--surface2)', padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                  <div className="fp-t" style={{ fontWeight: 600, marginBottom: '10px', fontSize: '13px' }}> Blotter Verification Check</div>
-                  <input className="fc" placeholder="Search last name to check for derogatory records..." value={blotterVerifyQuery} onChange={(e) => setBlotterVerifyQuery(e.target.value)} style={{ marginBottom: '10px' }} />
-                  <div className="cert-mini-table-wrap" style={{ maxHeight: '100px', overflowY: 'auto', marginBottom: '8px', background: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                    <table className="cert-mini-table" style={{ width: '100%', fontSize: '12px', background: 'var(--surface)' }}>
+                <div className="fp cert-panel" style={{ background: 'var(--surface2)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <div className="fp-t" style={{ fontWeight: 600, marginBottom: '6px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span>Blotter Verification Check</span>
+                    {isVerifying ? (
+                      <span style={{ fontSize: '10px', color: 'var(--muted)' }}>Verifying...</span>
+                    ) : issuanceMeta.autoVerified ? (
+                      blotterMatches.length === 0 ? 
+                        <span className="badge g" style={{ fontSize: '10px' }}>✓ AUTO VERIFIED</span> :
+                        <span className="badge r" style={{ fontSize: '10px' }}>⚠ HAS RECORD</span>
+                    ) : null}
+                  </div>
+
+                  {/* Auto-filled search - readOnly na, hindi na mano-mano */}
+                  <input 
+                    className="fc" 
+                    placeholder="Auto-detected from resident..." 
+                    value={blotterVerifyQuery} 
+                    readOnly
+                    style={{ marginBottom: '8px', height: '32px', background: 'var(--surface)', opacity: 0.8 }} 
+                  />
+
+                  <div className="cert-mini-table-wrap" style={{ maxHeight: '70px', overflowY: 'auto', marginBottom: '6px', background: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
+                    <table className="cert-mini-table" style={{ width: '100%', fontSize: '12px' }}>
                       <thead style={{ background: 'var(--surface2)', position: 'sticky', top: 0 }}>
-  <tr>
-    <th style={{ padding: '8px', textAlign: 'left', color: 'var(--text)', fontSize: '11px' }}>Respondent</th>
-    <th style={{ padding: '8px', textAlign: 'left', color: 'var(--text)', fontSize: '11px' }}>Status</th>
-  </tr>
-</thead>
-<tbody>
-  {blotterMatches.length > 0 ? blotterMatches.map((b, idx) => (
-    <tr key={b.id || idx} style={{ borderBottom: '1px solid var(--border)' }}>
-      <td style={{ padding: '8px', color: 'var(--text)', fontSize: '12px' }}>{b.respondent || '—'}</td>
-      <td style={{ padding: '8px' }}>
-        <span className={`badge ${b.status === 'Resolved' ? 'g' : 'r'}`}>{b.status || 'Open'}</span>
-      </td>
-    </tr>
-  )) : (
-    <tr>
-      <td colSpan="2" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)' }}>
-        {blotterVerifyQuery ? 'No derogatory records found.' : 'Type a name to verify.'}
-      </td>
-    </tr>
-  )}
-</tbody>
+                        <tr>
+                          <th style={{ padding: '8px', textAlign: 'left', fontSize: '11px' }}>Respondent</th>
+                          <th style={{ padding: '8px', textAlign: 'left', fontSize: '11px' }}>Status</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {blotterMatches.length > 0 ? blotterMatches.map((b, idx) => (
+                          <tr key={b.id || idx} style={{ borderBottom: '1px solid var(--border)' }}>
+                            <td style={{ padding: '8px', fontSize: '12px' }}>{b.respondent || '—'}</td>
+                            <td style={{ padding: '8px' }}><span className={`badge ${b.status === 'Resolved' ? 'g' : 'r'}`}>{b.status || 'Open'}</span></td>
+                          </tr>
+                        )) : (
+                          <tr><td colSpan="2" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)', fontSize: '12px' }}>
+                            {blotterVerifyQuery ? '✓ No derogatory records found.' : 'Select resident to auto-verify.'}
+                          </td></tr>
+                        )}
+                      </tbody>
                     </table>
                   </div>
-                  <label className="cert-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '13px', fontWeight: 600 }}>
-                    <input type="checkbox" checked={issuanceMeta.noDerogatoryRecord || false} onChange={(e) => setIssuanceMeta({ ...issuanceMeta, noDerogatoryRecord: e.target.checked })} />
-                    I verify that there is No Derogatory Record.
+
+                  <label className="cert-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', cursor: issuanceMeta.hasDerogatory ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 600, opacity: issuanceMeta.hasDerogatory ? 0.6 : 1 }}>
+                    <input 
+                      type="checkbox" 
+                      checked={issuanceMeta.noDerogatoryRecord || false} 
+                      disabled={issuanceMeta.hasDerogatory}
+                      onChange={(e) => setIssuanceMeta({ ...issuanceMeta, noDerogatoryRecord: e.target.checked })} 
+                    />
+                    {issuanceMeta.hasDerogatory ? 'Cannot issue - Has open blotter case' : 'I verify that there is No Derogatory Record (Auto).'}
                   </label>
                 </div>
 
                 {/* 2. Receipt & CTC Details (Side-by-Side) */}
                 <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' }}>
-                  <div className="fp cert-panel" style={{ padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <div className="fp cert-panel" style={{ padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
                     <div className="fp-t accent" style={{ fontWeight: 600, marginBottom: '12px', fontSize: '13px' }}>🧾 Receipt Details</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       <div className="fg">
@@ -620,7 +707,7 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
                     </div>
                   </div>
 
-                  <div className="fp cert-panel" style={{ padding: '16px', borderRadius: '8px', border: '1px solid var(--border)' }}>
+                  <div className="fp cert-panel" style={{ padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
                     <div className="fp-t accent" style={{ fontWeight: 600, marginBottom: '12px', fontSize: '13px' }}>🪪 CTC Details (Optional)</div>
                     <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
                       <div className="fg">
@@ -649,10 +736,11 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
                   display: 'flex',
                   gap: '12px',
                   justifyContent: 'flex-end',
+                  flexShrink: 0,
                   position: 'sticky',
                   bottom: 0,
                   zIndex: 20,
-                  boxShadow: '0 -4px 6px -1px rgba(0, 0, 0, 0.05)',
+                  boxShadow: '0 -4px 10px -2px rgba(0, 0, 0, 0.25)',
                 }}
               >
                 <button
@@ -673,83 +761,24 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
                 </button>
 
                 <button
-                  type="button"
-                  id="btn-issue-print"
-                  className="btn btn-p"
-                  disabled={saving}
-                  onClick={async () => {
-                    if (!selectedCertificate) {
-                      if (typeof showToast === 'function') showToast('Please select a certificate to issue.', 'error');
-                      return;
-                    }
-                    if (!issuanceMeta?.orNumber?.trim()) {
-                      if (typeof showToast === 'function') showToast('OR Number is required before issuing.', 'error');
-                      return;
-                    }
-                    if (
-                      issuanceMeta?.amountPaid === '' ||
-                      issuanceMeta?.amountPaid === null ||
-                      issuanceMeta?.amountPaid === undefined
-                    ) {
-                      if (typeof showToast === 'function') showToast('Amount Paid is required before issuing.', 'error');
-                      return;
-                    }
-                    setSaving(true);
-                    try {
-                      const now = new Date().toISOString();
-                      let latest = selectedCertificate;
-                      try {
-                        latest = await db.get(selectedCertificate._id);
-                      } catch (getErr) {
-                        if (getErr.name !== 'not_found') throw getErr;
-                      }
-                      const issuedPayload = buildIssuancePayload();
-                      const payload = {
-                        ...issuedPayload,
-                        _id: latest._id,
-                        _rev: latest._rev,
-                        status: 'Issued',
-                        step: 5,
-                        issuedAt: latest.issuedAt || now,
-                        updatedAt: now,
-                      };
-                      await saveCertificateToCouchDB(payload);
-                      if (typeof createAuditLog === 'function') {
-                        try {
-                          await createAuditLog({
-                            action: 'ISSUE_CERTIFICATE',
-                            module: 'CERTIFICATES',
-                            recordId: latest._id,
-                            details: `Issued ${payload.certificateType || 'Certificate'} for ${getApplicantName(payload)} (OR#: ${payload.orNumber || ''})`,
-                          });
-                        } catch (auditErr) {
-                          console.warn('Audit log for issuance failed:', auditErr);
-                        }
-                      }
-                      try {
-                        await loadIssuedCertificates();
-                      } catch (refreshErr) {
-                        console.warn('Failed to refresh issued list:', refreshErr);
-                      }
-                      if (typeof showToast === 'function') showToast('Certificate issued successfully!', 'success');
-                      if (typeof onOpenPrintPreview === 'function') {
-                        onOpenPrintPreview(payload, 'copy');
-                      }
-                    } catch (err) {
-                      console.error('Issue & Print failed:', err);
-                      if (typeof showToast === 'function') showToast('Failed to issue certificate: ' + err.message, 'error');
-                    } finally {
-                      setSaving(false);
-                    }
-                  }}
-                  style={{
-                    padding: '10px 24px',
-                    fontWeight: 700,
-                    boxShadow: '0 4px 14px rgba(59, 130, 246, 0.35)',
-                  }}
-                >
-                  {saving ? 'Processing...' : ' Issue & Print Certificate'}
-                </button>
+  type="button"
+  id="btn-issue-print"
+  className="btn btn-p"
+  disabled={saving || issuanceMeta.hasDerogatory}
+  title={issuanceMeta.hasDerogatory ? 'Blocked: Has open blotter case' : 'Issue & Print'}
+  style={{
+    padding: '10px 24px',
+    fontWeight: 700,
+    opacity: issuanceMeta.hasDerogatory ? 0.6 : 1,
+    cursor: issuanceMeta.hasDerogatory ? 'not-allowed' : 'pointer',
+    background: issuanceMeta.hasDerogatory ? 'var(--surface2)' : undefined,
+    color: issuanceMeta.hasDerogatory ? 'var(--muted)' : undefined,
+    border: issuanceMeta.hasDerogatory ? '1px solid var(--border)' : undefined,
+    boxShadow: issuanceMeta.hasDerogatory ? 'none' : '0 4px 14px rgba(59,130,246,0.35)',
+  }}
+>
+  {issuanceMeta.hasDerogatory ? '⛔ Blocked by Blotter' : saving ? 'Processing...' : ' Issue & Print Certificate'}
+</button>
               </div>
             </div>
           ) : (

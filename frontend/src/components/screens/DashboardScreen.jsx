@@ -22,6 +22,7 @@ const DashboardScreen = React.memo(function DashboardScreen({
   settledBlotterCount,
   cfaBlotterCount,
   activeBlotterCount,
+  openBlotterCount,
   feedbackSummary,
   
   // Trends
@@ -38,22 +39,18 @@ const DashboardScreen = React.memo(function DashboardScreen({
   // Navigation
   nav,
 }) {
-    const openBlotterCount = blotterList.filter(
-  (b) => b.status === 'Open' || b.status === 'Under Mediation'
-).length;
+    // Open / pending cases only (Open, Under Mediation, Pending) — resolved,
+    // settled and CFA cases are excluded. Uses the prop computed by the portal
+    // from localDb; falls back to a local filter when the prop is undefined.
+    const resolvedOpenBlotterCount = typeof openBlotterCount === 'number'
+      ? openBlotterCount
+      : blotterList.filter(
+          (b) => b.status === 'Open' || b.status === 'Under Mediation' || b.status === 'Pending'
+        ).length;
   return (
     <div className="screen active" style={{ padding: '24px', width: '100%', boxSizing: 'border-box', maxWidth: '1600px', margin: '0 auto' }}> 
-                      {/* DASHBOARD SUMMARY HEADER (Consolidated view for quick decision-making) */}
-                        <div style={{ marginBottom: '16px' }}>
-                          <div style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
-                            {role === 'admin' ? 'Barangay Overview' : 'Operations Overview'}
-                          </div>
-                          <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
-                            Consolidated key metrics, trends &amp; indicators • As of {new Date().toLocaleDateString('en-PH', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
-                          </div>
-                        </div>
                         {/* ACTION REQUIRED BANNER (compact) */}
-                        {pendingRequestsCount > 0 || activeFeedbackCount > 0 || openBlotterCount > 0 || (conflictsList.length > 0 && role === 'admin') ? (
+                        {pendingRequestsCount > 0 || activeFeedbackCount > 0 || resolvedOpenBlotterCount > 0 || (conflictsList.length > 0 && role === 'admin') ? (
                         <div style={{
                             display: 'flex', alignItems: 'center', gap: 12,
                             padding: '12px 16px',
@@ -64,7 +61,7 @@ const DashboardScreen = React.memo(function DashboardScreen({
                         }}>
                             <span style={{ fontSize: 18 }}>⚠️</span>
                             <div style={{ flex: 1, fontSize: 13, fontWeight: 700, color: 'var(--amber-text)' }}>
-                            {pendingRequestsCount + activeFeedbackCount + openBlotterCount + (role === 'admin' ? conflictsList.length : 0)} items need attention
+                            {pendingRequestsCount + activeFeedbackCount + resolvedOpenBlotterCount + (role === 'admin' ? conflictsList.length : 0)} items need attention
                             </div>
                             <div style={{ display: 'flex', gap: 8 }}>
                             {pendingRequestsCount > 0 && (
@@ -79,10 +76,10 @@ const DashboardScreen = React.memo(function DashboardScreen({
                                 Feedback · {activeFeedbackCount}
                                 </button>
                             )}
-                            {openBlotterCount > 0 && (
+                            {resolvedOpenBlotterCount > 0 && (
                                 <button onClick={() => nav('blotter-manage')}
                                 style={{ background: 'var(--red)', color: '#fff', border: 'none', padding: '6px 12px', borderRadius: 6, fontSize: 11, fontWeight: 700, cursor: 'pointer' }}>
-                                Blotter · {openBlotterCount}
+                                Blotter · {resolvedOpenBlotterCount}
                                 </button>
                             )}
                             {conflictsList.length > 0 && role === 'admin' && (
@@ -129,7 +126,7 @@ const DashboardScreen = React.memo(function DashboardScreen({
                             { label: 'Households', value: totalHouseholds, sub: 'Family units', color: 'var(--green)', trend: householdTrend, goodWhenUp: true },
                             { label: 'Reg. Voters', value: totalVoters, sub: `${totalResidents > 0 ? ((totalVoters / totalResidents) * 100).toFixed(0) : 0}% of total`, color: 'var(--amber)', trend: voterTrend, goodWhenUp: true },
                             { label: 'Pending Certs', value: pendingRequestsCount, sub: 'Awaiting approval', color: 'var(--accent)', trend: certTrend, goodWhenUp: false },
-                            { label: 'Open Blotter', value: typeof blotterList !== 'undefined' ? blotterList.filter(b => b.status === 'Open' || b.status === 'Under Mediation').length : 0, sub: 'Active cases', color: 'var(--red)', trend: blotterTrend, goodWhenUp: false },
+                            { label: 'Open Blotter', value: resolvedOpenBlotterCount, sub: 'Active cases', color: 'var(--red)', trend: blotterTrend, goodWhenUp: false },
                             ...(role === 'admin' ? [{ label: 'Sync Conflicts', value: conflictsList.length, sub: conflictsList.length > 0 ? 'Needs fix' : 'All synced', color: conflictsList.length > 0 ? 'var(--amber)' : 'var(--muted)' }] : []),
                             { label: 'Feedback', value: activeFeedbackCount, sub: 'Submissions', color: 'var(--teal)', trend: feedbackTrend, goodWhenUp: null }
                           ].map((stat, i) => (

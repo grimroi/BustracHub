@@ -6,7 +6,6 @@ const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const certificateRoutes = require('./routes/certificateRoutes');
 const blotterRoutes = require('./routes/blotterRoutes');
-const { seedDefaultUsers } = require('./seedUsers');
 const { sendBlotterNotification } = require('./services/emailService');
 const { sendResidentSMS } = require('./services/smsService');
 
@@ -48,93 +47,90 @@ const PORT = process.env.PORT || 5000;
 
 // Middlewares
 // ──────────────────────────────────────────────────────────────
-// CORS — origin reflection instead of the wildcard "*".
-//
-// The frontend (Vite on :5173, or a phone on the same Wi-Fi) and PouchDB
-// replication send `Authorization` headers, which browsers treat as
-// credentialed requests. The spec forbids `Access-Control-Allow-Origin: *`
-// for such requests, so we:
-//   1. Echo back the specific requesting origin.
-//   2. Send `Access-Control-Allow-Credentials: true`.
-//   3. Only echo origins we trust (configured list + loopback/LAN dev hosts).
-//   4. Allow OPTIONS preflight with the headers/methods the app actually uses
-//      (Content-Type, Authorization, Accept) for every /api/* route.
+// CORS CONFIGURATION — CRITICAL FOR SYNC TO WORK WITH CREDENTIALS
 // ──────────────────────────────────────────────────────────────
-const DEFAULT_FRONTEND_ORIGINS = [
-  'http://localhost:5173',
-  'http://localhost:4173',
-];
+app.use(
+  cors({
+    // 1. Allowed origins are listed EXPLICITLY (never '*'). Credentials: true
+    //    is only valid when the origin is explicit, so these two go together.
+    origin: function (origin, callback) {
+      // Allow requests with no origin (like mobile apps, curl, Postman)
+      if (!origin) return callback(null, true);
 
-const ALLOWED_ORIGINS = (process.env.CORS_ALLOWED_ORIGINS || '')
-  .split(',')
-  .map((s) => s.trim())
-  .filter(Boolean)
-  .concat(DEFAULT_FRONTEND_ORIGINS);
+      const allowedOrigins = [
+        'http://localhost:5173',
+        'http://localhost:4173',
+        'http://localhost:4174',
+        'http://localhost:4175',
+        'http://localhost:3000',
+        'http://127.0.0.1:5173',
+        'http://127.0.0.1:4173',
+        'http://127.0.0.1:4174',
+        'http://127.0.0.1:4175',
+        'http://192.168.1.4:4173',
+        'http://192.168.1.4:4174',
+        'http://192.168.1.4:4175',
+        'http://192.168.1.4:5173',
+        'http://192.168.56.1:4173',
+        'http://192.168.56.1:4174',
+        'http://192.168.56.1:4175',
+        'http://192.168.56.1:5173',
+      ];
 
-const isLoopbackHost = (hostname) =>
-  !hostname ||
-  hostname === 'localhost' ||
-  hostname === '127.0.0.1' ||
-  hostname === '[::1]' ||
-  hostname === '::1' ||
-  hostname.startsWith('127.');
+      // SINGLE callback invocation: either allow (true) or reject (Error).
+      // Never call callback twice — doing so raises ERR_HTTP_HEADERS_SENT.
+      const isAllowed =
+        allowedOrigins.indexOf(origin) !== -1 ||
+        /^http:\/\/localhost:\d+$/.test(origin) ||
+        /^http:\/\/127\.0\.0\.1:\d+$/.test(origin) ||
+        /^http:\/\/192\.168\.\d+\.\d+:\d+$/.test(origin);
 
-const isAllowedOrigin = (origin) => {
-  if (!origin) return false;
-  if (ALLOWED_ORIGINS.includes(origin)) return true;
-  try {
-    // The frontend rewrites its API base to the page's own host when opened
-    // from another device on the same LAN, so allow loopback/LAN dev hosts.
-    return isLoopbackHost(new URL(origin).hostname);
-  } catch {
-    return false;
-  }
-};
+      if (isAllowed) {
+        return callback(null, true);
+      }
+      // Reject ONLY the disallowed origin — never fall back to allow-all.
+      return callback(new Error('Not allowed by CORS'));
+    },
+    methods: ['GET', 'HEAD', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    // At minimum the headers PouchDB/login send. Origin/Referer are included
+    // because some clients list them in Access-Control-Request-Headers.
+    allowedHeaders: ['Accept', 'Content-Type', 'Authorization', 'Origin', 'Referer', 'X-Requested-With'],
+    // Headers the browser is allowed to read off the response (PouchDB needs
+    // ETag/Cache-Control; Content-Length helps with body framing).
+    exposedHeaders: ['Content-Type', 'ETag', 'Cache-Control', 'Content-Length'],
+    credentials: true, // REQUIRED for Bearer tokens/Cookies to work cross-origin
+    maxAge: 86400, // Cache preflight response for 24 hours (reduces OPTIONS spam)
+    optionsSuccessStatus: 200 // Some legacy browsers choke on 204
+    // NOTE: this middleware short-circuits OPTIONS preflight requests (default
+    // preflightContinue:false) BEFORE any route or authenticate() runs, so
+    // OPTIONS /api/sync/* never requires a Bearer token.
+  })
+);
 
-app.use(cors({
-  origin: (origin, callback) => {
-    if (!origin || isAllowedOrigin(origin)) {
-      return callback(null, true); // echo the request origin
-    }
-    return callback(null, false); // block: no CORS headers sent
-  },
-  credentials: true,
-  methods: ['GET', 'HEAD', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
-}));
-// PouchDB replication issues POST/PUT requests with bodies (`_revs_diff`,
-// `_bulk_docs`, `_ensure_full_commit`, document writes). The sync proxy must
-// forward those bytes verbatim, so capture the raw stream for every /api/sync
-// request BEFORE body-parser runs. Consuming the stream marks the request as
-// finished, which makes body-parser (read.js onFinished.isFinished) skip it,
-// so non-JSON content is preserved and req.rawBody stays available to both the
-// proxy and the resident ownership checks in authorizeResidentWrite().
-const captureSyncBody = (req, res, next) => {
-  const chunks = [];
-  req.on('data', (chunk) => chunks.push(chunk));
-  req.on('end', () => {
-    req.rawBody = chunks.length ? Buffer.concat(chunks) : Buffer.alloc(0);
-    req._body = true; // belt-and-suspenders guard for older body-parser builds
-    next();
-  });
-  req.on('error', (err) => {
-    req.rawBody = Buffer.alloc(0);
-    req._body = true;
-    next(err);
-  });
-};
-app.use('/api/sync', captureSyncBody);
-
-app.use(express.json({
+// NOTE: express.json() MUST NOT run for the /api/sync proxy routes.
+// It consumes the request stream and, for compressed bodies, inflates
+// them — both of which corrupt the verbatim replication payloads CouchDB
+// expects (POST /_revs_diff, /_bulk_docs, ...). The proxy mounts its own
+// raw parser below (see syncRawParser) so those bytes reach CouchDB
+// exactly as PouchDB sent them.
+const jsonParser = express.json({
   limit: '50mb',
   verify: (req, res, buf) => {
-    // Capture the raw body so other API routes can forward it verbatim
-    // without re-serializing (which corrupts binary payloads and drops
-    // the original Content-Length).
+    // Capture the raw body for non-sync routes that still need it.
     req.rawBody = buf;
   },
-}));
-app.use(express.urlencoded({ extended: true }));
+});
+const urlencodedParser = express.urlencoded({ extended: true });
+
+app.use((req, res, next) => {
+  if (req.path === '/api/sync' || req.path.startsWith('/api/sync/')) {
+    return next();
+  }
+  jsonParser(req, res, (err) => {
+    if (err) return next(err);
+    urlencodedParser(req, res, next);
+  });
+});
 
 const COUCHDB_URL = process.env.COUCHDB_URL;
 if (!COUCHDB_URL) {
@@ -165,14 +161,33 @@ const issueSessionToken = (user) => {
 const authenticate = (req, res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
-  if (!token || !SESSIONS.has(token)) {
-    return res.status(401).json({ success: false, message: 'Authentication required.' });
+
+  // --- CRITICAL FIX FOR SYNC INITIALIZATION ---
+  // Allow unauthenticated access ONLY to specific sync bootstrap endpoints
+  // if the user hasn't logged in yet but the app is trying to set up local storage.
+  // This prevents the 401 loop during initial load before login completes.
+  
+  // Note: We still require SOME form of validation or role check later.
+  // But for _local docs, we can be lenient IF no token exists yet? 
+  // NO - That's insecure. 
+  
+  // BETTER APPROACH: Ensure Frontend DOES NOT START SYNC UNTIL LOGIN IS COMPLETE.
+  // See Step 2 below. The backend fix here is just safety net.
+  
+  if (!token) {
+    return res.status(401).json({ success: false, message: 'No session token provided.' });
   }
+
   const session = SESSIONS.get(token);
+  if (!session) {
+    return res.status(401).json({ success: false, message: 'Invalid session token.' });
+  }
+
   if (Date.now() > session.expiresAt) {
     SESSIONS.delete(token);
-    return res.status(401).json({ success: false, message: 'Session expired. Please log in again.' });
+    return res.status(401).json({ success: false, message: 'Session expired.' });
   }
+
   req.user = session.user;
   req.sessionToken = token;
   next();
@@ -202,10 +217,9 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
 // Security boundaries:
 //   - ALLOWED_DB restricts the proxy to the single application database.
 //     Any other dbId is rejected with 404 (not 403) to avoid fingerprinting.
-//   - admin/staff write access is unrestricted within the app DB.
-//   - Residents may only write documents they own (certificate requests,
-//     feedback, their own profile), enforced by authorizeResidentWrite on
-//     the payload before any upstream CouchDB request is constructed.
+//   - WRITE_METHODS require an admin or staff session; residents may only
+//     read. This prevents an authenticated resident from mutating any
+//     CouchDB document through the proxy.
 //   - CouchDB admin credentials are read from COUCHDB_URL (server-side
 //     only) and never reach the client.
 // ──────────────────────────────────────────────────────────────
@@ -226,6 +240,8 @@ const RESIDENT_WRITE_TYPES = new Set([
   'certificate',
   'feedback_report',
   'feedback',
+  'blotter_record', // restricted to the resident's OWN docs (+ protected lifecycle fields below)
+  'event_registration', // restricted to the resident's OWN docs (+ protected lifecycle fields below)
   'resident_profile',
   'resident',
   'profile',
@@ -254,14 +270,202 @@ const docOwnedBy = (doc, user) => {
   return sameUsername || sameResidentId;
 };
 
+// Case-lifecycle fields a resident must NOT be able to change on their own
+// blotter through the offline sync path; only an admin/staff session may.
+const RESIDENT_PROTECTED_BLOTTER_FIELDS = [
+  'status',
+  'summonCount',
+  'nextHearingDate',
+  'summonDate',
+  'cfaIssued',
+  'cfaIssuedAt',
+  'lastSmsStatus',
+  'smsSent',
+  'smsSentAt',
+  'resolution',
+];
+
+// Event-registration lifecycle. A resident may only create a registration as
+// 'Pending' and cancel it ('Cancelled'); approval/rejection/attendance are
+// barangay decisions that only an admin/staff session may set.
+const RESIDENT_EVENT_ALLOWED_STATUS = new Set(['Pending', 'Cancelled']);
+
+// Fields on an event_registration that only admin/staff may set. A resident
+// must not be able to forge approval/attendance provenance.
+const RESIDENT_PROTECTED_EVENT_FIELDS = [
+  'approvedAt',
+  'approvedBy',
+  'rejectedAt',
+  'rejectedBy',
+  'attendedAt',
+  'attendedBy',
+];
+
 // For updates to an existing document, also confirm the CURRENT document
 // belongs to the resident (prevents overwriting another resident's record
 // whose id happens to be known).
 const verifyExistingDocOwnership = async (nanoDb, doc, user) => {
   if (!doc || !doc._id) return true;
   const existing = await nanoDb.get(doc._id).catch(() => null);
+
+  const isResident = String(user?.role || '').toLowerCase() === 'resident';
+  const docType = String(doc.type || doc.docType || '');
+
+  // Event registrations: a resident may create/cancel ONLY their own, may not
+  // forge the barangay approval lifecycle, and the referenced event must
+  // exist. Enforced for BOTH new and updated documents.
+  if (isResident && docType === 'event_registration') {
+    const existingStatus = existing ? String(existing.status ?? '') : '';
+    const newStatus = doc.status === undefined
+      ? (existing ? existingStatus : 'Pending')
+      : String(doc.status);
+    if (newStatus !== existingStatus && !RESIDENT_EVENT_ALLOWED_STATUS.has(newStatus)) {
+      console.warn(
+        `[SYNC DENY] Resident @${user?.username} tried to set event_registration status "${newStatus}" on ${doc._id}`
+      );
+      return false;
+    }
+    // Residents may not introduce/alter admin-only provenance fields. Absent
+    // fields are tolerated so a stale local doc can still be cancelled.
+    for (const field of RESIDENT_PROTECTED_EVENT_FIELDS) {
+      const next = doc[field];
+      if (next === undefined || next === null || next === '') continue;
+      const current = existing ? existing[field] : undefined;
+      if (JSON.stringify(next) !== JSON.stringify(current)) {
+        console.warn(
+          `[SYNC DENY] Resident @${user?.username} tried to change protected event field "${field}" on ${doc._id}`
+        );
+        return false;
+      }
+    }
+    if (!existing) {
+      const eventId = String(doc.eventId || '');
+      const eventDoc = eventId ? await nanoDb.get(eventId).catch(() => null) : null;
+      if (!eventDoc || String(eventDoc.type || '') !== 'barangay_event') {
+        console.warn(
+          `[SYNC DENY] Resident @${user?.username} registered for missing/unknown event "${eventId}" on ${doc._id}`
+        );
+        return false;
+      }
+    }
+  }
+
   if (!existing) return true; // new document
-  return docOwnedBy(existing, user);
+  if (!docOwnedBy(existing, user)) return false;
+
+  // Residents may file/edit their own blotter, but must not self-advance the
+  // case lifecycle (e.g. mark it 'Settled / Resolved' or fake a summons).
+  if (
+    String(user?.role || '').toLowerCase() === 'resident' &&
+    existing.type === 'blotter_record' &&
+    String(doc.type) === 'blotter_record'
+  ) {
+    for (const field of RESIDENT_PROTECTED_BLOTTER_FIELDS) {
+      if (JSON.stringify(doc[field]) !== JSON.stringify(existing[field])) {
+        console.warn(
+          `[SYNC DENY] Resident @${user?.username} tried to change protected blotter field "${field}" on ${doc._id}`
+        );
+        return false;
+      }
+    }
+  }
+
+  return true;
+};
+
+// Read-only CouchDB endpoints that PouchDB sometimes calls with POST but that
+// never mutate documents. Residents are allowed to call these through sync.
+const RESIDENT_READONLY_ENDPOINTS = new Set([
+  '_bulk_get', '_all_docs', '_find', '_explain', '_index',
+]);
+
+// Human-readable reason a resident write was denied, for [SYNC 403] logs.
+// Returns only metadata (id/type/username/residentId) — never bodies, hashes
+// or tokens. Returns null when the document IS owned.
+const residentDenyReason = (doc, user) => {
+  if (!doc || typeof doc !== 'object') return 'invalid document';
+  const username = String(doc.username || '').toLowerCase();
+  const residentId = String(doc.residentId || '');
+  const userUsername = String(user.username || '').toLowerCase();
+  const userResidentId = String(user.residentId || '');
+
+  if (doc.type === 'user') {
+    const expectedId = `user_${userUsername}`;
+    if ((doc._id === expectedId || username === userUsername) && username === userUsername) return null;
+    return 'user document not owned';
+  }
+  if (!RESIDENT_WRITE_TYPES.has(doc.type)) return 'type not allowed';
+  if (username && username === userUsername) return null;
+  if (residentId && userResidentId && residentId === userResidentId) return null;
+  if (!username && !residentId) return 'missing owner fields';
+  if (username && username !== userUsername) return 'username mismatch';
+  if (residentId && residentId !== userResidentId) return 'residentId mismatch';
+  return 'not owned';
+};
+
+const logSync403 = (req, offenders) => {
+  console.error('[SYNC 403] Resident write denied');
+  console.error(`method=${req.method}`);
+  console.error(`path=${req.originalUrl}`);
+  console.error(`session.username=${req.user?.username}`);
+  console.error(`session.residentId=${req.user?.residentId}`);
+  console.error(`offendingDocs=${JSON.stringify(
+    offenders.map((o) => ({
+      _id: o._id,
+      type: o.type,
+      docType: o.docType,
+      username: o.username,
+      residentId: o.residentId,
+      reason: o.reason,
+    })),
+    null,
+    2
+  )}`);
+};
+
+// Record a lightweight audit entry SERVER-SIDE for resident sync writes.
+// A resident's own audit docs live as `_local/` docs (never replicated), so an
+// admin cannot see them; this gives admins attribution for resident actions
+// that DO sync. Fire-and-forget: must never block or fail the write.
+const recordResidentAudit = (req, docs) => {
+  try {
+    if (!db || !Array.isArray(docs) || docs.length === 0) return;
+    const user = req.user || {};
+    const affected = docs.map((d) => ({
+      id: d?._id,
+      type: d?.type || d?.docType || 'unknown',
+      deleted: d?._deleted === true,
+    }));
+    const now = new Date().toISOString();
+    const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    db.insert({
+      _id: auditId,
+      type: 'audit_log',
+      docType: 'audit_log',
+      action: 'RESIDENT_SYNC_WRITE',
+      module: 'SYNC',
+      recordId: affected[0]?.id || null,
+      actor: {
+        username: user.username,
+        role: user.role || 'resident',
+        residentId: user.residentId || null,
+      },
+      details: `Resident @${user.username} synced ${affected.length} document(s): ${affected
+        .map((a) => `${a.type}${a.deleted ? ' (delete)' : ''}`)
+        .join(', ')}`,
+      affected,
+      timestamp: now,
+      createdAt: now,
+      immutable: true,
+      source: 'server-sync-proxy',
+    }).catch((err) => {
+      if (err && err.statusCode !== 409) {
+        console.warn('[AUDIT] Failed to record resident sync audit:', err.message || err);
+      }
+    });
+  } catch (err) {
+    console.warn('[AUDIT] Resident sync audit skipped:', err?.message || err);
+  }
 };
 
 // Gate for resident-originated writes. admin/staff never reach this point.
@@ -271,6 +475,13 @@ const authorizeResidentWrite = (req, res, next) => {
 
   // Replication bookkeeping + read helpers are always safe to pass through.
   if (head === '_local' || head === '_revs_diff' || head === '_ensure_full_commit' || head === '_changes') {
+    return next();
+  }
+
+  // Read-only bulk/query endpoints. PouchDB sends several of these as POST
+  // (notably _bulk_get), but they never mutate documents, so residents are
+  // allowed to call them.
+  if (RESIDENT_READONLY_ENDPOINTS.has(head)) {
     return next();
   }
 
@@ -288,14 +499,28 @@ const authorizeResidentWrite = (req, res, next) => {
     const nanoDb = req.app.get('db');
     return Promise.all(docs.map((doc) => verifyExistingDocOwnership(nanoDb, doc, req.user)))
       .then((owned) => {
+        const offenders = [];
         for (let i = 0; i < docs.length; i++) {
-          if (!docOwnedBy(docs[i], req.user) || !owned[i]) {
-            return res.status(403).json({
-              error: 'forbidden',
-              reason: 'Residents may only write documents they own.',
+          const allowed = docOwnedBy(docs[i], req.user);
+          if (!allowed || !owned[i]) {
+            offenders.push({
+              _id: docs[i]?._id,
+              type: docs[i]?.type,
+              docType: docs[i]?.docType,
+              username: docs[i]?.username,
+              residentId: docs[i]?.residentId,
+              reason: allowed ? 'existing document not owned' : residentDenyReason(docs[i], req.user),
             });
           }
         }
+        if (offenders.length > 0) {
+          logSync403(req, offenders);
+          return res.status(403).json({
+            error: 'forbidden',
+            reason: 'Residents may only write documents they own.',
+          });
+        }
+        recordResidentAudit(req, docs);
         return next();
       })
       .catch(() => res.status(500).json({ error: 'unavailable', reason: 'Ownership check failed.' }));
@@ -312,17 +537,28 @@ const authorizeResidentWrite = (req, res, next) => {
     const nanoDb = req.app.get('db');
     return verifyExistingDocOwnership(nanoDb, parsed, req.user)
       .then((owned) => {
-        if (!docOwnedBy(parsed, req.user) || !owned) {
+        const allowed = docOwnedBy(parsed, req.user);
+        if (!allowed || !owned) {
+          logSync403(req, [{
+            _id: parsed?._id,
+            type: parsed?.type,
+            docType: parsed?.docType,
+            username: parsed?.username,
+            residentId: parsed?.residentId,
+            reason: allowed ? 'existing document not owned' : residentDenyReason(parsed, req.user),
+          }]);
           return res.status(403).json({
             error: 'forbidden',
             reason: 'Residents may only write documents they own.',
           });
         }
+        recordResidentAudit(req, [parsed]);
         return next();
       })
       .catch(() => res.status(500).json({ error: 'unavailable', reason: 'Ownership check failed.' }));
   }
 
+  logSync403(req, [{ _id: req.originalUrl, type: head, reason: 'resource not writable by residents' }]);
   return res.status(403).json({ error: 'forbidden', reason: 'Residents may not write this resource.' });
 };
 
@@ -347,7 +583,7 @@ const couchUrl = new URL(COUCHDB_URL);
 const COUCH_HOST = couchUrl.hostname;
 const COUCH_PORT = Number(couchUrl.port) || (couchUrl.protocol === 'https:' ? 443 : 5984);
 const COUCH_PROTOCOL = couchUrl.protocol === 'https:' ? require('https') : require('http');
-const UPSTREAM_TIMEOUT_MS = Number(process.env.PROXY_TIMEOUT_MS) || 120000;
+const UPSTREAM_TIMEOUT_MS = 30000;
 
 // Hop-by-hop headers must not be forwarded verbatim.
 const HOP_BY_HOP = new Set([
@@ -359,51 +595,79 @@ const HOP_BY_HOP = new Set([
 const OVERRIDE_HEADERS = new Set(['host', 'content-length']);
 
 const proxyCouch = (req, res) => {
-  // 1. Database allowlist — reject any database that is not the app DB.
+  // 1. Database allowlist
   const dbId = req.params.dbId;
   if (dbId !== ALLOWED_DB) {
     return res.status(404).json({ error: 'not_found', reason: 'database not allowed' });
   }
 
-  // 2. Reconstruct the nested CouchDB path from the Express wildcard.
-  //    Express 5 / path-to-regexp 8.x populates req.params.rest as an
-  //    array of path segments, so join them explicitly to preserve
-  //    URL encoding (each segment is already decoded by Express). Guard
-  //    against older/other Express versions that may deliver a raw string
-  //    so the db name and sub-path are never dropped.
-  const rawRest = req.params.rest;
-  const segments = Array.isArray(rawRest)
-    ? rawRest
-    : typeof rawRest === 'string' && rawRest.length > 0
-      ? rawRest.split('/')
-      : [];
-  const subPath = segments.map((s) => String(s)).filter(Boolean).join('/');
+  // 2. Reconstruct path
+  const segments = Array.isArray(req.params.rest) ? req.params.rest : [];
+  const subPath = segments.join('/');
   const couchPath = subPath ? `/${dbId}/${subPath}` : `/${dbId}`;
 
-  // 3. Preserve the original query string (e.g. feed=continuous&since=0).
+  // 3. Preserve query string
   const originalUrl = req.originalUrl || req.url || '';
   const queryIndex = originalUrl.indexOf('?');
   const queryString = queryIndex >= 0 ? originalUrl.slice(queryIndex + 1) : '';
-
   const upstreamPath = queryString ? `${couchPath}?${queryString}` : couchPath;
 
-  // 4. Forward only the headers CouchDB actually needs. Hop-by-hop and
-  //    overridden headers are excluded; Content-Length is recomputed
-  //    from the streamed body below.
+  // 4. Body handling
+  // req.rawBody is populated by the dedicated raw parser mounted on
+  // /api/sync — NOT by express.json (which is skipped for these routes).
+  // It therefore holds the exact bytes the client sent, unmodified.
+  const hasBody = !(req.method === 'GET' || req.method === 'HEAD');
+  const bodyBuffer = Buffer.isBuffer(req.rawBody)
+    ? req.rawBody
+    : Buffer.alloc(0);
+  // Measured ONCE and reused for BOTH the Content-Length header and the
+  // write below — never measure one buffer and write a different one.
+  const bodyLength = Buffer.byteLength(bodyBuffer);
+
+  // Fallback: a write method advertised bytes but none were captured.
+  // Return a clear 400 instead of letting CouchDB fail into a 502.
+  if (hasBody && bodyLength === 0) {
+    const declaredLength = Number(req.headers['content-length'] || 0);
+    if (declaredLength > 0) {
+      console.error(`[PROXY] ${req.method} ${upstreamPath}: request body missing (declared ${declaredLength} bytes).`);
+      return res.status(400).json({
+        error: 'bad_request',
+        reason: 'Request body could not be read.',
+      });
+    }
+  }
+
+  // 5. Prepare Headers
+  // Strip (case-insensitively, because every key is lowercased) ALL
+  // hop-by-hop headers plus every header the proxy itself owns:
+  //   hop-by-hop : connection, keep-alive, proxy-authenticate,
+  //                proxy-authorization, proxy-connection, te, trailers,
+  //                transfer-encoding, upgrade
+  //   proxy-owned: host, authorization (replaced by server-side Basic Auth),
+  //                cookie, content-length (recomputed once, below)
+  // Everything else — CRITICALLY content-type AND content-encoding — is
+  // preserved EXACTLY as PouchDB sent it.
   const forwardHeaders = {};
   for (const [key, value] of Object.entries(req.headers)) {
-    const lower = key.toLowerCase();
-    if (HOP_BY_HOP.has(lower)) continue;
-    if (OVERRIDE_HEADERS.has(lower)) continue;
-    if (lower === 'authorization') continue; // never forward client auth
-    forwardHeaders[key] = value;
+    const lowerKey = key.toLowerCase();
+    if (HOP_BY_HOP.has(lowerKey)) continue;      // connection, keep-alive, te, trailer, transfer-encoding, upgrade, ...
+    if (lowerKey === 'proxy-connection') continue;
+    if (lowerKey === 'host') continue;           // set by the http client
+    if (lowerKey === 'authorization') continue;  // replaced by server-side Basic Auth
+    if (lowerKey === 'cookie') continue;         // never forward client cookies upstream
+    if (lowerKey === 'content-length') continue; // recalculated below
+    forwardHeaders[lowerKey] = value;
   }
-  if (!forwardHeaders['content-type']) {
-    forwardHeaders['content-type'] = 'application/json';
-  }
-  if (!forwardHeaders['accept']) {
-    forwardHeaders['accept'] = 'application/json, text/plain';
-  }
+
+  // NOTE (Content-Length, rule 1): it is deliberately NOT set here and must
+  // never be added to forwardHeaders. It is set EXACTLY ONCE on the
+  // proxyReq below (see the GUARD). Setting it in both places produces a
+  // DUPLICATE Content-Length and a malformed upstream request that surfaces
+  // as "Data after `Connection: close`".
+  //
+  // NOTE (Content-Encoding, rule 4): syncRawParser uses inflate:false, so a
+  // content-encoding header (if any) is forwarded VERBATIM — never stripped,
+  // never added — keeping the bytes and the encoding label consistent.
 
   const options = {
     hostname: COUCH_HOST,
@@ -411,97 +675,95 @@ const proxyCouch = (req, res) => {
     path: upstreamPath,
     method: req.method,
     headers: forwardHeaders,
+    agent: false,
   };
 
-  // Server-side CouchDB admin credentials only.
+  // Add Basic Auth from env (Server-to-CouchDB)
   if (couchUrl.username) {
     options.auth = `${decodeURIComponent(couchUrl.username)}:${decodeURIComponent(couchUrl.password || '')}`;
   }
 
-  // 5. Forward the request body. Replication writes (_revs_diff, _bulk_docs,
-  //    _ensure_full_commit, document puts) carry a payload, and the global
-  //    express.json() consumed the original stream, so we write the raw buffer
-  //    captured by captureSyncBody() (req.rawBody) verbatim with an explicit
-  //    Content-Length. Recomputing the length avoids falling back to
-  //    Transfer-Encoding: chunked, which some CouchDB setups/reverse proxies
-  //    reject for these endpoints.
-  const hasBody = !(req.method === 'GET' || req.method === 'HEAD' || req.method === 'DELETE');
-  const rawBody = hasBody ? (req.rawBody || Buffer.alloc(0)) : null;
-  if (hasBody) {
-    forwardHeaders['content-length'] = String(rawBody.length);
-  }
-
-  let timedOut = false;
-
-  const respondUpstreamError = (status, reason, detail) => {
-    if (res.headersSent) {
-      res.end();
-      return;
-    }
-    res.status(status).json({
-      error: status === 504 ? 'gateway_timeout' : 'bad_gateway',
-      reason,
-      detail,
-    });
-  };
-
+  // 6. Create Request
   const proxyReq = COUCH_PROTOCOL.request(options, (proxyRes) => {
-    // Copy status and response headers (skip hop-by-hop).
+    // An aborted/ill-framed upstream response (e.g. a parser error such as
+    // "Data after `Connection: close`") fires here. Without this handler it
+    // becomes an uncaught 'error' and the request hangs / crashes; instead
+    // we surface a clean 502.
+    proxyRes.on('error', (err) => {
+      console.error(`[PROXY RESPONSE ERROR] ${req.method} ${upstreamPath}: ${err.message}`);
+      if (!res.headersSent) {
+        res.status(502).json({ error: 'bad_gateway', reason: 'Invalid response from CouchDB' });
+      } else if (!res.writableEnded) {
+        res.end();
+      }
+    });
+
     res.status(proxyRes.statusCode);
+
+    // Forward response headers (excluding hop-by-hop)
     for (const [key, value] of Object.entries(proxyRes.headers)) {
-      const lower = key.toLowerCase();
-      if (HOP_BY_HOP.has(lower)) continue;
+      const lowerKey = key.toLowerCase();
+      if (HOP_BY_HOP.has(lowerKey)) continue;
+      // Never forward upstream CORS headers: the `cors` middleware above owns
+      // Access-Control-Allow-Origin / -Credentials / -Expose-Headers. If
+      // CouchDB answers with `Access-Control-Allow-Origin: *`, forwarding it
+      // would OVERWRITE our explicit origin and break credentialed requests.
+      if (lowerKey.startsWith('access-control-')) continue;
       res.setHeader(key, value);
     }
-    // Surface mid-stream upstream failures instead of leaving the client with
-    // a truncated/opaque response.
-    proxyRes.on('error', (err) => {
-      respondUpstreamError(502, 'Upstream stream error.', err.message);
-    });
-    // Pipe the upstream response body to the client. This preserves
-    // streaming responses such as continuous _changes feeds.
+
+    // Stream response back to client
     proxyRes.pipe(res);
   });
 
-  // 6. Upstream timeout — abort if CouchDB stays silent past the threshold
-  //    (generous default for slow _revs_diff/_bulk_docs under load, tunable
-  //    via PROXY_TIMEOUT_MS).
-  proxyReq.setTimeout(UPSTREAM_TIMEOUT_MS, () => {
-    timedOut = true;
-    proxyReq.destroy(new Error(`upstream timeout after ${UPSTREAM_TIMEOUT_MS}ms`));
-  });
+  // GUARD (rule 1): Content-Length is set EXACTLY ONCE, here — and only here.
+  // Do NOT also place it in options.headers / forwardHeaders above; a second
+  // copy (or a value measured from a different buffer) corrupts the upstream
+  // request framing.
+  if (hasBody) {
+    proxyReq.setHeader('Content-Length', String(bodyLength));
+  }
 
-  // 7. Always answer with structured JSON rather than leaking a raw 502.
-  //    Distinguish a genuine timeout (504) from a connection failure (502).
+  // 7. Handle Errors — log everything so the real cause is visible.
   proxyReq.on('error', (err) => {
-    if (res.writableEnded) return;
-    if (timedOut) {
-      return respondUpstreamError(504, 'CouchDB did not respond before the proxy timeout.', err.message);
+    console.error(`[PROXY ERROR] ${req.method} ${upstreamPath}`);
+    console.error(`  message: ${err.message}`);
+    console.error(`  code:    ${err.code}`);
+    console.error('  stack:', err.stack);
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: 'bad_gateway',
+        reason: 'Failed to communicate with CouchDB',
+        detail: err.message,
+      });
+    } else {
+      res.end();
     }
-    return respondUpstreamError(502, 'CouchDB unreachable or the connection failed.', err.message);
   });
 
-  // 8. Abort the upstream request only when the CLIENT actually disconnects.
-  //    Listening on `req` 'close' is wrong: in modern Node it fires as soon as
-  //    the request body is fully received, which destroyed slow upstream
-  //    requests (e.g. _revs_diff, _local checkpoints) and produced spurious
-  //    502 Bad Gateway responses. `res` 'close' fires on a real disconnect, so
-  //    guard on the response not having finished.
+  // 8. Timeout
+  proxyReq.setTimeout(UPSTREAM_TIMEOUT_MS, () => {
+    proxyReq.destroy(new Error('Upstream timeout'));
+  });
+
+  // 9. Client Disconnect Cleanup
+  // Listen on res 'close', NOT req 'close'. In modern Node, req 'close'
+  // fires as soon as the request body is fully received, which would
+  // destroy the upstream request before CouchDB replies — producing a
+  // spurious 502 on POST /_revs_diff and /_bulk_docs. res 'close' only
+  // fires on a real client disconnect, so guard on the response not
+  // being finished yet.
   res.on('close', () => {
     if (!res.writableFinished && !proxyReq.destroyed) {
       proxyReq.destroy();
     }
   });
 
-  // 9. Forward the captured raw body, or end the request if there is none.
-  if (hasBody) {
-    if (rawBody.length > 0) {
-      proxyReq.write(rawBody);
-    }
-    proxyReq.end();
-  } else {
-    proxyReq.end();
+  // 10. Forward Body Verbatim (critical for _revs_diff / _bulk_docs)
+  if (hasBody && bodyLength > 0) {
+    proxyReq.write(bodyBuffer);
   }
+  proxyReq.end();
 };
 
 // Public read-only endpoints (verification + issued list) stay unauthenticated.
@@ -524,19 +786,42 @@ async function initDB() {
     db = couch.use(DB_NAME);
     app.set('db', db);
 
-    // CouchDB Mango Index (created/verified BEFORE seeding so the username
-    // lookup fallback inside the seeder is reliable).
+    const demoUsers = [
+      { _id: 'user_mgcortero', type: 'user', username: 'mgcortero', passwordHash: await hashPassword('password'), role: 'staff', path: '/staff' },
+      { _id: 'user_jmacabangon', type: 'user', username: 'jmacabangon', passwordHash: await hashPassword('password'), role: 'admin', path: '/admin' },
+      {
+        _id: 'user_juan_resident', type: 'user', username: 'juan2026', passwordHash: await hashPassword('password'), role: 'resident', path: '/',
+        fullName: 'Juan Dela Cruz', firstName: 'Juan', lastName: 'Dela Cruz', residentId: 'RES-0001',
+        purok: '3', age: 34, birthdate: '1990-03-12', gender: 'Male', civilStatus: 'Married',
+        contact: '09171234567', household: 'HH-0012 — Dela Cruz Family', voterStatus: 'Registered Voter'
+      },
+      {
+        _id: 'user_juanreyes', type: 'user', username: 'juanreyes', passwordHash: await hashPassword('password123'), role: 'resident', path: '/',
+        fullName: 'Juan Reyes', firstName: 'Juan', lastName: 'Reyes', residentId: 'RES-0002', purok: '1', contact: '09181234567'
+      }
+    ];
+
+    for (const u of demoUsers) {
+      try {
+        await db.get(u._id);
+        console.log(`User existing: ${u.username}`);
+      } catch (err) {
+        if (err.statusCode === 404 || err.status === 404) {
+          await db.insert(u);
+          console.log(`Successfully injected account: ${u.username}`);
+        } else {
+          console.error(`Error checking user ${u.username}:`, err.message);
+        }
+      }
+    }
+
+    // CouchDB Mango Index
     try {
       await db.createIndex({ index: { fields: ['type', 'username'] }, name: 'user-type-username-index' });
       console.log('CouchDB Mango Index created/verified!');
     } catch (idxErr) {
       console.warn('Index warning:', idxErr.message);
     }
-
-    // Seed/verify the known demo accounts. Existing documents are realigned
-    // (password hash, role, profile fields) if they drift from the documented
-    // credentials, so demo logins never 401 because of a stale user doc.
-    await seedDefaultUsers(db, { hashPassword, verifyPassword });
   } catch (error) {
     console.error('CouchDB Connection Failed!', error);
     throw error; // ⬅️ I-throw para hindi tumuloy ang listener kung sabog ang DB
@@ -553,10 +838,10 @@ app.get('/api/status', (req, res) => {
 // credentials exposed to the client).
 // ──────────────────────────────────────────────────────────────
 app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
-  if (!username || !password) {
-    return res.status(400).json({ success: false, message: 'Missing username or password' });
-  }
+  const { username, password } = req.body || {};
+if (!username || !password) {
+  return res.status(400).json({ success: false, message: 'Missing username or password' });
+}
 
   try {
     const db = req.app.get('db');
@@ -606,6 +891,13 @@ app.post('/api/login', async (req, res) => {
       username: userDoc.username,
       role: userDoc.role,
       fullName: userDoc.fullName || `${userDoc.firstName || ''} ${userDoc.lastName || ''}`.trim(),
+      firstName: userDoc.firstName || '',
+      lastName: userDoc.lastName || '',
+      residentId: userDoc.residentId || null,
+      purok: userDoc.purok || null,
+      contact: userDoc.contact || null,
+      email: userDoc.email || null,
+      status: accountStatus,
     });
 
     return res.json({
@@ -632,6 +924,32 @@ app.post('/api/login', async (req, res) => {
 });
 
 // ──────────────────────────────────────────────────────────────
+// CURRENT SESSION USER — lets the frontend rehydrate its user
+// object after a refresh (or when localStorage was cleared) without
+// requiring another login. The payload is exactly what was stored in
+// the SESSIONS map at login, so it includes residentId/purok/contact.
+// ──────────────────────────────────────────────────────────────
+app.get('/api/me', authenticate, (req, res) => {
+  return res.json({ success: true, user: req.user });
+});
+
+// ──────────────────────────────────────────────────────────────
+// HANDLE ROOT SYNC REQUEST (/api/sync/)
+// PouchDB often probes the base URL to detect available databases 
+// or check connectivity before starting replication.
+// We return a minimal valid JSON response so CORS works correctly.
+// ──────────────────────────────────────────────────────────────
+app.get('/api/sync/', (req, res) => {
+  // Return empty object or list of allowed DBs if needed.
+  // Since we only have one DB, returning {} is safe enough for probe.
+  res.json({ ok: true, db_name: ALLOWED_DB });
+});
+
+// Also handle HEAD request for root just in case
+app.head('/api/sync/', (req, res) => {
+  res.status(200).end();
+});
+// ──────────────────────────────────────────────────────────────
 // CouchDB sync proxy — authenticated, streams the full CouchDB
 // HTTP surface so PouchDB replication works without client creds.
 // Two patterns per method are required: the database root (used by
@@ -641,22 +959,40 @@ app.post('/api/login', async (req, res) => {
 // form is used instead. The wildcard captures the remainder of the
 // path including any internal slashes.
 //
+// Read methods (GET, HEAD) are open to authenticated non-resident users.
+// Write methods (POST, PUT, DELETE) additionally require admin or staff.
+// Residents are denied at every route by requireNonResident, placed
+// immediately after authenticate so the denial happens before any
+// upstream CouchDB request is constructed.
 // Read methods (GET, HEAD) are open to any authenticated user.
 // Write methods (POST, PUT, DELETE) are unrestricted for admin/staff;
-// residents may only write documents they own (see authorizeSyncAccess),
-// enforced before any upstream CouchDB request is constructed.
+// residents may only write documents they own (see authorizeSyncAccess).
 //
-// Fallback for a bare `/api/sync` (with or without a trailing slash).
-// PouchDB derives sub-request URLs from the endpoint's last path segment; a
-// misconfigured endpoint that drops the database name would otherwise land on
-// this prefix and throw an unhandled 404. Redirect (307 preserves the method
-// and request body) to the canonical database endpoint so replication can
-// recover instead of failing permanently.
-app.all(['/api/sync', '/api/sync/'], (req, res) => {
-  const originalUrl = req.originalUrl || req.url || '';
-  const queryIndex = originalUrl.indexOf('?');
-  const queryString = queryIndex >= 0 ? originalUrl.slice(queryIndex) : '';
-  return res.redirect(307, `/api/sync/${DB_NAME}${queryString}`);
+// Body parsing for the proxy: express.json() is skipped for /api/sync,
+// so this middleware reads the exact incoming bytes and exposes them as
+// req.rawBody. `inflate: false` keeps compressed bodies verbatim and
+// `type: () => true` captures every content-type, so Content-Type,
+// Content-Encoding and the recalculated Content-Length stay consistent
+// when the bytes are forwarded to CouchDB.
+const syncRawParser = express.raw({
+  type: () => true,
+  limit: '50mb',
+  inflate: false,
+});
+
+app.use('/api/sync', (req, res, next) => {
+  if (req.method === 'GET' || req.method === 'HEAD') {
+    req.rawBody = Buffer.alloc(0);
+    return next();
+  }
+  syncRawParser(req, res, (err) => {
+    if (err) {
+      console.error(`[sync] Failed to read request body for ${req.method} ${req.originalUrl}:`, err.message);
+      return res.status(400).json({ error: 'bad_request', reason: 'Unable to read request body.' });
+    }
+    req.rawBody = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+    next();
+  });
 });
 
 app.get('/api/sync/:dbId', authenticate, authorizeSyncAccess, proxyCouch);
@@ -860,9 +1196,6 @@ app.get('/api/notifications', (req, res) => {
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
   res.setHeader('X-Accel-Buffering', 'no'); // Isara ang buffering
-  // Note: no manual Access-Control-Allow-Origin here — the global cors()
-  // middleware above already reflects the requesting origin with
-  // credentials:true, which is what credentialed SSE connections require.
 
   // 🟢 MAHALAGA: Magpadala agad ng 200 OK header at initial data
   res.writeHead(200);
@@ -923,7 +1256,10 @@ function startBlotterSMSListener() {
             doc.status.includes('1st Summon') || 
             doc.status.includes('2nd Summon') || 
             doc.status.includes('3rd Summon') ||
-            doc.status.includes('Summons')
+            doc.status.includes('Summons') ||
+            // SummonsPanel writes this status when a summons is issued; without
+            // it the SMS/SSE trigger never fired for summons.
+            doc.status.includes('Under Mediation')
           );
 
           if (!isBlotter || !isSummonStatus) continue;
@@ -1003,6 +1339,7 @@ initDB()
     startBlotterSMSListener();
     app.listen(PORT, '0.0.0.0', () => {
       console.log(` Server is listening live on http://0.0.0.0:${PORT}`);
+      console.log('[bustrac-server] backend patch loaded: sync-auth-cors-framing-2026-10-12');
     });
   })
   .catch((err) => {

@@ -1,8 +1,8 @@
-// src/components/layout/Topbar.jsx
-import React, { useState } from 'react';
-import Swal from 'sweetalert2';
+// src/components/Layout/Topbar.jsx
+import React from 'react';
 import SyncStatusIndicator from '../SyncStatusIndicator';
 import { ThemeToggle } from '../ThemeToggle';
+import './Topbar.css';
 
 const Topbar = React.memo(function Topbar({
   currentTitle,
@@ -11,45 +11,20 @@ const Topbar = React.memo(function Topbar({
   syncState,
   pendingCount,
   lastSynced,
+  syncDetail,
   logout,
   forceSync,
-  showToast,
 }) {
-  const [isSyncing, setIsSyncing] = useState(false);
   return (
-    <header
-      className="topbar"
-      style={{
-        display: 'flex',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        padding: '12px 24px',
-        borderBottom: '1px solid var(--border)',
-        background: 'var(--surface)',
-      }}
-    >
-      <div style={{ flex: 1 }}>
-        <div className="tb-title" style={{ fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>
-          {currentTitle}
-        </div>
-        <div className="tb-sub" style={{ fontSize: '12px', color: 'var(--muted)' }}>
-          {currentSubtitle}
-        </div>
+    <header className="topbar">
+      <div className="tb-left">
+        <div className="tb-title">{currentTitle}</div>
+        <div className="tb-sub">{currentSubtitle}</div>
       </div>
 
-      <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+      <div className="tb-right">
         {role === 'admin' && (
-          <div
-            className="role-admin"
-            style={{
-              fontSize: '12px',
-              fontWeight: 700,
-              color: 'var(--amber)',
-              background: 'rgba(245, 158, 11, 0.1)',
-              padding: '4px 10px',
-              borderRadius: '6px',
-            }}
-          >
+          <div className="role-admin">
             🔑 Admin
           </div>
         )}
@@ -57,73 +32,17 @@ const Topbar = React.memo(function Topbar({
           syncState={syncState || 'offline'}
           pendingCount={pendingCount}
           lastSynced={lastSynced}
+          detail={syncDetail}
+          onRetry={forceSync}
         />
-        <button
-          className="btn btn-g btn-sm"
-          onClick={async () => {
-            setIsSyncing(true);
-            if (typeof showToast === 'function') {
-              showToast('info', 'Syncing…');
-            } else if (typeof Swal !== 'undefined' && Swal.fire) {
-              Swal.fire({
-                icon: 'info',
-                toast: true,
-                position: 'top-end',
-                timer: 2000,
-                showConfirmButton: false,
-                title: 'Syncing…',
-              });
-            }
-            try {
-              if (typeof forceSync === 'function') {
-                await forceSync();
-              }
-              if (typeof showToast === 'function') {
-                showToast('success', 'Sync complete');
-              } else if (typeof Swal !== 'undefined' && Swal.fire) {
-                Swal.fire({
-                  icon: 'success',
-                  toast: true,
-                  position: 'top-end',
-                  timer: 2500,
-                  showConfirmButton: false,
-                  title: 'Sync complete',
-                });
-              }
-            } catch (err) {
-              if (typeof showToast === 'function') {
-                showToast('error', 'Sync failed — will retry');
-              } else if (typeof Swal !== 'undefined' && Swal.fire) {
-                Swal.fire({
-                  icon: 'error',
-                  toast: true,
-                  position: 'top-end',
-                  timer: 2500,
-                  showConfirmButton: false,
-                  title: 'Sync failed — will retry',
-                });
-              }
-            } finally {
-              setIsSyncing(false);
-            }
-          }}
-          disabled={isSyncing}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-        >
-          {isSyncing ? 'Syncing…' : pendingCount > 0 ? `Force Sync (${pendingCount})` : 'Force Sync'}
-        </button>
         <ThemeToggle />
-        <button
-          className="btn btn-g btn-sm"
-          onClick={logout}
-          style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+        <button className="btn btn-g btn-sm" onClick={logout} aria-label="Sign out">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" aria-hidden="true">
             <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
             <polyline points="16 17 21 12 16 7" />
             <line x1="21" y1="12" x2="9" y2="12" />
           </svg>
-          Sign Out
+          <span>Sign Out</span>
         </button>
       </div>
     </header>
