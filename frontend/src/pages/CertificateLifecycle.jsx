@@ -89,7 +89,15 @@ export default function CertificateLifecycle({ onOpenDispatcher, onOpenIssuance 
   const searchQuery = certificateSearch;
 
   const incomingRequests = allRequests.filter((req) => Number(req.step) === 1);
+  // "Pending Approval" strictly reflects requests awaiting review/approval —
+  // Step 2 (Under Review) and Step 3 (Awaiting Approval). Step 4 ('Approved',
+  // awaiting document issuance) must NOT be counted here.
   const pendingApprovalRequests = allRequests.filter((req) =>
+    [2, 3].includes(Number(req.step))
+  );
+  // Everything still moving through processing, including approved-but-not-yet-
+  // issued (Step 4) so staff can still issue the document from this panel.
+  const processingRequests = allRequests.filter((req) =>
     [2, 3, 4].includes(Number(req.step))
   );
 
@@ -555,7 +563,7 @@ export default function CertificateLifecycle({ onOpenDispatcher, onOpenIssuance 
         <div className="cert-stat-card cert-stat-card--pending">
           <div className="cert-stat-label">Pending Approval</div>
           <div className="cert-stat-value">{pendingApprovalRequests.length}</div>
-          <div className="cert-stat-hint">Steps 2–4 · Review to approval</div>
+          <div className="cert-stat-hint">Steps 2–3 · Awaiting review &amp; approval</div>
         </div>
         <div className="cert-stat-card cert-stat-card--total">
           <div className="cert-stat-label">Total Requests</div>
@@ -692,7 +700,7 @@ export default function CertificateLifecycle({ onOpenDispatcher, onOpenIssuance 
               </svg>
               Request Processing
             </div>
-            <span className="badge badge--count">{pendingApprovalRequests.length}</span>
+            <span className="badge badge--count">{processingRequests.length}</span>
           </div>
 
           <div className="cert-table-wrapper cert-table-wrapper--compact">
@@ -715,7 +723,7 @@ export default function CertificateLifecycle({ onOpenDispatcher, onOpenIssuance 
                       </div>
                     </td>
                   </tr>
-                ) : pendingApprovalRequests.length === 0 ? (
+                ) : processingRequests.length === 0 ? (
                   <tr>
                     <td colSpan="4">
                       <div className="empty-state">
@@ -729,7 +737,7 @@ export default function CertificateLifecycle({ onOpenDispatcher, onOpenIssuance 
                     </td>
                   </tr>
                 ) : (
-                  pendingApprovalRequests.map((req) => (
+                  processingRequests.map((req) => (
                     <tr key={req._id}>
                       <td>
                         <div className="cert-cell-name">{getApplicantName(req)}</div>

@@ -22,6 +22,7 @@ const DashboardScreen = React.memo(function DashboardScreen({
   settledBlotterCount,
   cfaBlotterCount,
   activeBlotterCount,
+  otherBlotterCount,
   openBlotterCount,
   feedbackSummary,
   
@@ -47,6 +48,19 @@ const DashboardScreen = React.memo(function DashboardScreen({
       : blotterList.filter(
           (b) => b.status === 'Open' || b.status === 'Under Mediation' || b.status === 'Pending'
         ).length;
+
+    // Breakdown buckets are mutually exclusive and exhaustive
+    // (settled + CFA + active + dismissed/other), and the header total is
+    // derived from the same rows so it can never disagree with the sum shown.
+    const blotterOutcomeRows = [
+      { label: 'Settled / Amicable', count: settledBlotterCount || 0, color: 'var(--green)', bg: 'var(--green-bg)' },
+      { label: 'Referred to PNP (CFA)', count: cfaBlotterCount || 0, color: 'var(--red)', bg: 'var(--red-bg)' },
+      { label: 'Active / Mediation', count: activeBlotterCount || 0, color: 'var(--amber)', bg: 'var(--amber-bg)' },
+      ...((otherBlotterCount || 0) > 0
+        ? [{ label: 'Dismissed / Other', count: otherBlotterCount, color: 'var(--muted)', bg: 'var(--surface2)' }]
+        : []),
+    ];
+    const blotterOutcomeTotal = blotterOutcomeRows.reduce((sum, row) => sum + row.count, 0);
   return (
     <div className="screen active" style={{ padding: '24px', width: '100%', boxSizing: 'border-box', maxWidth: '1600px', margin: '0 auto' }}> 
                         {/* ACTION REQUIRED BANNER (compact) */}
@@ -128,7 +142,7 @@ const DashboardScreen = React.memo(function DashboardScreen({
                             { label: 'Pending Certs', value: pendingRequestsCount, sub: 'Awaiting approval', color: 'var(--accent)', trend: certTrend, goodWhenUp: false },
                             { label: 'Open Blotter', value: resolvedOpenBlotterCount, sub: 'Active cases', color: 'var(--red)', trend: blotterTrend, goodWhenUp: false },
                             ...(role === 'admin' ? [{ label: 'Sync Conflicts', value: conflictsList.length, sub: conflictsList.length > 0 ? 'Needs fix' : 'All synced', color: conflictsList.length > 0 ? 'var(--amber)' : 'var(--muted)' }] : []),
-                            { label: 'Feedback', value: activeFeedbackCount, sub: 'Submissions', color: 'var(--teal)', trend: feedbackTrend, goodWhenUp: null }
+                            { label: 'Feedback', value: feedbackList.length, sub: 'Submissions', color: 'var(--teal)', trend: feedbackTrend, goodWhenUp: null }
                           ].map((stat, i) => (
                             <div key={i} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '16px', display: 'flex', flexDirection: 'column', gap: '4px', boxShadow: '0 1px 3px rgba(0,0,0,0.05)' }}>
                               <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>{stat.label}</span>
@@ -154,17 +168,13 @@ const DashboardScreen = React.memo(function DashboardScreen({
                                 <div style={{ fontSize: '11px', color: 'var(--hint)' }}>Settled vs Escalated (CFA) vs Pending</div>
                               </div>
                               <span style={{ fontSize: '12px', fontWeight: 800, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-                                Total: {blotterList.length}
+                                Total: {blotterOutcomeTotal}
                               </span>
                             </div>
     
                             <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-                              {[
-                                { label: 'Settled / Amicable', count: settledBlotterCount, color: 'var(--green)', bg: 'var(--green-bg)' },
-                                { label: 'Referred to PNP (CFA)', count: cfaBlotterCount, color: 'var(--red)', bg: 'var(--red-bg)' },
-                                { label: 'Active / Mediation', count: activeBlotterCount, color: 'var(--amber)', bg: 'var(--amber-bg)' }
-                              ].map((item) => {
-                                const total = blotterList.length || 1;
+                              {blotterOutcomeRows.map((item) => {
+                                const total = blotterOutcomeTotal || 1;
                                 const pct = Math.round((item.count / total) * 100);
                                 return (
                                   <div key={item.label}>

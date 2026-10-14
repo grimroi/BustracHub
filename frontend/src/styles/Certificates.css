@@ -1508,3 +1508,58 @@ tr.row-selected td {
 .cert-split-view .panel-footer {
   flex-shrink: 0;
 }
+
+/* ═══════════════════════════════════════════════════════════════
+   CERTIFICATE LIFECYCLE — FILL VIEWPORT (kill dead space)
+   The Incoming Requests / Request Processing panels stretch to the
+   available content height; their table bodies scroll internally
+   instead of leaving a large empty gap below on tall viewports.
+   Only applies on wide screens where the two panels sit side-by-side.
+   ═══════════════════════════════════════════════════════════════ */
+@media (min-width: 1101px) {
+  .dashboard-shell-container .screen.active.cert-screen-fill {
+    height: 100%;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dashboard-shell-container .cert-screen-fill > .certificate-lifecycle-screen {
+    flex: 1 1 auto;
+    min-height: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    box-sizing: border-box;
+  }
+
+  .dashboard-shell-container .cert-screen-fill .cert-columns {
+    flex: 1 1 auto;
+    min-height: 0;
+    margin-bottom: 0;
+    align-items: stretch;
+  }
+
+  .dashboard-shell-container .cert-screen-fill .cert-column-card {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+  }
+
+  .dashboard-shell-container .cert-screen-fill .cert-column-card .cert-table-wrapper--compact {
+    flex: 1 1 auto;
+    min-height: 0;
+    max-height: none;
+  }
+}
+
+/* ── Metric sub-label contrast ──
+   Brighten the hint text under the top metric cards so it stays legible
+   against the dark card surface. */
+.cert-stat-hint {
+  color: #cbd5e1;
+}
+
+html[data-theme="light"] .cert-stat-hint {
+  color: #475569;
+}

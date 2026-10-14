@@ -3,6 +3,7 @@ import ResidentsScreen from '../components/screens/ResidentsScreen';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
+import { fetchNotifications, createNotification, markAllReadForUser, getUnreadCount } from "../services/notifications";
 import './DashboardLayout.css';
 import nabuaLogo from "../assets/nabua-logo.jpg";
 import bustracLogo from "../assets/bustrac-logo.png";
@@ -20,6 +21,7 @@ import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import BlotterForm from '../components/BlotterForm';
 import { SummonsPanel } from '../components/SummonsPanel';
 import { CaseStatusActions } from '../components/CaseStatusActions';
+import { HearingScheduler } from '../components/HearingScheduler';
 import BlotterCertificatePrintModal from '../components/BlotterCertificatePrintModal';
 import { localDb as db, forceSyncToRemote } from '../services/db';
 import { createAuditLog, logConflictResolution } from '../utils/auditLog';
@@ -109,6 +111,13 @@ const SCREEN_META = {
   'edit-resident':      ['Edit Resident',        'Resident Registry'],
   'activities-manage':  ['Manage Activities', 'Community Module'],
 };
+
+const SCREEN_ALIASES = {
+  pending: 'cert-req',
+  'cert-pending': 'cert-req',
+};
+
+const resolveScreen = (raw) => SCREEN_ALIASES[raw] || raw;
 
 export const EMPTY_RESIDENT = {
   rbiNo: '',
@@ -590,6 +599,7 @@ export const mapDocToBlotter = (doc) => {
     isVawc: Boolean(doc.isVawc || doc.type === 'VAWC' || caseType.includes('VAWC')),
      sla: doc.sla || null,
      attachments: doc.attachments || [], 
+    hearings: Array.isArray(doc.hearings) ? doc.hearings : [],
     rawDoc: doc
   };
 };
@@ -666,6 +676,7 @@ const hasMountedRef = useRef(false);
 const [isBusinessModalOpen, setIsBusinessModalOpen] = useState(false);
 const [businessModalMode, setBusinessModalMode] = useState('edit');
 const [showBlotterModal, setShowBlotterModal] = useState(false);
+const [blotterWorkspaceTab, setBlotterWorkspaceTab] = useState('schedule');
 const [credentialsModal, setCredentialsModal] = useState(null);
 const [showAddResidentModal, setShowAddResidentModal] = useState(false);
 const businessFormRef = useRef(null);
@@ -1018,9 +1029,45 @@ const [feedbackList, setFeedbackList] = useState([
     };
   }, [computeDashboardStats]);
 
-  const settledBlotterCount = blotterList.filter(b => b.status === 'Settled / Resolved' || b.status === 'Settled').length;
-  const cfaBlotterCount = blotterList.filter(b => b.cfaIssued || b.status === 'Referred to PNP (CFA Issued)').length;
-  const activeBlotterCount = dashboardStats.openBlotters;
+  // ── BLOTTER CASE OUTCOMES (single source of truth) ──
+  // Derive every dashboard blotter figure from the same `blotterList` using
+  // mutually exclusive and collectively exhaustive buckets so the breakdown
+  // rows always add up to the header total (blotterList.length). Previously the
+  // settled/CFA rows came from `blotterList` (find) while the active row came
+  // from `dashboardStats.openBlotters` (allDocs), and cases with statuses like
+  // 'Dismissed'/'Referred to Lupon'/'Resolved' fell into no bucket at all —
+  // making the rows sum (38) disagree with the total (41).
+  const blotterOutcome = useMemo(() => {
+    let settled = 0;
+    let cfa = 0;
+    let active = 0;
+    let other = 0;
+    (blotterList || []).forEach((b) => {
+      const status = String(b.status || '').trim().toLowerCase();
+      const isSettled = status === 'settled / resolved' || status === 'settled' || status === 'resolved';
+      const isCfa = !isSettled && (
+        b.cfaIssued === true ||
+        status === 'referred to pnp (cfa issued)' ||
+        status === 'referred to higher authority'
+      );
+      const isActive = !isSettled && !isCfa && (
+        status === 'open' ||
+        status === 'pending' ||
+        status.includes('mediation') ||
+        status.includes('summons')
+      );
+      if (isSettled) settled += 1;
+      else if (isCfa) cfa += 1;
+      else if (isActive) active += 1;
+      else other += 1;
+    });
+    return { settled, cfa, active, other, total: settled + cfa + active + other };
+  }, [blotterList]);
+
+  const settledBlotterCount = blotterOutcome.settled;
+  const cfaBlotterCount = blotterOutcome.cfa;
+  const activeBlotterCount = blotterOutcome.active;
+  const otherBlotterCount = blotterOutcome.other;
 
   const feedbackSummary = {
   complaint: feedbackList.filter(f => (f.type || f.feedbackType) === 'Complaint').length,
@@ -2092,13 +2139,14 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   // HANDLERS — SHARED
   // ─────────────────────────────────────────────
   const nav = useCallback((id) => {
-  if (ADMIN_ONLY_SCREENS.includes(id) && role !== 'admin') {
+  const resolvedId = resolveScreen(id);
+  if (ADMIN_ONLY_SCREENS.includes(resolvedId) && role !== 'admin') {
     showToast('Access denied. Admin-only module.', 'error');
     return;
   }
-  setScreen(id);
-  navigate(`?page=${id}`);
-  window.history.pushState({ internalScreen: id }, '', '');
+  setScreen(resolvedId);
+  navigate(`?page=${resolvedId}`);
+  window.history.pushState({ internalScreen: resolvedId }, '', '');
 }, [navigate, role, showToast]);
 
 const handleNav = useCallback((target) => {
@@ -4572,7 +4620,8 @@ useEffect(() => {
   const idFromUrl = params.get('id');
 
   if (pageFromUrl) {
-    setScreen(pageFromUrl);
+    const resolvedPage = resolveScreen(pageFromUrl);
+    setScreen(resolvedPage);
 
     if (pageFromUrl === 'blotter-detail') {
       const activeId = idFromUrl || localStorage.getItem('active_blotter_id');
@@ -9255,6 +9304,173 @@ const handleGenerateCredentials = async (resident) => {
     .sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
   // ─────────────────────────────────────────────
+  // OFFLINE-FIRST ADMIN NOTIFICATIONS (local, PouchDB `_local/` document)
+  // ─────────────────────────────────────────────
+  const [notifItems, setNotifItems] = useState([]);
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+  const prevConflictIdsRef = useRef(null);
+
+  const refreshNotifications = useCallback(async () => {
+    const items = await fetchNotifications('admin');
+    setNotifItems(items);
+  }, []);
+
+  const toggleNotifPanel = useCallback(() => {
+    setNotifPanelOpen((open) => {
+      const next = !open;
+      if (next) {
+        markAllReadForUser('admin').then(() => {
+          setNotifItems((prev) => prev.map((n) => ({ ...n, read: true })));
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const notifUnread = useMemo(() => getUnreadCount(notifItems), [notifItems]);
+
+  useEffect(() => {
+    refreshNotifications();
+  }, [refreshNotifications]);
+
+  // New resident submissions (certificate requests, blotter records) arriving
+  // locally or via replication. A live listener is used instead of diffing the
+  // list state so the seeded initial data never triggers notifications.
+  useEffect(() => {
+    if (!db || typeof db.changes !== 'function') return undefined;
+    const changes = db
+      .changes({ since: 'now', live: true, include_docs: true })
+      .on('change', (change) => {
+        const doc = change.doc;
+        if (!doc || change.deleted) return;
+        // Only alert on first-time creations. Later revisions (status/hearing/
+        // outcome edits) are surfaced by their own dedicated notifications.
+        if (!String(doc._rev || '').startsWith('1-')) return;
+        const t = String(doc.type || doc.docType || '');
+        let created = false;
+        if (t === 'certificate_request' || t === 'request') {
+          const owner = doc.residentName || doc.fullName || doc.requester || doc.username || 'A resident';
+          createNotification({
+            for: 'admin',
+            category: 'resident_request',
+            title: 'New certificate request',
+            body: `${owner} requested ${doc.certType || doc.type || 'a certificate'}.`,
+            link: 'cert-req',
+            refId: doc._id,
+          });
+          created = true;
+        } else if (t === 'blotter' || t === 'blotter_record' || t === 'blotter_report') {
+          createNotification({
+            for: 'admin',
+            category: 'blotter',
+            title: 'New blotter record',
+            body: `${doc.complainant || doc.reportedBy || doc.username || 'A resident'} filed a blotter report.`,
+            link: 'blotter-manage',
+            refId: doc._id,
+          });
+          created = true;
+        }
+        if (created) refreshNotifications();
+      })
+      .on('error', (err) => console.warn('Admin notification listener error:', err));
+    return () => changes.cancel();
+  }, [refreshNotifications]);
+
+  // One-time migration: remap stale notification links (e.g. 'pending' -> 'cert-req')
+  useEffect(() => {
+    (async () => {
+      try {
+        const items = await fetchNotifications('admin');
+        let changed = false;
+        const VALID = new Set([...Object.keys(SCREEN_META), 'dashboard']);
+        for (const n of items) {
+          if (!n.link) continue;
+          if (VALID.has(n.link)) continue;
+          const mapped = SCREEN_ALIASES[n.link];
+          if (mapped && VALID.has(mapped)) {
+            console.warn('Stale notification link:', n._id, n.link, '→', mapped);
+            changed = true;
+          } else {
+            console.warn('Unknown notification link:', n._id, n.link, '→ cleared');
+            changed = true;
+          }
+        }
+        if (changed) refreshNotifications();
+      } catch (e) {
+        console.warn('Notification link migration skipped:', e?.message);
+      }
+    })();
+  }, [refreshNotifications]);
+
+  // Sync conflicts that need admin attention (baseline the first observation so
+  // conflicts already present at login don't spam the panel).
+  useEffect(() => {
+    const ids = new Set((conflictsList || []).map((c) => c.id || c._id || c.docId));
+    if (prevConflictIdsRef.current === null) {
+      if (ids.size > 0) prevConflictIdsRef.current = ids;
+      return;
+    }
+    const prev = prevConflictIdsRef.current;
+    let created = false;
+    (conflictsList || []).forEach((c) => {
+      const id = c.id || c._id || c.docId;
+      if (id && !prev.has(id)) {
+        createNotification({
+          for: 'admin',
+          category: 'conflict',
+          title: 'New sync conflict',
+          body: `A record conflict needs review (${c.module || c.docType || 'records'}).`,
+          link: 'conflicts',
+          refId: id,
+        });
+        created = true;
+      }
+    });
+    prevConflictIdsRef.current = ids;
+    prevConflictIdsRef.current = ids;
+    if (created) refreshNotifications();
+  }, [conflictsList, refreshNotifications]);
+
+  // Upcoming Lupon Tagapamayapa hearings within the next 3 days are surfaced as
+  // deduped dashboard reminders. The `dedupeKey` guarantees each scheduled
+  // session only produces one reminder (persisted in the local notification store).
+  useEffect(() => {
+    if (!Array.isArray(blotterList) || blotterList.length === 0) return undefined;
+    let cancelled = false;
+    const now = Date.now();
+    const horizon = now + 3 * 24 * 60 * 60 * 1000;
+    const CLOSED = ['Settled / Resolved', 'Settled', 'Resolved', 'Dismissed', 'Referred to PNP (CFA Issued)'];
+    (async () => {
+      let created = false;
+      for (const b of blotterList) {
+        if (b.cfaIssued || CLOSED.includes(String(b.status || ''))) continue;
+        const hearings = Array.isArray(b.hearings)
+          ? b.hearings
+          : (b.rawDoc && Array.isArray(b.rawDoc.hearings) ? b.rawDoc.hearings : []);
+        if (hearings.length === 0) continue;
+        const caseKey = b._id || b.id || b.trackingNo;
+        for (const h of hearings) {
+          if (h.status !== 'Scheduled') continue;
+          const when = new Date(`${String(h.date || '').slice(0, 10)}T${String(h.time || '09:00').slice(0, 5)}`).getTime();
+          if (Number.isNaN(when) || when < now || when > horizon) continue;
+          const res = await createNotification({
+            for: 'admin',
+            category: 'hearing-reminder',
+            title: 'Upcoming hearing reminder',
+            body: `${b.complainant || 'Complainant'} vs ${b.respondent || 'Respondent'} — ${h.sessionType || 'Hearing'} on ${new Date(when).toLocaleString('en-PH', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}.`,
+            link: 'blotter-manage',
+            refId: `${caseKey}:${h.id}`,
+            dedupeKey: `hearing-reminder:${caseKey}:${h.id}:${h.date}`,
+          });
+          if (res) created = true;
+        }
+      }
+      if (created && !cancelled) refreshNotifications();
+    })();
+    return () => { cancelled = true; };
+  }, [blotterList, refreshNotifications]);
+
+  // ─────────────────────────────────────────────
   // RENDER
   // ─────────────────────────────────────────────
   return (
@@ -9299,6 +9515,11 @@ const handleGenerateCredentials = async (resident) => {
             syncDetail={syncDetail}
             logout={logout}
             forceSync={forceSyncToRemote}
+            notifUnread={notifUnread}
+            notifItems={notifItems}
+            notifPanelOpen={notifPanelOpen}
+            onToggleNotif={toggleNotifPanel}
+            onNotifNavigate={(link) => { if (link) nav(link); }}
           />
 
           <div className="content">
@@ -9328,7 +9549,8 @@ const handleGenerateCredentials = async (resident) => {
                   settledBlotterCount={settledBlotterCount}
                   cfaBlotterCount={cfaBlotterCount}
                   activeBlotterCount={activeBlotterCount}
-                  openBlotterCount={dashboardStats.openBlotters}
+                  otherBlotterCount={otherBlotterCount}
+                  openBlotterCount={activeBlotterCount}
                   feedbackSummary={feedbackSummary}
                   residentTrend={residentTrend}
                   householdTrend={householdTrend}
@@ -10437,13 +10659,13 @@ const handleGenerateCredentials = async (resident) => {
                 SCREEN: CERTIFICATE REQUEST
                 ════════════════════════════════════════ */}
                 {screen === 'cert-req' && (
-                  <div className="screen active">
+                  <div className="screen active cert-screen-fill">
                     <CertificateLifecycle onOpenDispatcher={() => setShowCertDispatcher(true)} onOpenIssuance={openIssuanceWorkspace} />
                   </div>
                 )}
 
                 {screen === 'cert-approve' && (
-                  <div className="screen active">
+                  <div className="screen active cert-screen-fill">
                     <CertificateLifecycle onOpenIssuance={openIssuanceWorkspace} />
                   </div>
                 )}
@@ -13537,17 +13759,57 @@ const handleGenerateCredentials = async (resident) => {
           Case Resolution Actions
         </div>
         
-        {/* Summons & Hearing Panel */}
-        <SummonsPanel
-          currentCase={currentCase}
-          db={db}
-          setBlotterList={setBlotterList}
-        />
-        
-        {/* Status Actions */}
-        <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
-          <CaseStatusActions currentCase={currentCase} db={db} setBlotterList={setBlotterList} />
+        <div role="tablist" aria-label="Blotter case workspace" style={{ display: 'flex', gap: '8px', marginBottom: '18px', flexWrap: 'wrap' }}>
+          {[
+            { key: 'schedule', label: 'Hearing Schedule & Mediation' },
+            { key: 'summons', label: 'Summons & Case Status' },
+          ].map((tab) => {
+            const active = blotterWorkspaceTab === tab.key;
+            return (
+              <button
+                key={tab.key}
+                type="button"
+                role="tab"
+                aria-selected={active}
+                onClick={() => setBlotterWorkspaceTab(tab.key)}
+                className={active ? 'btn btn-p' : 'btn'}
+                style={{
+                  padding: '8px 14px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  ...(active ? {} : { background: 'transparent', border: '1px solid var(--border)', color: 'var(--muted)' }),
+                }}
+              >
+                {tab.label}
+              </button>
+            );
+          })}
         </div>
+
+        {blotterWorkspaceTab === 'schedule' ? (
+          <HearingScheduler
+            currentCase={currentCase}
+            db={db}
+            setBlotterList={setBlotterList}
+            setSelectedBlotter={setSelectedBlotter}
+            onPrintCFA={handleOpenPrint}
+            onNotificationCreated={refreshNotifications}
+          />
+        ) : (
+          <>
+            {/* Summons & Hearing Panel */}
+            <SummonsPanel
+              currentCase={currentCase}
+              db={db}
+              setBlotterList={setBlotterList}
+            />
+
+            {/* Status Actions */}
+            <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
+              <CaseStatusActions currentCase={currentCase} db={db} setBlotterList={setBlotterList} onPrintCFA={handleOpenPrint} />
+            </div>
+          </>
+        )}
       </div>
 
       {/* ═══ CASE HISTORY TIMELINE ═══ */}
@@ -15368,10 +15630,22 @@ const handleGenerateCredentials = async (resident) => {
                       )}
                     </div>
                   </div>
-                )}
+)}
+          
+          {/* Fallback for unknown screens (e.g. legacy 'pending' links) */}
+          {!SCREEN_META[screen] && screen !== 'dashboard' && (
+            <div style={{ padding: 40, textAlign: 'center' }}>
+              <h2>Page not found</h2>
+              <p>The requested page "{screen}" does not exist.</p>
+              <button className="btn btn-p" 
+                onClick={() => nav('dashboard')}>
+                Back to Dashboard
+              </button>
+            </div>
+          )}
 
-          </div>
-          <footer className="app-footer">
+        </div>
+        <footer className="app-footer">
             <div>
               <strong>Bustrac Hub</strong> v1.0.0 — {role === 'admin' ? 'Admin Portal' : 'Staff Portal'}
             </div>
@@ -16025,7 +16299,7 @@ className="modal-card"
         isOpen={isPrintModalOpen}
         onClose={() => {
           setIsPrintModalOpen(false);
-          setSelectedBlotter(null);
+          if (screen !== 'blotter-detail') setSelectedBlotter(null);
         }}
         blotterData={selectedBlotter ? {
           ...selectedBlotter,

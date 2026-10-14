@@ -1,4 +1,13 @@
+import { useState } from "react";
 import { FaBullhorn } from "react-icons/fa";
+import Swal from "sweetalert2";
+
+const EMERGENCY_HOTLINES = [
+  { name: 'MDRRMO Nabua (Rescue)', sub: 'Disaster & Emergency Response', tel: '09175060294' },
+  { name: 'PNP Nabua (Police Station)', sub: 'Law Enforcement & Safety Concerns', tel: '09985986014' },
+  { name: 'BFP Nabua (Fire Station)', sub: 'Fire Control & Incidents', tel: '0542884676' },
+  { name: 'Barangay Bustrac Hall', sub: 'Local Desk Command Center', tel: '09123456789' },
+];
 
 export default function ResidentHome({
   isOffline,
@@ -12,6 +21,35 @@ export default function ResidentHome({
   myAssistance = [],
   goToTab,
 }) {
+  // Emergency hotlines start collapsed so a stray tap on the Home view can never
+  // dial out; every call additionally requires an explicit confirmation.
+  const [hotlinesOpen, setHotlinesOpen] = useState(false);
+
+  const confirmEmergencyCall = (hotline) => {
+    // Move focus off the tapped button before SweetAlert2 opens: it marks the
+    // app background aria-hidden, and a still-focused descendant logs a
+    // "Blocked aria-hidden" browser violation.
+    const active = typeof document !== 'undefined' ? document.activeElement : null;
+    if (active && typeof active.blur === 'function') active.blur();
+
+    Swal.fire({
+      title: 'Place emergency call?',
+      html: `<div style="font-size:14px;line-height:1.5">Call <strong>${hotline.name}</strong>?<br/><span style="font-size:12px;color:#6b7280">${hotline.sub}</span></div>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Call now',
+      cancelButtonText: 'Cancel',
+      confirmButtonColor: '#e11d48',
+      cancelButtonColor: '#6b7280',
+      reverseButtons: true,
+      focusCancel: true,
+    }).then((result) => {
+      if (result.isConfirmed) {
+        window.location.href = `tel:${hotline.tel}`;
+      }
+    });
+  };
+
   // Safe lengths para sa Stats Grid
   const stats = [
     { label: 'Certificates', value: myRequests.length, target: 's-certificates' },
@@ -115,7 +153,7 @@ export default function ResidentHome({
             <div
               key={ann._id}
               className="list-item"
-              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)' }}
+              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', minWidth: 0 }}
             >
               <div className="list-icon" style={{
                 width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
@@ -127,20 +165,23 @@ export default function ResidentHome({
               <div className="list-body" style={{ flex: 1, minWidth: 0 }}>
                 <div className="list-title" style={{
                   fontSize: 13, fontWeight: 700, color: 'var(--text)',
-                  whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', display: 'flex', alignItems: 'center',
+                  display: 'flex', alignItems: 'center', gap: 8, minWidth: 0,
                 }}>
-                  {ann.title}
+                  <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {ann.title}
+                  </span>
                   {/* NEW BADGE */}
                   {isNewAnnouncement(ann) && (
-                    <span style={{ 
-                      fontSize: '9px', 
-                      fontWeight: 800, 
-                      background: '#ef4444', 
-                      color: '#fff', 
-                      padding: '2px 6px', 
-                      borderRadius: '4px', 
-                      marginLeft: '8px',
-                      letterSpacing: '0.5px'
+                    <span style={{
+                      flexShrink: 0,
+                      fontSize: '9px',
+                      fontWeight: 800,
+                      background: '#ef4444',
+                      color: '#fff',
+                      padding: '2px 6px',
+                      borderRadius: '4px',
+                      letterSpacing: '0.5px',
+                      whiteSpace: 'nowrap',
                     }}>
                       NEW
                     </span>
@@ -150,7 +191,7 @@ export default function ResidentHome({
                   {ann.category || 'General'} · {formatAnnDate(ann)}
                 </div>
               </div>
-              <button className="btn btn-ghost btn-sm" onClick={() => goToTab?.('s-announcements')} style={{ fontSize: 11 }}>
+              <button className="btn btn-ghost btn-sm" onClick={() => goToTab?.('s-announcements')} style={{ fontSize: 11, flexShrink: 0, whiteSpace: 'nowrap' }}>
                 View →
               </button>
             </div>
@@ -163,39 +204,59 @@ export default function ResidentHome({
         )}
       </div>
 
-      {/* Emergency Hotlines */}
+      {/* Emergency Hotlines — collapsible so a stray tap can never dial out */}
       <div className="card" style={{ padding: 18, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)' }}>
-        <div className="card-title" style={{ marginBottom: 12, fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>
-          Emergency Hotlines (Nabua)
-        </div>
-        {[
-          { name: 'MDRRMO Nabua (Rescue)', sub: 'Disaster & Emergency Response', tel: '09175060294' },
-          { name: 'PNP Nabua (Police Station)', sub: 'Law Enforcement & Safety Concerns', tel: '09985986014' },
-          { name: 'BFP Nabua (Fire Station)', sub: 'Fire Control & Incidents', tel: '0542884676' },
-          { name: 'Barangay Bustrac Hall', sub: 'Local Desk Command Center', tel: '09123456789' },
-        ].map((h, idx, arr) => (
-          <div
-            key={h.name}
-            className="list-item"
-            style={{
-              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-              gap: 12, padding: '10px 0',
-              borderBottom: idx < arr.length - 1 ? '1px solid var(--border)' : 'none',
-            }}
-          >
-            <div className="list-body" style={{ flex: 1, minWidth: 0 }}>
-              <div className="list-title" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{h.name}</div>
-              <div className="list-sub" style={{ fontSize: 11, color: 'var(--muted)' }}>{h.sub}</div>
-            </div>
-            <a
-              href={`tel:${h.tel}`}
-              className="btn btn-ghost btn-sm"
-              style={{ color: 'var(--green)', borderColor: 'var(--green-border)', padding: '4px 12px', fontSize: 11 }}
-            >
-              Call
-            </a>
+        <button
+          type="button"
+          onClick={() => setHotlinesOpen((open) => !open)}
+          aria-expanded={hotlinesOpen}
+          aria-controls="resident-emergency-hotlines"
+          style={{
+            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+            width: '100%', gap: 12, padding: 0, background: 'none', border: 'none',
+            cursor: 'pointer', textAlign: 'left',
+          }}
+        >
+          <span className="card-title" style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>
+            Emergency Hotlines (Nabua)
+          </span>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 11, fontWeight: 700, color: 'var(--muted)', flexShrink: 0 }}>
+            {hotlinesOpen ? 'Hide' : 'Show'}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: hotlinesOpen ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>
+              <polyline points="6 9 12 15 18 9" />
+            </svg>
+          </span>
+        </button>
+
+        {hotlinesOpen && (
+          <div id="resident-emergency-hotlines" style={{ marginTop: 12 }}>
+            {EMERGENCY_HOTLINES.map((h, idx, arr) => (
+              <div
+                key={h.name}
+                className="list-item"
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+                  gap: 12, padding: '10px 0',
+                  borderBottom: idx < arr.length - 1 ? '1px solid var(--border)' : 'none',
+                }}
+              >
+                <div className="list-body" style={{ flex: 1, minWidth: 0 }}>
+                  <div className="list-title" style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>{h.name}</div>
+                  <div className="list-sub" style={{ fontSize: 11, color: 'var(--muted)' }}>{h.sub}</div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => confirmEmergencyCall(h)}
+                  className="btn btn-ghost btn-sm"
+                  style={{ color: 'var(--green)', borderColor: 'var(--green-border)', padding: '7px 16px', fontSize: 12, fontWeight: 700, minWidth: 64, justifyContent: 'center', flexShrink: 0 }}
+                  aria-label={`Call ${h.name} at ${h.tel}`}
+                >
+                  Call
+                </button>
+              </div>
+            ))}
           </div>
-        ))}
+        )}
       </div>
     </div>
   );

@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
+﻿import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { localDb as db, forceSyncToRemote, remoteDb, stopPouchDBSync, onSyncStatusChange } from '../services/db';
@@ -6,7 +6,7 @@ import { createAuditLog } from '../utils/auditLog';
 import { clearToken } from '../utils/tokenStore';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
-import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt } from "react-icons/fa";
+import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt, FaBell } from "react-icons/fa";
 import { saveCertificateRequest } from '../services/db';
 import Swal from 'sweetalert2'; // ✅ Added SweetAlert2 Import
 import EventRegistrationScreen from '../components/screens/EventRegistrationScreen';
@@ -30,8 +30,29 @@ import ResidentBlotter from '../components/Resident/ResidentBlotter';
 import ResidentAssistance from '../components/Resident/ResidentAssistance';
 import ResidentProfile from '../components/Resident/ResidentProfile';
 import SyncStatusIndicator from '../components/SyncStatusIndicator';
+import { fetchNotifications, createNotification, markAllReadForUser, getUnreadCount } from '../services/notifications';
 
 const CERT_FORM_INITIAL = { certType: '', certPurpose: '' };
+
+// ── Resident identity matching ──────────────────────────────────────────────
+// DB-wide replication means every resident's device holds every document. These
+// helpers keep the Home metrics (and list views) strictly limited to records
+// that belong to — or explicitly involve — the logged-in resident. Matching is
+// exact (case-insensitive); partial/substring matches are never accepted, so a
+// name or id collision can't leak another resident's records.
+const normId = (value) => String(value ?? '').trim().toLowerCase();
+
+const normPersonName = (value) =>
+  String(value ?? '')
+    .toLowerCase()
+    .replace(/[.,]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+const nameOfField = (value) =>
+  value && typeof value === 'object'
+    ? (value.name || value.fullName || '')
+    : (value || '');
 
 const safePut = async (doc) => {
     let attempts = 0;
@@ -84,9 +105,12 @@ export default function ResidentUI() {
   const [syncState, setSyncState] = useState(typeof navigator !== 'undefined' && navigator.onLine ? 'synced' : 'offline');
   const [pendingCount, setPendingCount] = useState(0);
   const [syncDetail, setSyncDetail] = useState(null);
-  const [isSyncing, setIsSyncing] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState(null);
+
+  // Offline-first notifications (local, PouchDB `_local/` document)
+  const [notifItems, setNotifItems] = useState([]);
+  const [notifPanelOpen, setNotifPanelOpen] = useState(false);
 
   // Certificate states
   const [showCertForm, setShowCertForm] = useState(false);
@@ -112,6 +136,8 @@ export default function ResidentUI() {
   const notifiedCertIds = useRef(new Set());
   const reloadTimerRef = useRef(null);
   const editModalRef = useRef(null);
+  const prevCertStatusRef = useRef(null);
+  const prevAnnouncementIdsRef = useRef(null);
 
   /* ═══════════════════════════════════════════════════════════
      SECTION 3: SIMPLE useEffect (no interdependencies)
@@ -206,36 +232,56 @@ useEffect(() => {
      SECTION 5: useCallback — IN DEPENDENCY ORDER ⚠️ CRITICAL
      ═══════════════════════════════════════════════════════════ */
 
-  // 5a. checkUserMatch — no deps, dapat PINAKAUNA
-  const checkUserMatch = useCallback((doc) => {
-    const user = loggedInUserRef.current;
-    if (!doc || !user) return false;
-
-    const userFullName = String(user.fullName || '').toLowerCase().trim();
-    const userName = String(user.username || user.email || '').toLowerCase().trim();
-    const userId = String(user._id || user.residentId || user.id || '').toLowerCase().trim();
-
-    const docUserId = String(doc.userId || doc.residentId || doc.submittedBy || '').toLowerCase().trim();
-    if (userId && docUserId && (docUserId === userId || userId.includes(docUserId) || docUserId.includes(userId))) return true;
-
-    const docUsername = String(doc.username || doc.user || '').toLowerCase().trim();
-    if (userName && docUsername && docUsername === userName) return true;
-
-    const comp = typeof doc.complainant === 'object' ? (doc.complainant?.name || '') : (doc.complainant || doc.complainantName || '');
-    const resp = typeof doc.respondent === 'object' ? (doc.respondent?.name || '') : (doc.respondent || doc.respondentName || '');
-    const normalizeName = (val) => String(val || '').toLowerCase().trim().replace(/\s+/g, ' ');
-    const compNorm = normalizeName(comp);
-    const respNorm = normalizeName(resp);
-    const userNorm = normalizeName(userFullName);
-
-    // Legitimate blotter visibility is granted only on an EXACT full-name match
-    // (case-insensitive). Partial or substring name matches are NOT treated as
-    // proof that a record belongs to the logged-in resident — being named as a
-    // respondent (or a name collision) alone must not expose another's records.
-    const matchesComplainant = Boolean(userNorm && compNorm && compNorm === userNorm);
-    const matchesRespondent = Boolean(userNorm && respNorm && respNorm === userNorm);
-    return matchesComplainant || matchesRespondent;
+  // 5a. Resident identity + strict scoping helpers — dapat PINAKAUNA
+  const getResidentIdentity = useCallback(() => {
+    const user = loggedInUserRef.current || {};
+    return {
+      ids: [user._id, user.id, user.residentId].map(normId).filter(Boolean),
+      usernames: [user.username, user.email].map(normId).filter(Boolean),
+      fullName: normPersonName(user.fullName || user.name),
+    };
   }, []);
+
+  // The document explicitly belongs to the logged-in resident. Only exact owner
+  // identifiers count (residentId / userId / submittedBy / ownerId / username).
+  const isOwnedByResident = useCallback((doc) => {
+    if (!doc) return false;
+    const { ids, usernames } = getResidentIdentity();
+    const docIds = [doc.residentId, doc.userId, doc.submittedBy, doc.ownerId]
+      .map(normId)
+      .filter(Boolean);
+    if (ids.length && docIds.some((id) => ids.includes(id))) return true;
+    const docUsernames = [doc.username, doc.user].map(normId).filter(Boolean);
+    return usernames.length > 0 && docUsernames.some((u) => usernames.includes(u));
+  }, [getResidentIdentity]);
+
+  // Blotter visibility = "filed by OR involving" this resident: owned, carrying
+  // their id in the complainant/respondent id fields, or an EXACT full-name
+  // match as complainant/respondent.
+  const isResidentInvolvedInBlotter = useCallback((doc) => {
+    if (!doc) return false;
+    if (isOwnedByResident(doc)) return true;
+    const { ids, fullName } = getResidentIdentity();
+    const involvedIds = [doc.complainantId, doc.respondentId].map(normId).filter(Boolean);
+    if (ids.length && involvedIds.some((id) => ids.includes(id))) return true;
+    if (!fullName) return false;
+    const names = [doc.complainant, doc.complainantName, doc.respondent, doc.respondentName]
+      .map((value) => normPersonName(nameOfField(value)))
+      .filter(Boolean);
+    return names.includes(fullName);
+  }, [getResidentIdentity, isOwnedByResident]);
+
+  // The resident's own profile document (owned id, or exact full-name match).
+  const isResidentProfile = useCallback((doc) => {
+    if (!doc) return false;
+    if (isOwnedByResident(doc)) return true;
+    const { fullName } = getResidentIdentity();
+    if (!fullName) return false;
+    const docName = normPersonName(
+      doc.fullName || `${doc.firstName || ''} ${doc.lastName || ''}`
+    );
+    return Boolean(docName) && docName === fullName;
+  }, [getResidentIdentity, isOwnedByResident]);
 
   const goToTab = useCallback((id) => {
   setActiveScreen(id);
@@ -357,11 +403,11 @@ const showToast = useCallback((message, type = 'success') => {
 
       const userBlotters = docs.filter((doc) => {
         const isBlotterDoc = doc.docType === 'blotter' || doc.type === 'blotter' || doc.type === 'blotter_record' || Boolean(doc.trackingNo || doc.caseNo || doc.caseNum || doc.refNumber);
-        return isBlotterDoc && checkUserMatch(doc);
+        return isBlotterDoc && isResidentInvolvedInBlotter(doc);
       }).map(normalizeBlotterDoc).filter(Boolean).sort(sortTs);
       setMyBlotters(userBlotters);
 
-      const userRequests = docs.filter((d) => (d.type === 'certificate_request' || d.type === 'request') && checkUserMatch(d))
+      const userRequests = docs.filter((d) => (d.type === 'certificate_request' || d.type === 'request') && isOwnedByResident(d))
         .map(normalizeCertificateDoc).filter(Boolean).sort(sortTs);
       setMyRequests(userRequests);
 
@@ -370,23 +416,15 @@ const showToast = useCallback((message, type = 'success') => {
           .filter((a) => (a.status || 'Published').toLowerCase() !== 'draft')
           .sort(sortTs)
       );
-      setMyAssistance(docs.filter((d) => d.type === 'aid_distribution' && checkUserMatch(d)).sort(sortTs));
-
-      const currentUserId = String(user?.residentId || user?.id || user?._id || '').toLowerCase().trim();
-      const currentUsername = String(user?.username || user?.email || '').toLowerCase().trim();
+      setMyAssistance(docs.filter((d) => d.type === 'aid_distribution' && isOwnedByResident(d)).sort(sortTs));
 
       const userFeedbacks = docs.filter((doc) => {
         const isFeedbackDoc = doc.type === 'feedback_report' || doc.type === 'feedback' || doc.docType === 'feedback';
-        if (!isFeedbackDoc) return false;
-        const docUserId = String(doc.residentId || doc.userId || '').toLowerCase().trim();
-        const docUsername = String(doc.username || doc.user || '').toLowerCase().trim();
-        const isMatchById = Boolean(currentUserId && docUserId && currentUserId === docUserId);
-        const isMatchByUsername = Boolean(currentUsername && docUsername && currentUsername === docUsername);
-        return isMatchById || isMatchByUsername || checkUserMatch(doc);
+        return isFeedbackDoc && isOwnedByResident(doc);
       }).map(normalizeFeedbackDoc).filter(Boolean).sort(sortTs);
       setMyFeedbacks(userFeedbacks);
 
-      const residentDoc = docs.find((d) => (d.docType === 'resident' || d.type === 'resident' || d.residentId) && checkUserMatch(d));
+      const residentDoc = docs.find((d) => (d.docType === 'resident' || d.type === 'resident' || d.residentId) && isResidentProfile(d));
       if (residentDoc) {
         setResidentProfile({ ...residentDoc, rawDoc: residentDoc });
         const prevUser = loggedInUserRef.current || {};
@@ -419,7 +457,7 @@ const showToast = useCallback((message, type = 'success') => {
       setIsLoading(false);
       isFetchingRef.current = false;
     }
-  }, [checkUserMatch]); 
+  }, [getResidentIdentity, isOwnedByResident, isResidentInvolvedInBlotter, isResidentProfile]); 
 
   const submitCert = useCallback(
   async (e) => {
@@ -1045,12 +1083,112 @@ const showToast = useCallback((message, type = 'success') => {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload);
   }, []);
 
+  // Offline-first notifications: fetch local notification entries for this resident.
+  const refreshNotifications = useCallback(async () => {
+    const user = loggedInUserRef.current || {};
+    const userId = user.residentId || user.id || user._id || null;
+    const items = await fetchNotifications('resident', userId);
+    setNotifItems(items);
+  }, []);
+
+  const toggleNotifPanel = useCallback(() => {
+    setNotifPanelOpen((open) => {
+      const next = !open;
+      if (next) {
+        const user = loggedInUserRef.current || {};
+        const userId = user.residentId || user.id || user._id || null;
+        markAllReadForUser('resident', userId).then(() => {
+          setNotifItems((prev) => prev.map((n) => ({ ...n, read: true })));
+        });
+      }
+      return next;
+    });
+  }, []);
+
+  const notifUnread = useMemo(() => getUnreadCount(notifItems), [notifItems]);
+
   // 7a. Load data kapag ready na ang user
   useEffect(() => {
     if (loggedInUserRef.current?.fullName) {
       loadData();
     }
   }, [loadData]);
+
+  // 7a-2. Initial load ng notifications (offline-first).
+  useEffect(() => {
+    if (loggedInUserRef.current?.fullName) {
+      refreshNotifications();
+    }
+  }, [refreshNotifications]);
+
+  // 7a-3. Gumawa ng notification kapag nagbago ang status ng cert request.
+  useEffect(() => {
+    const userId = (() => {
+      const u = loggedInUserRef.current || {};
+      return u.residentId || u.id || u._id || null;
+    })();
+    const map = {};
+    myRequests.forEach((r) => {
+      map[r._id || r.id] = String(r.status || '').toLowerCase();
+    });
+    if (prevCertStatusRef.current === null) {
+      prevCertStatusRef.current = map;
+      return;
+    }
+    const prev = prevCertStatusRef.current;
+    let created = false;
+    myRequests.forEach((r) => {
+      const id = r._id || r.id;
+      const status = String(r.status || '').toLowerCase();
+      const before = prev[id];
+      if (before !== undefined && before !== status) {
+        createNotification({
+          for: 'resident',
+          userId,
+          category: 'cert_request',
+          title: 'Certificate request updated',
+          body: `${r.certType || r.type || 'Certificate'} is now "${r.status || 'updated'}".`,
+          link: 's-certificates',
+          refId: id,
+        });
+        created = true;
+      }
+    });
+    prevCertStatusRef.current = map;
+    if (created) refreshNotifications();
+  }, [myRequests, refreshNotifications]);
+
+  // 7a-4. Gumawa ng notification para sa mga bagong announcement.
+  useEffect(() => {
+    const userId = (() => {
+      const u = loggedInUserRef.current || {};
+      return u.residentId || u.id || u._id || null;
+    })();
+    const ids = new Set(announcements.map((a) => a._id || a.id));
+    if (prevAnnouncementIdsRef.current === null) {
+      if (ids.size > 0) prevAnnouncementIdsRef.current = ids;
+      return;
+    }
+    const prev = prevAnnouncementIdsRef.current;
+    let created = false;
+    announcements.forEach((a) => {
+      const id = a._id || a.id;
+      if (!prev.has(id)) {
+        createNotification({
+          for: 'resident',
+          userId,
+          category: 'announcement',
+          title: a.title || 'New announcement',
+          body: a.content || a.body || a.message || '',
+          link: 's-announcements',
+          refId: id,
+        });
+        created = true;
+      }
+    });
+    prevAnnouncementIdsRef.current = ids;
+    if (created) refreshNotifications();
+  }, [announcements, refreshNotifications]);
   
   // ✅ 7d. PouchDB LIVE LISTENER
 useEffect(() => {
@@ -1076,7 +1214,6 @@ useEffect(() => {
       ].includes(doc.type || doc.docType);
 
       if (isRelevant) {
-        // ✅ useRef-based timer — per-instance, auto-cleanup
         if (reloadTimerRef.current) clearTimeout(reloadTimerRef.current);
         reloadTimerRef.current = setTimeout(() => {
           if (isMounted) loadData();
@@ -1216,51 +1353,48 @@ useEffect(() => {
             <span className="resident-header__title" style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', letterSpacing: '0.3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Bustrac Hub</span>
           </div>
           <div className="resident-header__actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: 'auto' }}>
+            {/* Syncing is fully automatic for residents — no manual retry
+                control. SyncStatusIndicator only reports the current state. */}
             <SyncStatusIndicator syncState={syncState} pendingCount={pendingCount} lastSynced={lastSync} detail={syncDetail} />
-            <button
-              type="button"
-              onClick={async () => {
-                setIsSyncing(true);
-                try {
-                  await forceSyncToRemote();
-                  if (Swal && Swal.fire) {
-                    Swal.fire({ icon: 'success', toast: true, position: 'top-end', timer: 2000, showConfirmButton: false, title: 'Sync complete' });
-                  }
-                } catch {
-                  if (Swal && Swal.fire) {
-                    Swal.fire({ icon: 'error', toast: true, position: 'top-end', timer: 2500, showConfirmButton: false, title: 'Sync failed — will retry' });
-                  }
-                } finally {
-                  setIsSyncing(false);
-                }
-              }}
-              className={`resident-header__sync-btn${isSyncing ? ' resident-header__sync-btn--syncing' : ''}`}
-              disabled={isSyncing || (syncState === 'offline' && syncDetail !== 'forbidden')}
-              style={{
-                background: 'var(--surface2)',
-                border: '1px solid var(--border)',
-                color: 'var(--text)',
-                borderRadius: 8,
-                padding: '6px 12px',
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: isSyncing || (syncState === 'offline' && syncDetail !== 'forbidden') ? 'not-allowed' : 'pointer',
-                opacity: isSyncing || (syncState === 'offline' && syncDetail !== 'forbidden') ? 0.6 : 1,
-              }}
-              aria-label={syncState === 'offline' && syncDetail !== 'forbidden'
-                ? 'Offline — sync will resume automatically when connection returns'
-                : isSyncing
-                ? 'Sync in progress'
-                : 'Retry sync (optional manual retry)'}
-            >
-              <span className="resident-header__sync-label-full">{isSyncing ? 'Syncing…' : pendingCount > 0 ? `Retry Sync (${pendingCount})` : 'Retry Sync'}</span>
-              <span className="resident-header__sync-label-short" aria-hidden="true">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M21 12a9 9 0 1 1-2.64-6.36" />
-                  <polyline points="21 3 21 9 15 9" />
-                </svg>
-              </span>
-            </button>
+            <div style={{ position: 'relative' }}>
+              <button
+                type="button"
+                onClick={toggleNotifPanel}
+                style={{ position: 'relative', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: '50%', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s ease' }}
+                aria-label={`Notifications${notifUnread > 0 ? ` (${notifUnread} unread)` : ''}`}
+                aria-expanded={notifPanelOpen}
+              >
+                <FaBell size={16} />
+                {notifUnread > 0 && (
+                  <span style={{ position: 'absolute', top: -4, right: -4, minWidth: 18, height: 18, padding: '0 4px', borderRadius: 9, background: 'var(--red, #ef4444)', color: '#fff', fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center', justifyContent: 'center', lineHeight: 1, border: '2px solid var(--surface)' }}>
+                    {notifUnread > 9 ? '9+' : notifUnread}
+                  </span>
+                )}
+              </button>
+              {notifPanelOpen && (
+                <div className="resident-notif-panel" style={{ position: 'absolute', right: 0, top: 'calc(100% + 8px)', width: 340, maxWidth: 'calc(100vw - 24px)', maxHeight: 420, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 12px 32px rgba(0,0,0,0.18)', zIndex: 300, padding: 8 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px 8px', borderBottom: '1px solid var(--border)', marginBottom: 4 }}>
+                    <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Notifications</span>
+                    <button onClick={toggleNotifPanel} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 16, cursor: 'pointer' }} aria-label="Close notifications">&#x2715;</button>
+                  </div>
+                  {notifItems.length === 0 ? (
+                    <div style={{ padding: '20px 12px', textAlign: 'center', color: 'var(--muted)', fontSize: 12 }}>No notifications yet.</div>
+                  ) : (
+                    notifItems.map((n) => (
+                      <button
+                        key={n._id}
+                        onClick={() => { if (n.link) goToTab(n.link); setNotifPanelOpen(false); }}
+                        style={{ display: 'block', width: '100%', textAlign: 'left', padding: '10px 8px', border: 'none', borderRadius: 8, background: n.read ? 'transparent' : 'var(--primary-light, rgba(59,130,246,0.08))', cursor: 'pointer' }}
+                      >
+                        <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>{n.title}</div>
+                        {n.body ? <div style={{ fontSize: 11, color: 'var(--muted)', lineHeight: 1.4 }}>{n.body}</div> : null}
+                        <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4, opacity: 0.8 }}>{n.createdAt ? new Date(n.createdAt).toLocaleString() : ''}</div>
+                      </button>
+                    ))
+                  )}
+                </div>
+              )}
+            </div>
             <button
               type="button"
               onClick={toggleTheme}

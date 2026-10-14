@@ -416,7 +416,7 @@
 .resident-root-container .content {
   flex: 1;
   padding: 20px;
-  padding-bottom: 20px;
+  padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
   max-width: 700px;
   margin: 0 auto;
   width: 100%;
@@ -898,7 +898,7 @@
 
   /* Add bottom spacing to prevent navigation overlap */
   .resident-root-container .content {
-    padding-bottom: 80px;
+    padding-bottom: 90px;
   }
 
   /* Single-column grid for mobile viewports */

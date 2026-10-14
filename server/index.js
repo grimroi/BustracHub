@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const nano = require('nano');
+const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const bcrypt = require('bcryptjs');
 const certificateRoutes = require('./routes/certificateRoutes');
@@ -44,6 +45,13 @@ const verifyPassword = async (password, storedHash) => {
 
 const app = express();
 const PORT = process.env.PORT || 5000;
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('❌ JWT_SECRET environment variable is not set.');
+  process.exit(1);
+}
+const JWT_EXPIRES_IN = '8h';
 
 // Middlewares
 // ──────────────────────────────────────────────────────────────
@@ -142,55 +150,40 @@ const DB_NAME = 'bustrachub_db';
 let db;
 
 // ──────────────────────────────────────────────────────────────
-// AUTH MIDDLEWARE — Bearer token issued by /api/login
-// Token is a signed opaque session id bound to a role. It does NOT
+// AUTH MIDDLEWARE — Bearer JWT issued by /api/login
+// Token is a stateless HS256-signed JWT bound to a role. It does NOT
 // carry CouchDB credentials. CouchDB admin credentials stay in
-// COUCHDB_URL on the server only.
+// COUCHDB_URL on the server only. PouchDB sync fires dozens of
+// sequential requests per cycle; each verifies the signature with no
+// Map lookup and no DB read, so auth stays O(1) per request.
 // ──────────────────────────────────────────────────────────────
-const SESSIONS = new Map();
-const SESSION_TTL_MS = 8 * 60 * 60 * 1000; // 8 hours
-
 const issueSessionToken = (user) => {
-  const token = `sess_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-  const expiresAt = Date.now() + SESSION_TTL_MS;
-  SESSIONS.set(token, { user, expiresAt });
-  setTimeout(() => SESSIONS.delete(token), SESSION_TTL_MS + 1000);
-  return token;
+  return jwt.sign(
+    { user: user },
+    JWT_SECRET,
+    { expiresIn: JWT_EXPIRES_IN }
+  );
 };
 
 const authenticate = (req, res, next) => {
   const header = req.headers.authorization || '';
   const token = header.startsWith('Bearer ') ? header.slice(7) : null;
 
-  // --- CRITICAL FIX FOR SYNC INITIALIZATION ---
-  // Allow unauthenticated access ONLY to specific sync bootstrap endpoints
-  // if the user hasn't logged in yet but the app is trying to set up local storage.
-  // This prevents the 401 loop during initial load before login completes.
-  
-  // Note: We still require SOME form of validation or role check later.
-  // But for _local docs, we can be lenient IF no token exists yet? 
-  // NO - That's insecure. 
-  
-  // BETTER APPROACH: Ensure Frontend DOES NOT START SYNC UNTIL LOGIN IS COMPLETE.
-  // See Step 2 below. The backend fix here is just safety net.
-  
   if (!token) {
     return res.status(401).json({ success: false, message: 'No session token provided.' });
   }
 
-  const session = SESSIONS.get(token);
-  if (!session) {
+  try {
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded.user;
+    req.sessionToken = token;
+    next();
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ success: false, message: 'Session expired.' });
+    }
     return res.status(401).json({ success: false, message: 'Invalid session token.' });
   }
-
-  if (Date.now() > session.expiresAt) {
-    SESSIONS.delete(token);
-    return res.status(401).json({ success: false, message: 'Session expired.' });
-  }
-
-  req.user = session.user;
-  req.sessionToken = token;
-  next();
 };
 
 const requireRole = (...allowedRoles) => (req, res, next) => {
@@ -900,6 +893,8 @@ if (!username || !password) {
       status: accountStatus,
     });
 
+    console.log(`[AUTH] Issued JWT for ${userDoc.username} (role: ${userDoc.role})`);
+
     return res.json({
       success: true,
       message: 'Login successful',
@@ -926,8 +921,8 @@ if (!username || !password) {
 // ──────────────────────────────────────────────────────────────
 // CURRENT SESSION USER — lets the frontend rehydrate its user
 // object after a refresh (or when localStorage was cleared) without
-// requiring another login. The payload is exactly what was stored in
-// the SESSIONS map at login, so it includes residentId/purok/contact.
+// requiring another login. The payload is exactly what was signed
+// into the JWT at login, so it includes residentId/purok/contact.
 // ──────────────────────────────────────────────────────────────
 app.get('/api/me', authenticate, (req, res) => {
   return res.json({ success: true, user: req.user });
