@@ -151,6 +151,9 @@ const RESIDENT_OWNED_WRITE_TYPES = new Set([
   'resident',
   'resident_profile',
   'profile',
+  // Health records — residents can write their own health data (immunization,
+  // prenatal logs, medicine received) but only for themselves/their children.
+  'health_record',
 ]);
 
 // Public/read-only barangay content the resident must still be able to PULL
@@ -168,6 +171,8 @@ const RESIDENT_PUBLIC_READ_TYPES = new Set([
   // Public barangay events — read-only for residents (they register via the
   // owned, write-allowlisted 'event_registration' type above).
   'barangay_event',
+  // BHS inventory — residents can view medicine availability (read-only)
+  'bhs_inventory',
 ]);
 
 const SYSTEM_PREFIXES = ['announcement_seed_', 'user_', 'settings', 'hotline', 'announcement_'];
@@ -664,6 +669,10 @@ export const initDbIndices = async () => {
         localDb.createIndex({ index: { fields: ['type', 'timestamp'] } }),
         localDb.createIndex({ index: { fields: ['docType'] } }),
         localDb.createIndex({ index: { fields: ['type'] } }),
+        // BHS module indexes
+        localDb.createIndex({ index: { fields: ['type', 'residentId', 'recordType'] } }),
+        localDb.createIndex({ index: { fields: ['type', 'residentId', 'dateAdministered'] } }),
+        localDb.createIndex({ index: { fields: ['type', 'category', 'stockLevel'] } }),
       ]);
       console.log('All database indices verified/created successfully.');
     }
