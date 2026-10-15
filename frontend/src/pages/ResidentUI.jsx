@@ -6,9 +6,9 @@ import { createAuditLog } from '../utils/auditLog';
 import { clearToken } from '../utils/tokenStore';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
-import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt, FaBell } from "react-icons/fa";
+import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt, FaBell, FaHeartbeat } from "react-icons/fa";
 import { saveCertificateRequest } from '../services/db';
-import Swal from 'sweetalert2'; // ✅ Added SweetAlert2 Import
+import Swal from 'sweetalert2'; // ? Added SweetAlert2 Import
 import EventRegistrationScreen from '../components/screens/EventRegistrationScreen';
 import {
   normalizeCertificateDoc,
@@ -29,15 +29,16 @@ import ResidentFeedback from '../components/Resident/ResidentFeedback';
 import ResidentBlotter from '../components/Resident/ResidentBlotter';
 import ResidentAssistance from '../components/Resident/ResidentAssistance';
 import ResidentProfile from '../components/Resident/ResidentProfile';
+import ResidentHealthView from '../components/BHS/ResidentHealthView';
 import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import { fetchNotifications, createNotification, markAllReadForUser, getUnreadCount } from '../services/notifications';
 
 const CERT_FORM_INITIAL = { certType: '', certPurpose: '' };
 
-// ── Resident identity matching ──────────────────────────────────────────────
+// -- Resident identity matching ----------------------------------------------
 // DB-wide replication means every resident's device holds every document. These
 // helpers keep the Home metrics (and list views) strictly limited to records
-// that belong to — or explicitly involve — the logged-in resident. Matching is
+// that belong to � or explicitly involve � the logged-in resident. Matching is
 // exact (case-insensitive); partial/substring matches are never accepted, so a
 // name or id collision can't leak another resident's records.
 const normId = (value) => String(value ?? '').trim().toLowerCase();
@@ -86,9 +87,9 @@ export default function ResidentUI() {
   const navigate = useNavigate();
   const location = useLocation();
 
-  /* ═══════════════════════════════════════════════════════════
-     SECTION 1: ALL useState (nasa pinakataas — walang exception)
-     ═══════════════════════════════════════════════════════════ */
+  /* -----------------------------------------------------------
+     SECTION 1: ALL useState (nasa pinakataas � walang exception)
+     ----------------------------------------------------------- */
   const [theme, setTheme] = useState(() => localStorage.getItem('theme') || (typeof window !== 'undefined' && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'));
   const [loggedInUser, setLoggedInUser] = useState(getStoredUser);
   const [activeScreen, setActiveScreen] = useState('s-home');
@@ -128,9 +129,9 @@ export default function ResidentUI() {
 
   const [sseNotification, setSseNotification] = useState(null);
 
-  /* ═══════════════════════════════════════════════════════════
+  /* -----------------------------------------------------------
      SECTION 2: ALL useRef (kasunod ng useState)
-     ═══════════════════════════════════════════════════════════ */
+     ----------------------------------------------------------- */
   const loggedInUserRef = useRef(loggedInUser);
   const isFetchingRef = useRef(false);
   const notifiedCertIds = useRef(new Set());
@@ -139,10 +140,10 @@ export default function ResidentUI() {
   const prevCertStatusRef = useRef(null);
   const prevAnnouncementIdsRef = useRef(null);
 
-  /* ═══════════════════════════════════════════════════════════
+  /* -----------------------------------------------------------
      SECTION 3: SIMPLE useEffect (no interdependencies)
-     ═══════════════════════════════════════════════════════════ */
-    //  3a. Sync loggedInUserRef — DAPAT PINAKAUNA
+     ----------------------------------------------------------- */
+    //  3a. Sync loggedInUserRef � DAPAT PINAKAUNA
       useEffect(() => {
         loggedInUserRef.current = loggedInUser;
       }, [loggedInUser]);
@@ -154,7 +155,7 @@ export default function ResidentUI() {
     localStorage.setItem('theme', theme);
   }, [theme]);
  
-  // ✅ 3c. Modal scroll lock 
+  // ? 3c. Modal scroll lock 
 useEffect(() => {
   document.body.style.overflow = editingReport ? 'hidden' : '';
   return () => {
@@ -189,7 +190,7 @@ useEffect(() => {
     };
   }, []);
 
-  // 3d-2. Cloud sync status — shared PouchDB sync events from services/db.
+  // 3d-2. Cloud sync status � shared PouchDB sync events from services/db.
   useEffect(() => {
     const unsubscribe = onSyncStatusChange(({ status, pending, detail }) => {
       setSyncState(status);
@@ -213,14 +214,14 @@ useEffect(() => {
     window.db = db;
     window.remoteDb = remoteDb;
     window.forceSync = forceSyncToRemote;
-    console.log('✅ Debug helpers exposed (Resident UI)');
-    console.log('  → window.db, window.remoteDb, window.forceSync');
+    console.log('? Debug helpers exposed (Resident UI)');
+    console.log('  ? window.db, window.remoteDb, window.forceSync');
   }
 }, []);
 
-  /* ═══════════════════════════════════════════════════════════
+  /* -----------------------------------------------------------
      SECTION 4: SIMPLE useMemo (no callback deps)
-     ═══════════════════════════════════════════════════════════ */
+     ----------------------------------------------------------- */
   const greetingText = useMemo(() => {
     const h = new Date().getHours();
     if (h < 12) return 'Good morning';
@@ -228,11 +229,11 @@ useEffect(() => {
     return 'Good evening';
   }, []);
 
-  /* ═══════════════════════════════════════════════════════════
-     SECTION 5: useCallback — IN DEPENDENCY ORDER ⚠️ CRITICAL
-     ═══════════════════════════════════════════════════════════ */
+  /* -----------------------------------------------------------
+     SECTION 5: useCallback � IN DEPENDENCY ORDER ?? CRITICAL
+     ----------------------------------------------------------- */
 
-  // 5a. Resident identity + strict scoping helpers — dapat PINAKAUNA
+  // 5a. Resident identity + strict scoping helpers � dapat PINAKAUNA
   const getResidentIdentity = useCallback(() => {
     const user = loggedInUserRef.current || {};
     return {
@@ -291,7 +292,7 @@ useLayoutEffect(() => {
   window.scrollTo({ top: 0, left: 0, behavior: 'instant' });
 }, [activeScreen]);
 
-  // ── Toast notification helper (Swal-based) ──
+  // -- Toast notification helper (Swal-based) --
 const showToast = useCallback((message, type = 'success') => {
   // Handle swapped arguments (some components use showToast('error', msg))
   const VALID_TYPES = ['success', 'error', 'warning', 'info'];
@@ -322,7 +323,7 @@ const showToast = useCallback((message, type = 'success') => {
   }
 }, []);
   
-  // 5b-2. requestNotificationPermission — no deps
+  // 5b-2. requestNotificationPermission � no deps
   const requestNotificationPermission = useCallback(() => {
     if (typeof window === 'undefined' || !('Notification' in window)) {
       console.warn('Browser does not support desktop notifications.');
@@ -330,27 +331,27 @@ const showToast = useCallback((message, type = 'success') => {
     }
 
     if (Notification.permission === 'granted') {
-      console.log('✅ Desktop notifications already enabled.');
+      console.log('? Desktop notifications already enabled.');
       return;
     }
 
     if (Notification.permission === 'denied') {
-      console.warn('❌ Notifications blocked. Enable manually in browser settings.');
+      console.warn('? Notifications blocked. Enable manually in browser settings.');
       return;
     }
 
     Notification.requestPermission().then((permission) => {
       if (permission === 'granted') {
-        console.log('✅ Desktop notifications enabled.');
-        setSseNotification('🔔 Desktop notifications enabled! You will now receive real-time barangay updates.');
+        console.log('? Desktop notifications enabled.');
+        setSseNotification('?? Desktop notifications enabled! You will now receive real-time barangay updates.');
         setTimeout(() => setSseNotification(null), 5000);
       } else {
-        console.warn('⚠️ Notification permission denied.');
+        console.warn('?? Notification permission denied.');
       }
     });
   }, []);
 
-  // 5c. handleLogout — deps: navigate
+  // 5c. handleLogout � deps: navigate
   const handleLogout = useCallback(() => {
     Swal.fire({
       title: 'Log Out?',
@@ -372,7 +373,7 @@ const showToast = useCallback((message, type = 'success') => {
     });
   }, [navigate]);
 
-  // 5d. loadData — deps: checkUserMatch ✅ SAFE
+  // 5d. loadData � deps: checkUserMatch ? SAFE
   const loadData = useCallback(async () => {
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
@@ -451,7 +452,7 @@ const showToast = useCallback((message, type = 'success') => {
       }
       setLastSync(new Date());
     } catch (e) {
-      console.error('❌ Load error in ResidentUI:', e);
+      console.error('? Load error in ResidentUI:', e);
       setLoadError(e.message || 'Failed to load data');
     } finally {
       setIsLoading(false);
@@ -580,7 +581,7 @@ const showToast = useCallback((message, type = 'success') => {
   [certForm, loadData, isSubmittingCert]
 );
 
-  // 5f. submitFeedback — deps: []
+  // 5f. submitFeedback � deps: []
   const submitFeedback = useCallback(
   async ({ feedbackType, subject, message, residentId, residentName, username }) => {
     if (!db) {
@@ -601,7 +602,7 @@ const showToast = useCallback((message, type = 'success') => {
         .filter((doc) => doc && doc.residentId === residentId && doc.timestamp > oneDayAgo);
 
       if (userRecentFeedback.length > 0) {
-        Swal.fire('Wait a moment', '⚠️ You can only submit one feedback every 24 hours. Please wait before submitting another.', 'warning');
+        Swal.fire('Wait a moment', '?? You can only submit one feedback every 24 hours. Please wait before submitting another.', 'warning');
         return;
       }
     } catch (err) {
@@ -661,7 +662,7 @@ const showToast = useCallback((message, type = 'success') => {
     const safeResidentId = currentUser?.residentId || '';
     const safeUsername = currentUser?.username || '';
 
-    // 🛡️ ANTI-SPAM + 🧾 DUPLICATE / PRELIMINARY BLOTTER CHECK.
+    // ??? ANTI-SPAM + ?? DUPLICATE / PRELIMINARY BLOTTER CHECK.
     // Anti-spam runs FIRST and short-circuits the duplicate guard. The guard
     // blocks ONLY on reliable evidence that this submission duplicates the
     // resident's OWN active case; similar-name matches (possibly another
@@ -687,7 +688,7 @@ const showToast = useCallback((message, type = 'success') => {
 
     const totalSizeMB = (attachments || []).reduce((acc, file) => acc + (parseFloat(file.size) || 0), 0);
     if (totalSizeMB > 8) {
-      Swal.fire('File Too Large', `⚠️ Ang total size ng mga ebidensya ay ${totalSizeMB.toFixed(2)}MB. Ang limit ay 8MB lamang.`, 'warning');
+      Swal.fire('File Too Large', `?? Ang total size ng mga ebidensya ay ${totalSizeMB.toFixed(2)}MB. Ang limit ay 8MB lamang.`, 'warning');
       return { success: false, reason: 'oversize' };
     }
      const refNumber = `BLT-${new Date().getFullYear()}-${Date.now().toString(36).toUpperCase()}${Math.random().toString(36).slice(2, 4).toUpperCase()}`;
@@ -751,7 +752,7 @@ const showToast = useCallback((message, type = 'success') => {
   []
 );
 
-  // 5h. handleCancelRequest — deps: myRequests, loadData 
+  // 5h. handleCancelRequest � deps: myRequests, loadData 
   const handleCancelRequest = useCallback(
     async (certId) => {
       if (!db) { 
@@ -791,7 +792,7 @@ const showToast = useCallback((message, type = 'success') => {
     [myRequests, loadData]
   );
 
-  // 5i. handleOpenEdit — deps: []
+  // 5i. handleOpenEdit � deps: []
   const handleOpenEdit = useCallback((report) => {
     const editableStatuses = ['pending', 'needs revision', 'returned', 'open'];
     const currentStatus = (report.status || '').toLowerCase();
@@ -858,7 +859,7 @@ const showToast = useCallback((message, type = 'success') => {
   }
 }, [editForm, editingReport, resetEditModal]);
 
-  // 5j. handleSaveEdit — deps: editingReport, editForm, loadData ✅
+  // 5j. handleSaveEdit � deps: editingReport, editForm, loadData ?
   const handleSaveEdit = useCallback(
   async (e) => {
     e.preventDefault();
@@ -916,11 +917,11 @@ const showToast = useCallback((message, type = 'success') => {
       blurActiveElement();
       Swal.fire('Error', 'Failed to update the report. Please try again.', 'error');
     } finally {
-      setIsSavingEdit(false); // ✅ ADD THIS
+      setIsSavingEdit(false); // ? ADD THIS
     }
     }, [editForm, editingReport, db, loggedInUser, loadData, resetEditModal, isSavingEdit]);
 
-  // 5k. handleSaveProfileEdit — deps: db, residentProfile, loggedInUser
+  // 5k. handleSaveProfileEdit � deps: db, residentProfile, loggedInUser
   const handleSaveProfileEdit = useCallback(
     async (editableProfile) => {
       if (!db) throw new Error('Local database is not connected.');
@@ -1047,9 +1048,9 @@ const showToast = useCallback((message, type = 'success') => {
     [db, residentProfile, loggedInUser]
   );
 
-  /* ═══════════════════════════════════════════════════════════
-     SECTION 6: DERIVED VALUES (useMemo — after callbacks OK)
-     ═══════════════════════════════════════════════════════════ */
+  /* -----------------------------------------------------------
+     SECTION 6: DERIVED VALUES (useMemo � after callbacks OK)
+     ----------------------------------------------------------- */
   const pendingRequestCount = useMemo(() => {
     return myRequests.filter((r) => {
       const status = (r.status || '').toLowerCase();
@@ -1060,9 +1061,9 @@ const showToast = useCallback((message, type = 'success') => {
     }).length;
   }, [myRequests]);
 
-  /* ═══════════════════════════════════════════════════════════
+  /* -----------------------------------------------------------
      SECTION 7: useEffect NA TUMATAWAG SA CALLBACKS
-     ═══════════════════════════════════════════════════════════ */
+     ----------------------------------------------------------- */
   useEffect(() => {
     try {
       const saved = localStorage.getItem('bustrac_notified_cert_ids');
@@ -1190,7 +1191,7 @@ const showToast = useCallback((message, type = 'success') => {
     if (created) refreshNotifications();
   }, [announcements, refreshNotifications]);
   
-  // ✅ 7d. PouchDB LIVE LISTENER
+  // ? 7d. PouchDB LIVE LISTENER
 useEffect(() => {
   if (!db) return;
   let isMounted = true;
@@ -1277,7 +1278,7 @@ useEffect(() => {
   // 7c. SSE Notification listener
   useEffect(() => {
     const backendUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
-    if (import.meta.env.DEV) console.log(`🔌 Attempting SSE connection to: ${backendUrl}/api/notifications`);
+    if (import.meta.env.DEV) console.log(`?? Attempting SSE connection to: ${backendUrl}/api/notifications`);
 
     const eventSource = new EventSource(`${backendUrl}/api/notifications`);
     
@@ -1295,10 +1296,10 @@ useEffect(() => {
             let notifIcon = '/logo.png';
 
             if (data.type === 'AID_UPLOADED') {
-              notifTitle = '📦 Bagong Aid Distribution';
+              notifTitle = '?? Bagong Aid Distribution';
               notifBody = 'May bagong relief goods na na-upload at available na.';
             } else if (data.type === 'BLOTTER_UPDATE') {
-              notifTitle = '⚖️ Blotter Case Update';
+              notifTitle = '?? Blotter Case Update';
               notifBody = data.message || 'May update ang iyong blotter case status.';
             }
 
@@ -1313,18 +1314,18 @@ useEffect(() => {
     };
     
     eventSource.onerror = (err) => {
-      if (import.meta.env.DEV) console.warn('⚠️ SSE Connection lost. Reconnecting...', err);
+      if (import.meta.env.DEV) console.warn('?? SSE Connection lost. Reconnecting...', err);
     };
     
     return () => {
-      if (import.meta.env.DEV) console.log('🔌 Closing SSE connection (component unmounted)');
+      if (import.meta.env.DEV) console.log('?? Closing SSE connection (component unmounted)');
       eventSource.close();
     };
   }, [loadData]);
 
-  /* ═══════════════════════════════════════════════════════════
+  /* -----------------------------------------------------------
      SECTION 8: Regular functions (hindi hooks) at constants
-     ═══════════════════════════════════════════════════════════ */
+     ----------------------------------------------------------- */
   const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
 
   const updateCertField = (field) => (e) => {
@@ -1340,9 +1341,9 @@ useEffect(() => {
     { id: 's-assistance', label: 'Aid', icon: <FaHandHoldingHeart /> },
     { id: 's-events', label: 'Events', icon: <FaCalendarAlt /> },
     { id: 's-profile', label: 'Profile', icon: <FaUser /> },
-  ];
+  { id: 's-health', label: 'Health', icon: <FaHeartbeat /> },  ];
 
-  /* ── Render ── */
+  /* -- Render -- */
   return (
     <div className="resident-root-container">
       <div id="app">
@@ -1353,7 +1354,7 @@ useEffect(() => {
             <span className="resident-header__title" style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', letterSpacing: '0.3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Bustrac Hub</span>
           </div>
           <div className="resident-header__actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: 'auto' }}>
-            {/* Syncing is fully automatic for residents — no manual retry
+            {/* Syncing is fully automatic for residents � no manual retry
                 control. SyncStatusIndicator only reports the current state. */}
             <SyncStatusIndicator syncState={syncState} pendingCount={pendingCount} lastSynced={lastSync} detail={syncDetail} />
             <div style={{ position: 'relative' }}>
@@ -1423,10 +1424,10 @@ useEffect(() => {
           {sseNotification && (
             <div style={{ position: 'sticky', top: 0, zIndex: 50, background: 'var(--primary, #3b82f6)', color: 'white', padding: '12px 16px', borderRadius: '10px', marginBottom: '16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', boxShadow: '0 4px 12px rgba(59, 130, 246, 0.3)', animation: 'resident-fadeUp 0.3s ease-out', border: '1px solid rgba(255,255,255,0.2)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span style={{ fontSize: '20px' }}>🔔</span>
+                <span style={{ fontSize: '20px' }}>??</span>
                 <span style={{ fontSize: '13px', fontWeight: 600, lineHeight: 1.4 }}>{sseNotification}</span>
               </div>
-              <button onClick={() => setSseNotification(null)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer', padding: '0 4px' }} aria-label="Close notification">✕</button>
+              <button onClick={() => setSseNotification(null)} style={{ background: 'none', border: 'none', color: 'white', fontSize: '18px', cursor: 'pointer', padding: '0 4px' }} aria-label="Close notification">?</button>
             </div>
           )}
 
@@ -1481,6 +1482,9 @@ useEffect(() => {
           {!isLoading && !loadError && activeScreen === 's-profile' && (
             <ResidentProfile residentProfile={residentProfile} loggedInUser={loggedInUser} isOffline={isOffline} lastSync={lastSync} handleLogout={handleLogout} handleSaveProfileEdit={handleSaveProfileEdit} />
           )}
+          {!isLoading && !loadError && activeScreen === 's-health' && (
+            <ResidentHealthView loggedInUser={loggedInUser} />
+          )}
         </div>
 
         {/* Bottom Navigation */}
@@ -1504,12 +1508,12 @@ useEffect(() => {
             <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'var(--primary-light)', color: 'var(--primary, #3b82f6)', border: '1px solid var(--primary-light)' }}>v1.0</span>
           </div>
           <div style={{ fontSize: 11, color: 'var(--muted)', opacity: 0.75, lineHeight: 1.4 }}>
-            © {new Date().getFullYear()} Barangay Bustrac, Nabua. All rights reserved.
+            � {new Date().getFullYear()} Barangay Bustrac, Nabua. All rights reserved.
           </div>
         </footer>
       </div>
 
-      {/* Blotter Edit Modal — portaled to document.body so SweetAlert2's
+      {/* Blotter Edit Modal � portaled to document.body so SweetAlert2's
           aria-hidden on #root never hides an element that still holds focus.
           zIndex (1000) is kept below SweetAlert2's popup (1060) so confirmation
           dialogs (e.g. the "Discard changes?" prompt) render above the modal. */}
@@ -1517,8 +1521,8 @@ useEffect(() => {
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.7)', display: 'flex', alignItems: 'flex-start', justifyContent: 'center', zIndex: 1000, padding: '48px 16px 16px', overflowY: 'auto' }} onClick={closeEditModal} role="presentation">
           <div ref={editModalRef} tabIndex={-1} role="dialog" aria-modal="true" aria-label={`Edit blotter report ${editingReport.refNumber || editingReport._id}`} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16, width: '100%', maxWidth: 520, maxHeight: '85vh', overflowY: 'auto', padding: 20, marginBottom: 48, outline: 'none' }} onClick={(e) => e.stopPropagation()}>
             <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--text)', marginBottom: 16, display: 'flex', justifyContent: 'space-between' }}>
-              <span>Edit Report — {editingReport.refNumber || editingReport._id}</span>
-              <button onClick={closeEditModal}  style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 20, cursor: 'pointer' }}>✕</button>
+              <span>Edit Report � {editingReport.refNumber || editingReport._id}</span>
+              <button onClick={closeEditModal}  style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 20, cursor: 'pointer' }}>?</button>
             </div>
 
             <form onSubmit={handleSaveEdit} noValidate>

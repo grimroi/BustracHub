@@ -898,7 +898,7 @@
 
   /* Add bottom spacing to prevent navigation overlap */
   .resident-root-container .content {
-    padding-bottom: 90px;
+    padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
   }
 
   /* Single-column grid for mobile viewports */

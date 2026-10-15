@@ -1,5 +1,6 @@
 // src/components/layout/Sidebar.jsx
 import React from 'react';
+import { FaHeartbeat, FaExclamationTriangle } from 'react-icons/fa';
 
 const Sidebar = React.memo(function Sidebar({
   sidebarOpen,
@@ -22,7 +23,6 @@ const Sidebar = React.memo(function Sidebar({
   accountRequests,
   conflictsList,
   logo,
-  logout,
 }) {
   return (
     <aside 
@@ -273,7 +273,7 @@ const Sidebar = React.memo(function Sidebar({
                   </span>
                   <span className="nav-label">File Incident / Complaint</span>
                 </button>
-    
+                 
                 <button 
                   className={`nav-btn${screen === 'blotter-manage' ? ' active' : ''}`} 
                   onClick={() => nav('blotter-manage')}
@@ -306,7 +306,28 @@ const Sidebar = React.memo(function Sidebar({
                   <span className="nav-label">Summons & Hearings</span>
                 </button>
                 
-    
+                {/* HEALTH STATION */}
+<div className="sb-sec">Health Station</div>
+<button
+  type="button"
+  className={`nav-btn${screen === 'bhs' ? ' active' : ''}`}
+  onClick={() => nav('bhs')}
+>
+  <FaHeartbeat size={16} />
+  <span>Health Records & Inventory</span>
+</button>
+
+                {/* DISASTER RESPONSE */}
+                <div className="sb-sec">Disaster Response</div>
+                <button
+                  type="button"
+                  className={`nav-btn${screen === 'bdrrmc' ? ' active' : ''}`}
+                  onClick={() => nav('bdrrmc')}
+                >
+                  <FaExclamationTriangle size={16} />
+                  <span>BDRRMC & Relief</span>
+                </button>
+
                 {/* COMMUNITY */}
                 <div className="sb-sec">Community</div>
                 <button 

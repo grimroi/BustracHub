@@ -1,5 +1,9 @@
-import React, { useState, useEffect, useCallback, useRef, useMemo, startTransition } from 'react';
+﻿import React, { useState, useEffect, useCallback, useRef, useMemo, startTransition } from 'react';
 import ResidentsScreen from '../components/screens/ResidentsScreen';
+import BHSHealthRecords from '../components/BHS/BHSHealthRecords';
+import BHSInventory from '../components/BHS/BHSInventory';
+import BDRRMCModule from '../components/BDRRMC/BDRRMCModule';
+import BDRRMCRelief from '../components/BDRRMC/BDRRMCRelief';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
@@ -81,6 +85,8 @@ const SESSION_TIMEOUT_MIN = Number(import.meta.env.VITE_SESSION_TIMEOUT_MIN) || 
 
 const SCREEN_META = {
   dashboard:            ['Dashboard',                  ''], 
+  bhs: ['Barangay Health Station', 'BHS Module'],
+  bdrrmc: ['BDRRMC & Relief', 'Disaster Response Module'],
   'events-manage': ['Events Management', 'Community Module'],
   residents:            ['Manage Residents',           'Resident Registry Module'],
   'add-resident':       ['Add New Resident',          'Resident Registry'],
@@ -15631,7 +15637,18 @@ const handleGenerateCredentials = async (resident) => {
                     </div>
                   </div>
 )}
-          
+          {screen === 'bhs' && (
+  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+    <BHSHealthRecords />
+    <BHSInventory />
+  </div>
+)}
+          {screen === 'bdrrmc' && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <BDRRMCModule />
+              <BDRRMCRelief />
+            </div>
+          )}
           {/* Fallback for unknown screens (e.g. legacy 'pending' links) */}
           {!SCREEN_META[screen] && screen !== 'dashboard' && (
             <div style={{ padding: 40, textAlign: 'center' }}>
@@ -15643,7 +15660,7 @@ const handleGenerateCredentials = async (resident) => {
               </button>
             </div>
           )}
-
+         
         </div>
         <footer className="app-footer">
             <div>
