@@ -20,7 +20,7 @@ const SYNC_ENDPOINT = `${API_BASE}/api/sync/${COUCH_DB_NAME}`;
 
 // Marker to prove the browser is running the latest sync bundle. Purely
 // diagnostic — it does not affect replication behavior.
-const SYNC_FILTER_PATCH = 'owner-filter-event-registration-2026-10-12';
+const SYNC_FILTER_PATCH = 'owner-filter-bdrrmc-2026-10-15';
 console.log(`[bustrac-sync] frontend patch loaded: ${SYNC_FILTER_PATCH}`);
 
 // Wraps the browser fetch so every proxied CouchDB request carries the
@@ -138,7 +138,23 @@ const isOfflineAuthDoc = (doc) =>
 
 // Resident-writable document types. A resident may only replicate docs they
 // actually OWN (matched by username OR residentId) — see residentDocOwnedBy.
-
+const RESIDENT_OWNED_WRITE_TYPES = new Set([
+  'certificate_request',
+  'feedback_report',
+  'feedback',
+  'blotter_record',
+  // Event sign-up + self-cancel of the resident's OWN registration only. The
+  // server additionally pins the status to Pending/Cancelled and blocks any
+  // approval/attendance provenance (see server RESIDENT_EVENT_ALLOWED_STATUS).
+  'event_registration',
+  // Own profile only (the server also restricts these to the resident's doc).
+  'resident',
+  'resident_profile',
+  'profile',
+  // Health records — residents can write their own health data (immunization,
+  // prenatal logs, medicine received) but only for themselves/their children.
+  'health_record',
+]);
 
 // Public/read-only barangay content the resident must still be able to PULL
 // for read-only views. Residents never write these. Kept in sync with the
@@ -157,6 +173,10 @@ const RESIDENT_PUBLIC_READ_TYPES = new Set([
   'barangay_event',
   // BHS inventory — residents can view medicine availability (read-only)
   'bhs_inventory',
+  // BDRRMC — resident read-only view of disaster alerts and their own relief
+  // records (created/managed by admin/staff only).
+  'disaster_event',
+  'relief_distribution',
 ]);
 
 const SYSTEM_PREFIXES = ['announcement_seed_', 'user_', 'settings', 'hotline', 'announcement_'];

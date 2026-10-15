@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
+﻿import { useState, useEffect, useCallback, useMemo, useRef, useLayoutEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { localDb as db, forceSyncToRemote, remoteDb, stopPouchDBSync, onSyncStatusChange } from '../services/db';
@@ -6,8 +6,7 @@ import { createAuditLog } from '../utils/auditLog';
 import { clearToken } from '../utils/tokenStore';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
-import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt, FaBell, FaHeartbeat } from "react-icons/fa";
-import { saveCertificateRequest } from '../services/db';
+import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt, FaBell, FaHeartbeat, FaExclamationTriangle } from "react-icons/fa";
 import Swal from 'sweetalert2'; // ? Added SweetAlert2 Import
 import EventRegistrationScreen from '../components/screens/EventRegistrationScreen';
 import {
@@ -30,6 +29,7 @@ import ResidentBlotter from '../components/Resident/ResidentBlotter';
 import ResidentAssistance from '../components/Resident/ResidentAssistance';
 import ResidentProfile from '../components/Resident/ResidentProfile';
 import ResidentHealthView from '../components/BHS/ResidentHealthView';
+import ResidentBDRRMC from '../components/BDRRMC/ResidentBDRRMC';
 import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import { fetchNotifications, createNotification, markAllReadForUser, getUnreadCount } from '../services/notifications';
 
@@ -324,33 +324,6 @@ const showToast = useCallback((message, type = 'success') => {
 }, []);
   
   // 5b-2. requestNotificationPermission � no deps
-  const requestNotificationPermission = useCallback(() => {
-    if (typeof window === 'undefined' || !('Notification' in window)) {
-      console.warn('Browser does not support desktop notifications.');
-      return;
-    }
-
-    if (Notification.permission === 'granted') {
-      console.log('? Desktop notifications already enabled.');
-      return;
-    }
-
-    if (Notification.permission === 'denied') {
-      console.warn('? Notifications blocked. Enable manually in browser settings.');
-      return;
-    }
-
-    Notification.requestPermission().then((permission) => {
-      if (permission === 'granted') {
-        console.log('? Desktop notifications enabled.');
-        setSseNotification('?? Desktop notifications enabled! You will now receive real-time barangay updates.');
-        setTimeout(() => setSseNotification(null), 5000);
-      } else {
-        console.warn('?? Notification permission denied.');
-      }
-    });
-  }, []);
-
   // 5c. handleLogout � deps: navigate
   const handleLogout = useCallback(() => {
     Swal.fire({
@@ -804,7 +777,7 @@ const showToast = useCallback((message, type = 'success') => {
     const rawLoc = report.location || report.purok || '';
     const zoneMatch = rawLoc.match(/(Zone\s*[1-5]|Purok\s*[1-5])/i);
     const detectedZone = zoneMatch ? zoneMatch[0] : '';
-    const detectedStreet = rawLoc.replace(zoneMatch ? zoneMatch[0] : '', '').replace(/^[ ,\-]+|[ ,\-]+$/g, '');
+    const detectedStreet = rawLoc.replace(zoneMatch ? zoneMatch[0] : '', '').replace(/^[ ,-]+|[ ,-]+$/g, '');
     setEditingReport(report);
     setEditForm({
       subject: report.subject || report.incidentType || '',
@@ -828,7 +801,7 @@ const showToast = useCallback((message, type = 'success') => {
   const rawLoc = editingReport?.location || editingReport?.purok || '';
   const zoneMatch = rawLoc.match(/(Zone\s*[1-5]|Purok\s*[1-5])/i);
   const detectedZone = zoneMatch ? zoneMatch[0] : '';
-  const detectedStreet = rawLoc.replace(zoneMatch ? zoneMatch[0] : '', '').replace(/^[ ,\-]+|[ ,\-]+$/g, '');
+  const detectedStreet = rawLoc.replace(zoneMatch ? zoneMatch[0] : '', '').replace(/^[ ,-]+|[ ,-]+$/g, '');
 
   const isModified =
     editForm.subject.trim() !== (editingReport?.subject || editingReport?.incidentType || '').trim() ||
@@ -930,7 +903,7 @@ const showToast = useCallback((message, type = 'success') => {
       let existingDoc = null;
       
       if (targetDocId) {
-        try { existingDoc = await db.get(targetDocId); } catch (err) { /* ignore */ }
+        try { existingDoc = await db.get(targetDocId); } catch { /* ignore */ }
       }
 
       if (!existingDoc) {
@@ -1341,7 +1314,9 @@ useEffect(() => {
     { id: 's-assistance', label: 'Aid', icon: <FaHandHoldingHeart /> },
     { id: 's-events', label: 'Events', icon: <FaCalendarAlt /> },
     { id: 's-profile', label: 'Profile', icon: <FaUser /> },
-  { id: 's-health', label: 'Health', icon: <FaHeartbeat /> },  ];
+  { id: 's-health', label: 'Health', icon: <FaHeartbeat /> },
+  { id: 's-bdrrmc', label: 'BDRRMC', icon: <FaExclamationTriangle /> },
+  ];
 
   /* -- Render -- */
   return (
@@ -1484,6 +1459,9 @@ useEffect(() => {
           )}
           {!isLoading && !loadError && activeScreen === 's-health' && (
             <ResidentHealthView loggedInUser={loggedInUser} />
+          )}
+          {!isLoading && !loadError && activeScreen === 's-bdrrmc' && (
+            <ResidentBDRRMC loggedInUser={loggedInUser} />
           )}
         </div>
 
