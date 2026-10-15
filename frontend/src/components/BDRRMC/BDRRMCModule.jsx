@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import Swal from 'sweetalert2';
 import { localDb as db, forceSyncToRemote } from '../../services/db';
@@ -16,6 +16,56 @@ const EMPTY_FORM = {
   status: 'Active',
 };
 
+const BARANGAY_WIDE = 'Barangay-wide';
+
+const purokNumber = (value) => {
+  const m = String(value || '').match(/(?:zone|purok)\s*([1-9][0-9]?)/i);
+  return m ? Number(m[1]) : null;
+};
+
+const isBarangayWide = (value) =>
+  /(barangay\s*-?\s*wide|buong\s+barangay|^all$)/i.test(String(value || '').trim());
+
+const buildAreaOptions = (registry) => {
+  const nums = new Set([1, 2, 3, 4, 5]);
+  [...(registry.households || []), ...(registry.residents || [])].forEach((doc) => {
+    const n = purokNumber(doc.purok || doc.purokZoneAddress);
+    if (n) nums.add(n);
+  });
+  const list = [...nums].sort((a, b) => a - b).map((n) => `Purok ${n}`);
+  return [...list, BARANGAY_WIDE];
+};
+
+const countFamiliesForArea = (location, registry) => {
+  const label = String(location || '').trim();
+  if (!label) return null;
+
+  const households = registry.households || [];
+  const residents = registry.residents || [];
+
+  if (isBarangayWide(label)) {
+    return { families: households.length, residents: residents.length };
+  }
+
+  const area = purokNumber(label);
+  if (area == null) return null;
+
+  const areaResidents = residents.filter((r) => purokNumber(r.purok || r.purokZoneAddress) === area);
+
+  if (registry.households.length > 0) {
+    const areaHouseholds = registry.households.filter((h) => purokNumber(h.purok || h.purokZoneAddress) === area);
+    return { families: areaHouseholds.length, residents: areaResidents.length };
+  }
+
+  const householdNos = new Set(
+    areaResidents.map((r) => r.householdNo || r.household).filter(Boolean)
+  );
+  return {
+    families: householdNos.size > 0 ? householdNos.size : areaResidents.length,
+    residents: areaResidents.length,
+  };
+};
+
 export default function BDRRMCModule() {
   const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -24,6 +74,7 @@ export default function BDRRMCModule() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState('All');
+  const [registry, setRegistry] = useState({ households: [], residents: [] });
 
   const loadEvents = async () => {
     try {
@@ -40,10 +91,56 @@ export default function BDRRMCModule() {
     }
   };
 
-  useEffect(() => { loadEvents(); }, []);
+  const loadRegistry = async () => {
+    try {
+      const res = await db.allDocs({ include_docs: true });
+      const docs = res.rows.map((r) => r.doc).filter(Boolean);
+      setRegistry({
+        households: docs.filter((d) => d.type === 'household' && !d._deleted),
+        residents: docs.filter(
+          (d) => ['resident', 'residents', 'profile'].includes(d.type) && !d._deleted && d.isArchived !== true
+        ),
+      });
+    } catch (err) {
+      console.error('Failed to load household/resident registry:', err);
+    }
+  };
 
-  const openAdd = () => { setEditItem(null); setForm(EMPTY_FORM); setFormOpen(true); };
-  const openEdit = (item) => { setEditItem(item); setForm({ ...EMPTY_FORM, ...item }); setFormOpen(true); };
+  useEffect(() => { loadEvents(); loadRegistry(); }, []);
+
+  const areaOptions = useMemo(() => buildAreaOptions(registry), [registry]);
+
+  const suggestion = useMemo(() => countFamiliesForArea(form.location, registry), [form.location, registry]);
+  const areaSelectValue = areaOptions.includes(form.location)
+    ? form.location
+    : (String(form.location || '').trim() ? '__other__' : '');
+
+  const openAdd = () => {
+    setEditItem(null);
+    setForm(EMPTY_FORM);
+    setFormOpen(true);
+    loadRegistry();
+  };
+
+  const openEdit = (item) => {
+    setEditItem(item);
+    setForm({ ...EMPTY_FORM, ...item });
+    setFormOpen(true);
+    loadRegistry();
+  };
+
+  const handleAreaSelect = (value) => {
+    if (value === '__other__') {
+      setForm((prev) => ({ ...prev, location: '' }));
+      return;
+    }
+    const info = countFamiliesForArea(value, registry);
+    setForm((prev) => ({ ...prev, location: value, affectedFamilies: info ? info.families : 0 }));
+  };
+
+  const handleLocationText = (value) => {
+    setForm((prev) => ({ ...prev, location: value }));
+  };
 
   const handleSave = async (e) => {
     e.preventDefault();
@@ -144,7 +241,7 @@ export default function BDRRMCModule() {
                   <td style={{ padding: '10px 12px' }}><span style={badgeStyle(ev.status === 'Active' ? 'red' : ev.status === 'Monitoring' ? 'amber' : 'green')}>{ev.status}</span></td>
                   <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
                     <button className="btn btn-g btn-sm" onClick={() => openEdit(ev)} style={{ marginRight: 6 }}>Edit</button>
-                    <button className="btn btn-g btn-sm" onClick={() => handleDelete(ev)} style={{ color: 'var(--red)' }}>Delete</button>
+                    <button className="btn btn-g btn-sm" onClick={() => handleDelete(ev)}>Delete</button>
                   </td>
                 </tr>
               ))}
@@ -161,15 +258,33 @@ export default function BDRRMCModule() {
             <select style={{ ...inputStyle, marginBottom: 12 }} value={form.eventType} onChange={(e) => setForm({ ...form, eventType: e.target.value })} disabled={saving}>
               {['Typhoon','Flood','Fire','Earthquake','Others'].map((t) => <option key={t}>{t}</option>)}
             </select>
-            <label style={labelStyle}>LOCATION *</label>
-            <input style={{ ...inputStyle, marginBottom: 12 }} value={form.location} onChange={(e) => setForm({ ...form, location: e.target.value })} disabled={saving} required />
+            <label style={labelStyle}>AFFECTED AREA (PUROK / ZONE) *</label>
+            <select style={{ ...inputStyle, marginBottom: areaSelectValue === '__other__' ? 8 : 12 }} value={areaSelectValue} onChange={(e) => handleAreaSelect(e.target.value)} disabled={saving}>
+              <option value="" disabled>Select affected area</option>
+              {areaOptions.map((a) => <option key={a} value={a}>{a}</option>)}
+              <option value="__other__">Others (specify)</option>
+            </select>
+            {areaSelectValue === '__other__' && (
+              <input style={{ ...inputStyle, marginBottom: 12 }} value={form.location} onChange={(e) => handleLocationText(e.target.value)} placeholder="e.g. Bustrac Elementary School" disabled={saving} />
+            )}
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
               <div><label style={labelStyle}>DATE STARTED</label><input type="date" style={inputStyle} value={form.dateStarted} onChange={(e) => setForm({ ...form, dateStarted: e.target.value })} disabled={saving} /></div>
               <div><label style={labelStyle}>DATE ENDED</label><input type="date" style={inputStyle} value={form.dateEnded} onChange={(e) => setForm({ ...form, dateEnded: e.target.value })} disabled={saving} /></div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
               <div><label style={labelStyle}>SEVERITY</label><select style={inputStyle} value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })} disabled={saving}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></div>
-              <div><label style={labelStyle}>AFFECTED FAMILIES</label><input type="number" style={inputStyle} value={form.affectedFamilies} onChange={(e) => setForm({ ...form, affectedFamilies: Number(e.target.value)||0 })} disabled={saving} /></div>
+              <div>
+                <label style={labelStyle}>AFFECTED FAMILIES</label>
+                <input type="number" min="0" style={inputStyle} value={form.affectedFamilies} onChange={(e) => setForm({ ...form, affectedFamilies: Number(e.target.value)||0 })} disabled={saving} />
+                {suggestion && (
+                  <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4, lineHeight: 1.4 }}>
+                    Registry: {suggestion.families} {suggestion.families === 1 ? 'household' : 'households'}{suggestion.residents > 0 ? ` · ${suggestion.residents} ${suggestion.residents === 1 ? 'resident' : 'residents'}` : ''} in {form.location}.
+                    {form.affectedFamilies !== suggestion.families && (
+                      <button type="button" onClick={() => setForm({ ...form, affectedFamilies: suggestion.families })} style={{ marginLeft: 6, background: 'none', border: 'none', color: 'var(--accent)', cursor: 'pointer', fontSize: 11, fontWeight: 700, padding: 0 }}>Use {suggestion.families}</button>
+                    )}
+                  </div>
+                )}
+              </div>
             </div>
             <label style={labelStyle}>STATUS</label>
             <select style={{ ...inputStyle, marginBottom: 12 }} value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value })} disabled={saving}><option>Active</option><option>Monitoring</option><option>Resolved</option></select>
