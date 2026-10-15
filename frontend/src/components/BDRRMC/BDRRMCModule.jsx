@@ -79,6 +79,7 @@ export default function BDRRMCModule() {
   const [form, setForm] = useState(EMPTY_FORM);
   const [saving, setSaving] = useState(false);
   const [filter, setFilter] = useState('All');
+  const [archiveFilter, setArchiveFilter] = useState('Active');
   const [registry, setRegistry] = useState({ households: [], residents: [] });
 
   const loadEvents = async () => {
@@ -156,7 +157,7 @@ export default function BDRRMCModule() {
     try {
       let doc = editItem
         ? { ...editItem, ...form, updatedAt: new Date().toISOString() }
-        : { _id: generateUUID(), type: 'disaster_event', ...form, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
+        : { _id: generateUUID(), type: 'disaster_event', isArchived: false, ...form, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() };
       let saved = false, attempts = 0;
       while (attempts < 3 && !saved) {
         try { await db.put(doc); saved = true; }
@@ -179,16 +180,66 @@ export default function BDRRMCModule() {
     } finally { setSaving(false); }
   };
 
-  const handleDelete = async (item) => {
-    const res = await Swal.fire({ icon: 'warning', title: 'Delete event?', text: item.eventType + ' - ' + item.location, showCancelButton: true, confirmButtonText: 'Delete', confirmButtonColor: '#dc2626' });
+  const handleArchive = async (item) => {
+    const res = await Swal.fire({
+      icon: 'warning',
+      title: 'Archive event?',
+      text: 'Archived events are hidden from the active list but kept for history.',
+      showCancelButton: true,
+      confirmButtonText: 'Archive',
+      confirmButtonColor: '#dc2626',
+    });
     if (!res.isConfirmed) return;
     try {
-      const fresh = await db.get(item._id);
-      await db.remove(fresh);
+      let doc = { ...(await db.get(item._id)), isArchived: true, updatedAt: new Date().toISOString() };
+      let saved = false, attempts = 0;
+      while (attempts < 3 && !saved) {
+        try { await db.put(doc); saved = true; }
+        catch (err) {
+          if (err && (err.status === 409 || err.name === 'conflict')) {
+            attempts++;
+            doc = { ...(await db.get(doc._id)), isArchived: true, updatedAt: new Date().toISOString() };
+          } else throw err;
+        }
+      }
+      if (!saved) throw new Error('Conflict archiving disaster event.');
       try { await forceSyncToRemote(); } catch { /* best-effort */ }
+      try { await createAuditLog({ action: 'DISASTER_EVENT_ARCHIVE', module: 'BDRRMC', recordId: doc._id, details: 'Archived disaster event: ' + doc.eventType + ' at ' + doc.location }); } catch { /* best-effort */ }
+      Swal.fire({ icon: 'success', title: 'Archived', timer: 1200, showConfirmButton: false });
       await loadEvents();
     } catch (err) {
-      Swal.fire('Delete failed', err.message || 'Unknown error', 'error');
+      Swal.fire('Archive failed', err.message || 'Unknown error', 'error');
+    }
+  };
+
+  const handleRestore = async (item) => {
+    const res = await Swal.fire({
+      icon: 'question',
+      title: 'Restore event?',
+      text: 'This event will return to the active list.',
+      showCancelButton: true,
+      confirmButtonText: 'Restore',
+    });
+    if (!res.isConfirmed) return;
+    try {
+      let doc = { ...(await db.get(item._id)), isArchived: false, updatedAt: new Date().toISOString() };
+      let saved = false, attempts = 0;
+      while (attempts < 3 && !saved) {
+        try { await db.put(doc); saved = true; }
+        catch (err) {
+          if (err && (err.status === 409 || err.name === 'conflict')) {
+            attempts++;
+            doc = { ...(await db.get(doc._id)), isArchived: false, updatedAt: new Date().toISOString() };
+          } else throw err;
+        }
+      }
+      if (!saved) throw new Error('Conflict restoring disaster event.');
+      try { await forceSyncToRemote(); } catch { /* best-effort */ }
+      try { await createAuditLog({ action: 'DISASTER_EVENT_RESTORE', module: 'BDRRMC', recordId: doc._id, details: 'Restored disaster event: ' + doc.eventType + ' at ' + doc.location }); } catch { /* best-effort */ }
+      Swal.fire({ icon: 'success', title: 'Restored', timer: 1200, showConfirmButton: false });
+      await loadEvents();
+    } catch (err) {
+      Swal.fire('Restore failed', err.message || 'Unknown error', 'error');
     }
   };
 
@@ -202,7 +253,14 @@ export default function BDRRMCModule() {
     const v = map[c] || map.accent;
     return { display: 'inline-block', padding: '3px 8px', borderRadius: 12, fontSize: 11, fontWeight: 700, background: v.bg, color: v.fg };
   };
-  const filtered = events.filter((e) => filter === 'All' || e.eventType === filter);
+  const filtered = events.filter((e) => {
+    const matchesType = filter === 'All' || e.eventType === filter;
+    const matchesArchive =
+      archiveFilter === 'All' ? true :
+      archiveFilter === 'Archived' ? e.isArchived === true :
+      e.isArchived !== true;
+    return matchesType && matchesArchive;
+  });
 
   const inputStyle = { background: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)', borderRadius: 6, padding: '8px 10px', fontSize: 13, width: '100%', boxSizing: 'border-box' };
   const labelStyle = { display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4 };
@@ -215,9 +273,19 @@ export default function BDRRMCModule() {
       </div>
 
       <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>Event Type</div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {['All','Typhoon','Flood','Fire','Earthquake','Others'].map((t) => (
             <button key={t} className="btn btn-g btn-sm" style={{ borderColor: filter === t ? 'var(--accent)' : 'var(--border)' }} onClick={() => setFilter(t)}>{t}</button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>Archive</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {['All','Active','Archived'].map((t) => (
+            <button key={t} className="btn btn-g btn-sm" style={{ borderColor: archiveFilter === t ? 'var(--accent)' : 'var(--border)' }} onClick={() => setArchiveFilter(t)}>{t}</button>
           ))}
         </div>
       </div>
@@ -232,13 +300,13 @@ export default function BDRRMCModule() {
             <thead style={{ background: 'var(--surface2)' }}>
               <tr>
                 {['Event Type','Location','Date Started','Severity','Status','Actions'].map((h) => (
-                  <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>{h}</th>
+                  <th key={h} scope="col" style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>{h}</th>
                 ))}
               </tr>
             </thead>
             <tbody>
               {filtered.map((ev) => (
-                <tr key={ev._id} style={{ borderTop: '1px solid var(--border)' }}>
+                <tr key={ev._id} style={{ borderTop: '1px solid var(--border)', opacity: ev.isArchived ? 0.6 : 1 }}>
                   <td style={{ padding: '10px 12px', color: 'var(--text)', fontWeight: 600 }}>{ev.eventType}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{ev.location}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{ev.dateStarted || '—'}</td>
@@ -246,7 +314,14 @@ export default function BDRRMCModule() {
                   <td style={{ padding: '10px 12px' }}><span style={badgeStyle(ev.status === 'Active' ? 'red' : ev.status === 'Monitoring' ? 'amber' : 'green')}>{ev.status}</span></td>
                   <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
                     <button className="btn btn-g btn-sm" onClick={() => openEdit(ev)} style={{ marginRight: 6 }}>Edit</button>
-                    <button className="btn btn-g btn-sm" onClick={() => handleDelete(ev)}>Delete</button>
+                    {ev.isArchived ? (
+                      <>
+                        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginRight: 6 }}>Archived</span>
+                        <button className="btn btn-g btn-sm" onClick={() => handleRestore(ev)}>Restore</button>
+                      </>
+                    ) : (
+                      <button className="btn btn-g btn-sm" onClick={() => handleArchive(ev)}>Archive</button>
+                    )}
                   </td>
                 </tr>
               ))}
@@ -257,8 +332,8 @@ export default function BDRRMCModule() {
 
       {formOpen && createPortal(
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: 16 }} onClick={() => !saving && setFormOpen(false)}>
-          <form onClick={(e) => e.stopPropagation()} onSubmit={handleSave} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 22, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
-            <h3 style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{editItem ? 'Edit Disaster Event' : 'Add Disaster Event'}</h3>
+          <form role="dialog" aria-modal="true" aria-labelledby="bdrrmc-event-title" onClick={(e) => e.stopPropagation()} onSubmit={handleSave} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 22, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 id="bdrrmc-event-title" style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{editItem ? 'Edit Disaster Event' : 'Add Disaster Event'}</h3>
             <label style={labelStyle}>EVENT TYPE</label>
             <select style={{ ...inputStyle, marginBottom: 12 }} value={form.eventType} onChange={(e) => setForm({ ...form, eventType: e.target.value })} disabled={saving}>
               {['Typhoon','Flood','Fire','Earthquake','Others'].map((t) => <option key={t}>{t}</option>)}
@@ -272,11 +347,11 @@ export default function BDRRMCModule() {
             {areaSelectValue === '__other__' && (
               <input style={{ ...inputStyle, marginBottom: 12 }} value={form.location} onChange={(e) => handleLocationText(e.target.value)} placeholder="e.g. Bustrac Elementary School" disabled={saving} />
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
               <div><label style={labelStyle}>DATE STARTED</label><input type="date" style={inputStyle} value={form.dateStarted} onChange={(e) => setForm({ ...form, dateStarted: e.target.value })} disabled={saving} /></div>
               <div><label style={labelStyle}>DATE ENDED</label><input type="date" style={inputStyle} value={form.dateEnded} onChange={(e) => setForm({ ...form, dateEnded: e.target.value })} disabled={saving} /></div>
             </div>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
               <div><label style={labelStyle}>SEVERITY</label><select style={inputStyle} value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })} disabled={saving}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></div>
               <div>
                 <label style={labelStyle}>AFFECTED FAMILIES</label>

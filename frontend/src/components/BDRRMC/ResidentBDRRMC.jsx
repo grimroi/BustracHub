@@ -14,7 +14,7 @@ export default function ResidentBDRRMC({ loggedInUser }) {
         
         // Active Disaster Alerts
         const activeAlerts = docs
-          .filter(d => d.type === 'disaster_event' && d.status === 'Active')
+          .filter(d => d.type === 'disaster_event' && d.status === 'Active' && d.isArchived !== true)
           .sort((a, b) => new Date(b.dateStarted || 0) - new Date(a.dateStarted || 0));
           
         // My Relief Records
@@ -22,7 +22,7 @@ export default function ResidentBDRRMC({ loggedInUser }) {
         const fullName = loggedInUser?.fullName || loggedInUser?.name || '';
         
         const myRelief = docs
-          .filter(d => d.type === 'relief_distribution' && (
+          .filter(d => d.type === 'relief_distribution' && d.isArchived !== true && (
             (residentId && d.residentId === residentId) ||
             (fullName && d.residentName === fullName)
           ))
@@ -93,7 +93,7 @@ export default function ResidentBDRRMC({ loggedInUser }) {
               <thead style={{ background: 'var(--surface2)' }}>
                 <tr>
                   {['Item', 'Quantity', 'Date Given', 'Notes'].map(h => (
-                    <th key={h} style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>{h}</th>
+                    <th key={h} scope="col" style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>{h}</th>
                   ))}
                 </tr>
               </thead>
