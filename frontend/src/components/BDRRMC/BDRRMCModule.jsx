@@ -23,9 +23,6 @@ const purokNumber = (value) => {
   return m ? Number(m[1]) : null;
 };
 
-const isBarangayWide = (value) =>
-  /(barangay\s*-?\s*wide|buong\s+barangay|^all$)/i.test(String(value || '').trim());
-
 const buildAreaOptions = (registry) => {
   const nums = new Set([1, 2, 3, 4, 5]);
   [...(registry.households || []), ...(registry.residents || [])].forEach((doc) => {
@@ -43,25 +40,33 @@ const countFamiliesForArea = (location, registry) => {
   const households = registry.households || [];
   const residents = registry.residents || [];
 
-  if (isBarangayWide(label)) {
-    return { families: households.length, residents: residents.length };
+  if (/(barangay\s*-?\s*wide|buong\s+barangay|^all$)/i.test(label)) {
+    let totalFamilies = households.length;
+    if (totalFamilies === 0 && residents.length > 0) {
+        const uniqueHH = new Set(residents.map(r => r.householdNo || r.household).filter(Boolean));
+        totalFamilies = uniqueHH.size > 0 ? uniqueHH.size : residents.length;
+    }
+    return { families: totalFamilies, residents: residents.length };
   }
 
   const area = purokNumber(label);
   if (area == null) return null;
 
+  const areaHouseholds = households.filter((h) => purokNumber(h.purok || h.purokZoneAddress) === area);
   const areaResidents = residents.filter((r) => purokNumber(r.purok || r.purokZoneAddress) === area);
 
-  if (registry.households.length > 0) {
-    const areaHouseholds = registry.households.filter((h) => purokNumber(h.purok || h.purokZoneAddress) === area);
-    return { families: areaHouseholds.length, residents: areaResidents.length };
+  let familiesCount = areaHouseholds.length;
+
+  // Fallback: If no household docs in this specific area, estimate from residents
+  if (familiesCount === 0 && areaResidents.length > 0) {
+    const householdNos = new Set(
+      areaResidents.map((r) => r.householdNo || r.household).filter(Boolean)
+    );
+    familiesCount = householdNos.size > 0 ? householdNos.size : areaResidents.length;
   }
 
-  const householdNos = new Set(
-    areaResidents.map((r) => r.householdNo || r.household).filter(Boolean)
-  );
   return {
-    families: householdNos.size > 0 ? householdNos.size : areaResidents.length,
+    families: familiesCount,
     residents: areaResidents.length,
   };
 };
