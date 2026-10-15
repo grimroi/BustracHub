@@ -1,9 +1,12 @@
-import { useEffect, useState, useMemo } from 'react';
+import { useEffect, useState, useMemo, useRef } from 'react';
 import { createPortal } from 'react-dom';
 import Swal from 'sweetalert2';
 import { localDb as db, forceSyncToRemote } from '../../services/db';
 import { createAuditLog } from '../../utils/auditLog';
 import { generateUUID } from '../../utils/helpers';
+
+// SweetAlert mixin that renders ABOVE the portal modals (zIndex 10000).
+const BdrrmcSwal = Swal.mixin({ zIndex: 10001 });
 
 const EMPTY_FORM = {
   eventType: 'Typhoon',
@@ -81,6 +84,8 @@ export default function BDRRMCModule() {
   const [filter, setFilter] = useState('All');
   const [archiveFilter, setArchiveFilter] = useState('Active');
   const [registry, setRegistry] = useState({ households: [], residents: [] });
+  const today = new Date().toISOString().split('T')[0];
+  const areaRef = useRef(null);
 
   const loadEvents = async () => {
     try {
@@ -151,7 +156,26 @@ export default function BDRRMCModule() {
   const handleSave = async (e) => {
     e.preventDefault();
     if (!form.eventType || !form.location.trim()) {
-      Swal.fire('Required', 'Event type and location are required.', 'warning'); return;
+      BdrrmcSwal.fire({
+        icon: 'warning',
+        title: 'Required',
+        text: 'Event type and affected area are required.',
+      }).then(() => areaRef.current?.focus());
+      return;
+    }
+    if (form.dateStarted && form.dateStarted > today) {
+      BdrrmcSwal.fire({ icon: 'warning', title: 'Invalid date', text: 'Date started cannot be in the future.' });
+      return;
+    }
+    if (form.dateEnded) {
+      if (form.dateEnded > today) {
+        BdrrmcSwal.fire({ icon: 'warning', title: 'Invalid date', text: 'Date ended cannot be in the future.' });
+        return;
+      }
+      if (form.dateStarted && form.dateEnded < form.dateStarted) {
+        BdrrmcSwal.fire({ icon: 'warning', title: 'Invalid date', text: 'Date ended cannot be earlier than date started.' });
+        return;
+      }
     }
     setSaving(true);
     try {
@@ -172,16 +196,16 @@ export default function BDRRMCModule() {
       if (!saved) throw new Error('Conflict saving disaster event.');
       try { await forceSyncToRemote(); } catch { /* best-effort */ }
       try { await createAuditLog({ action: editItem ? 'DISASTER_EVENT_UPDATE' : 'DISASTER_EVENT_CREATE', module: 'BDRRMC', recordId: doc._id, details: form.eventType + ' at ' + form.location }); } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: 'Saved', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: 'Saved', timer: 1200, showConfirmButton: false });
       setFormOpen(false);
       await loadEvents();
     } catch (err) {
-      Swal.fire('Save failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Save failed', text: err.message || 'Unknown error' });
     } finally { setSaving(false); }
   };
 
   const handleArchive = async (item) => {
-    const res = await Swal.fire({
+    const res = await BdrrmcSwal.fire({
       icon: 'warning',
       title: 'Archive event?',
       text: 'Archived events are hidden from the active list but kept for history.',
@@ -205,15 +229,15 @@ export default function BDRRMCModule() {
       if (!saved) throw new Error('Conflict archiving disaster event.');
       try { await forceSyncToRemote(); } catch { /* best-effort */ }
       try { await createAuditLog({ action: 'DISASTER_EVENT_ARCHIVE', module: 'BDRRMC', recordId: doc._id, details: 'Archived disaster event: ' + doc.eventType + ' at ' + doc.location }); } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: 'Archived', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: 'Archived', timer: 1200, showConfirmButton: false });
       await loadEvents();
     } catch (err) {
-      Swal.fire('Archive failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Archive failed', text: err.message || 'Unknown error' });
     }
   };
 
   const handleRestore = async (item) => {
-    const res = await Swal.fire({
+    const res = await BdrrmcSwal.fire({
       icon: 'question',
       title: 'Restore event?',
       text: 'This event will return to the active list.',
@@ -236,10 +260,10 @@ export default function BDRRMCModule() {
       if (!saved) throw new Error('Conflict restoring disaster event.');
       try { await forceSyncToRemote(); } catch { /* best-effort */ }
       try { await createAuditLog({ action: 'DISASTER_EVENT_RESTORE', module: 'BDRRMC', recordId: doc._id, details: 'Restored disaster event: ' + doc.eventType + ' at ' + doc.location }); } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: 'Restored', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: 'Restored', timer: 1200, showConfirmButton: false });
       await loadEvents();
     } catch (err) {
-      Swal.fire('Restore failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Restore failed', text: err.message || 'Unknown error' });
     }
   };
 
@@ -331,14 +355,14 @@ export default function BDRRMCModule() {
 
       {formOpen && createPortal(
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.65)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 10000, padding: 16 }} onClick={() => !saving && setFormOpen(false)}>
-          <form role="dialog" aria-modal="true" aria-labelledby="bdrrmc-event-title" onClick={(e) => e.stopPropagation()} onSubmit={handleSave} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: 22, width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto' }}>
+          <form role="dialog" aria-modal="true" aria-labelledby="bdrrmc-event-title" onClick={(e) => e.stopPropagation()} onSubmit={handleSave} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, padding: '22px 22px 32px', width: '100%', maxWidth: 520, maxHeight: '90vh', overflowY: 'auto', paddingBottom: 32, scrollPaddingBottom: 28 }}>
             <h3 id="bdrrmc-event-title" style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 800, color: 'var(--text)' }}>{editItem ? 'Edit Disaster Event' : 'Add Disaster Event'}</h3>
             <label style={labelStyle}>EVENT TYPE</label>
             <select style={{ ...inputStyle, marginBottom: 12 }} value={form.eventType} onChange={(e) => setForm({ ...form, eventType: e.target.value })} disabled={saving}>
               {['Typhoon','Flood','Fire','Earthquake','Others'].map((t) => <option key={t}>{t}</option>)}
             </select>
             <label style={labelStyle}>AFFECTED AREA (PUROK / ZONE) *</label>
-            <select style={{ ...inputStyle, marginBottom: areaSelectValue === '__other__' ? 8 : 12 }} value={areaSelectValue} onChange={(e) => handleAreaSelect(e.target.value)} disabled={saving}>
+            <select ref={areaRef} style={{ ...inputStyle, marginBottom: areaSelectValue === '__other__' ? 8 : 12 }} value={areaSelectValue} onChange={(e) => handleAreaSelect(e.target.value)} disabled={saving}>
               <option value="" disabled>Select affected area</option>
               {areaOptions.map((a) => <option key={a} value={a}>{a}</option>)}
               <option value="__other__">Others (specify)</option>
@@ -347,8 +371,8 @@ export default function BDRRMCModule() {
               <input style={{ ...inputStyle, marginBottom: 12 }} value={form.location} onChange={(e) => handleLocationText(e.target.value)} placeholder="e.g. Bustrac Elementary School" disabled={saving} />
             )}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
-              <div><label style={labelStyle}>DATE STARTED</label><input type="date" style={inputStyle} value={form.dateStarted} onChange={(e) => setForm({ ...form, dateStarted: e.target.value })} disabled={saving} /></div>
-              <div><label style={labelStyle}>DATE ENDED</label><input type="date" style={inputStyle} value={form.dateEnded} onChange={(e) => setForm({ ...form, dateEnded: e.target.value })} disabled={saving} /></div>
+              <div><label style={labelStyle}>DATE STARTED</label><input type="date" style={inputStyle} max={today} value={form.dateStarted} onChange={(e) => setForm({ ...form, dateStarted: e.target.value })} disabled={saving} aria-label="Date started" /></div>
+              <div><label style={labelStyle}>DATE ENDED</label><input type="date" style={inputStyle} min={form.dateStarted || undefined} max={today} value={form.dateEnded} onChange={(e) => setForm({ ...form, dateEnded: e.target.value })} disabled={saving} aria-label="Date ended" /></div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
               <div><label style={labelStyle}>SEVERITY</label><select style={inputStyle} value={form.severity} onChange={(e) => setForm({ ...form, severity: e.target.value })} disabled={saving}><option>Low</option><option>Medium</option><option>High</option><option>Critical</option></select></div>

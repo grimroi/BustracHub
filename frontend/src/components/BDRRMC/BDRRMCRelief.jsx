@@ -5,6 +5,9 @@ import { localDb as db, forceSyncToRemote } from '../../services/db';
 import { createAuditLog } from '../../utils/auditLog';
 import { generateUUID } from '../../utils/helpers';
 
+// SweetAlert mixin that renders ABOVE the portal modals (zIndex 10000).
+const BdrrmcSwal = Swal.mixin({ zIndex: 10001 });
+
 const EMPTY_FORM = {
   eventId: '',
   residentId: '',
@@ -82,7 +85,10 @@ export default function BDRRMCRelief() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.residentName.trim()) { Swal.fire('Required', 'Beneficiary name is required.', 'warning'); return; }
+    if (!form.residentName.trim()) {
+      BdrrmcSwal.fire({ icon: 'warning', title: 'Required', text: 'Beneficiary name is required.' });
+      return;
+    }
     setSaving(true);
     try {
       const now = new Date().toISOString();
@@ -99,17 +105,17 @@ export default function BDRRMCRelief() {
           details: (editItem ? 'Updated ' : 'Distributed ') + form.reliefItem + ' for ' + form.residentName,
         });
       } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: editItem ? 'Updated' : 'Recorded', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: editItem ? 'Updated' : 'Recorded', timer: 1200, showConfirmButton: false });
       setFormOpen(false);
       setEditItem(null);
       await load();
     } catch (err) {
-      Swal.fire('Save failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Save failed', text: err.message || 'Unknown error' });
     } finally { setSaving(false); }
   };
 
   const handleArchive = async (item) => {
-    const res = await Swal.fire({
+    const res = await BdrrmcSwal.fire({
       icon: 'warning',
       title: 'Archive record?',
       text: 'Archived records are hidden from the active list but kept for history.',
@@ -131,15 +137,15 @@ export default function BDRRMCRelief() {
           details: 'Archived relief distribution for ' + (doc.residentName || 'unknown'),
         });
       } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: 'Archived', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: 'Archived', timer: 1200, showConfirmButton: false });
       await load();
     } catch (err) {
-      Swal.fire('Archive failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Archive failed', text: err.message || 'Unknown error' });
     }
   };
 
   const handleRestore = async (item) => {
-    const res = await Swal.fire({
+    const res = await BdrrmcSwal.fire({
       icon: 'question',
       title: 'Restore record?',
       text: 'This record will return to the active list.',
@@ -160,10 +166,10 @@ export default function BDRRMCRelief() {
           details: 'Restored relief distribution for ' + (doc.residentName || 'unknown'),
         });
       } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: 'Restored', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: 'Restored', timer: 1200, showConfirmButton: false });
       await load();
     } catch (err) {
-      Swal.fire('Restore failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Restore failed', text: err.message || 'Unknown error' });
     }
   };
 

@@ -5,6 +5,9 @@ import { localDb as db, forceSyncToRemote } from '../../services/db';
 import { createAuditLog } from '../../utils/auditLog';
 import { generateUUID } from '../../utils/helpers';
 
+// SweetAlert mixin that renders ABOVE the portal modals (zIndex 10000).
+const BdrrmcSwal = Swal.mixin({ zIndex: 10001 });
+
 const EMPTY_FORM = {
   name: '',
   location: '',
@@ -103,7 +106,10 @@ export default function BDRRMCEvacuation() {
 
   const handleSave = async (e) => {
     e.preventDefault();
-    if (!form.name.trim()) { Swal.fire('Required', 'Center name is required.', 'warning'); return; }
+    if (!form.name.trim()) {
+      BdrrmcSwal.fire({ icon: 'warning', title: 'Required', text: 'Center name is required.' });
+      return;
+    }
     setSaving(true);
     try {
       const now = new Date().toISOString();
@@ -125,12 +131,12 @@ export default function BDRRMCEvacuation() {
           details: (editItem ? 'Updated ' : 'Created ') + doc.name,
         });
       } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: editItem ? 'Updated' : 'Saved', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: editItem ? 'Updated' : 'Saved', timer: 1200, showConfirmButton: false });
       setFormOpen(false);
       setEditItem(null);
       await load();
     } catch (err) {
-      Swal.fire('Save failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Save failed', text: err.message || 'Unknown error' });
     } finally { setSaving(false); }
   };
 
@@ -156,12 +162,12 @@ export default function BDRRMCEvacuation() {
       } catch { /* best-effort */ }
       await load();
     } catch (err) {
-      Swal.fire('Update failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Update failed', text: err.message || 'Unknown error' });
     }
   };
 
   const handleArchive = async (item) => {
-    const res = await Swal.fire({
+    const res = await BdrrmcSwal.fire({
       icon: 'warning',
       title: 'Archive center?',
       text: 'Archived centers are hidden from the active list but kept for history.',
@@ -178,15 +184,15 @@ export default function BDRRMCEvacuation() {
       try {
         await createAuditLog({ action: 'EVACUATION_CENTER_ARCHIVE', module: 'BDRRMC', recordId: doc._id, details: 'Archived evacuation center: ' + doc.name });
       } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: 'Archived', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: 'Archived', timer: 1200, showConfirmButton: false });
       await load();
     } catch (err) {
-      Swal.fire('Archive failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Archive failed', text: err.message || 'Unknown error' });
     }
   };
 
   const handleRestore = async (item) => {
-    const res = await Swal.fire({
+    const res = await BdrrmcSwal.fire({
       icon: 'question',
       title: 'Restore center?',
       text: 'This center will return to the active list.',
@@ -202,10 +208,10 @@ export default function BDRRMCEvacuation() {
       try {
         await createAuditLog({ action: 'EVACUATION_CENTER_RESTORE', module: 'BDRRMC', recordId: doc._id, details: 'Restored evacuation center: ' + doc.name });
       } catch { /* best-effort */ }
-      Swal.fire({ icon: 'success', title: 'Restored', timer: 1200, showConfirmButton: false });
+      BdrrmcSwal.fire({ icon: 'success', title: 'Restored', timer: 1200, showConfirmButton: false });
       await load();
     } catch (err) {
-      Swal.fire('Restore failed', err.message || 'Unknown error', 'error');
+      BdrrmcSwal.fire({ icon: 'error', title: 'Restore failed', text: err.message || 'Unknown error' });
     }
   };
 
