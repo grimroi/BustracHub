@@ -4,6 +4,7 @@ import { localDb as db } from '../../services/db';
 export default function ResidentBDRRMC({ loggedInUser }) {
   const [alerts, setAlerts] = useState([]);
   const [relief, setRelief] = useState([]);
+  const [centers, setCenters] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -27,9 +28,15 @@ export default function ResidentBDRRMC({ loggedInUser }) {
             (fullName && d.residentName === fullName)
           ))
           .sort((a, b) => new Date(b.dateGiven || 0) - new Date(a.dateGiven || 0));
-          
+
+        // Available Evacuation Centers (open/full only, active only)
+        const availableCenters = docs
+          .filter(d => d.type === 'evacuation_center' && d.isArchived !== true && (d.status === 'Open' || d.status === 'Full'))
+          .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+
         setAlerts(activeAlerts);
         setRelief(myRelief);
+        setCenters(availableCenters);
       } catch (err) {
         console.error('Failed to load BDRRMC data:', err);
       } finally {
@@ -108,6 +115,33 @@ export default function ResidentBDRRMC({ loggedInUser }) {
                 ))}
               </tbody>
             </table>
+          </div>
+        )}
+      </section>
+
+      <section>
+        <h3 style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Available Evacuation Centers</h3>
+        {centers.length === 0 ? (
+          <div style={{ padding: 20, textAlign: 'center', background: 'var(--surface2)', border: '1px dashed var(--border)', borderRadius: 10, color: 'var(--muted)' }}>
+            No open evacuation centers available.
+          </div>
+        ) : (
+          <div style={{ display: 'grid', gap: 12, gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))' }}>
+            {centers.map(c => (
+              <div key={c._id} style={{ padding: 16, background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
+                  <strong style={{ fontSize: 15, color: 'var(--text)' }}>{c.name}</strong>
+                  <span style={{ fontSize: 11, fontWeight: 700, padding: '3px 8px', borderRadius: 12, background: c.status === 'Full' ? 'rgba(220, 38, 38, 0.16)' : 'rgba(16, 185, 129, 0.16)', color: c.status === 'Full' ? 'var(--red, #dc2626)' : 'var(--green, #059669)' }}>{c.status}</span>
+                </div>
+                <div style={{ fontSize: 13, color: 'var(--muted)' }}>
+                  <div style={{ marginBottom: 4 }}>📍 {c.location || '—'}{c.purok ? ` (${c.purok})` : ''}</div>
+                  <div style={{ marginBottom: 4 }}>👥 Occupancy: {Number(c.currentOccupants) || 0} / {Number(c.capacity) || 0}</div>
+                  {(c.contactPerson || c.contactNumber) && (
+                    <div>☎ {c.contactPerson || '—'}{c.contactNumber ? ` · ${c.contactNumber}` : ''}</div>
+                  )}
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>

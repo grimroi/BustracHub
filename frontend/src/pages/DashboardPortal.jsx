@@ -4,6 +4,7 @@ import BHSHealthRecords from '../components/BHS/BHSHealthRecords';
 import BHSInventory from '../components/BHS/BHSInventory';
 import BDRRMCModule from '../components/BDRRMC/BDRRMCModule';
 import BDRRMCRelief from '../components/BDRRMC/BDRRMCRelief';
+import BDRRMCEvacuation from '../components/BDRRMC/BDRRMCEvacuation';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
@@ -15647,6 +15648,7 @@ const handleGenerateCredentials = async (resident) => {
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
               <BDRRMCModule />
               <BDRRMCRelief />
+              <BDRRMCEvacuation />
             </div>
           )}
           {/* Fallback for unknown screens (e.g. legacy 'pending' links) */}

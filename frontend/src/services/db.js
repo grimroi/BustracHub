@@ -20,7 +20,7 @@ const SYNC_ENDPOINT = `${API_BASE}/api/sync/${COUCH_DB_NAME}`;
 
 // Marker to prove the browser is running the latest sync bundle. Purely
 // diagnostic — it does not affect replication behavior.
-const SYNC_FILTER_PATCH = 'owner-filter-bdrrmc-2026-10-15';
+const SYNC_FILTER_PATCH = 'owner-filter-bdrrmc-evacuation-2026-10-15';
 console.log(`[bustrac-sync] frontend patch loaded: ${SYNC_FILTER_PATCH}`);
 
 // Wraps the browser fetch so every proxied CouchDB request carries the
@@ -177,6 +177,8 @@ const RESIDENT_PUBLIC_READ_TYPES = new Set([
   // records (created/managed by admin/staff only).
   'disaster_event',
   'relief_distribution',
+  // Evacuation centers — residents view available centers (read-only).
+  'evacuation_center',
 ]);
 
 const SYSTEM_PREFIXES = ['announcement_seed_', 'user_', 'settings', 'hotline', 'announcement_'];
