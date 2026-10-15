@@ -11,6 +11,7 @@ const EMPTY_FORM = {
   purok: '',
   capacity: 0,
   currentOccupants: 0,
+  evacueeFamilies: 0,
   status: 'Open',
   linkedEventId: '',
   contactPerson: '',
@@ -252,7 +253,7 @@ export default function BDRRMCEvacuation() {
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead style={{ background: 'var(--surface2)' }}>
               <tr>
-                {['Center', 'Location', 'Capacity', 'Current Occupants', 'Status', 'Linked Event', 'Actions'].map((h) => (
+                {['Center', 'Location', 'Capacity', 'Current Occupants', 'Evacuee Families', 'Status', 'Linked Event', 'Actions'].map((h) => (
                   <th key={h} scope="col" style={{ padding: '10px 12px', textAlign: 'left', fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>{h}</th>
                 ))}
               </tr>
@@ -268,6 +269,7 @@ export default function BDRRMCEvacuation() {
                     <span style={{ fontWeight: 700, color: 'var(--text)' }}>{Number(c.currentOccupants) || 0}</span>
                     <button className="btn btn-g btn-sm" style={{ padding: '2px 8px', marginLeft: 6 }} onClick={() => adjustOccupancy(c, 1)} disabled={c.isArchived} aria-label={`Add one occupant to ${c.name}`}>+</button>
                   </td>
+                  <td style={{ padding: '10px 12px', color: 'var(--muted)', fontWeight: 600 }}>{Number(c.evacueeFamilies) || 0}</td>
                   <td style={{ padding: '10px 12px' }}><span style={badgeStyle(c.status, c.isArchived)}>{c.isArchived ? 'Archived' : c.status}</span></td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{eventLabel(c.linkedEventId)}</td>
                   <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
@@ -298,7 +300,13 @@ export default function BDRRMCEvacuation() {
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 12, marginBottom: 12 }}>
               <div><label style={labelStyle}>CAPACITY</label><input type="number" min="0" style={inputStyle} value={form.capacity} onChange={(e) => handleNumber('capacity', e.target.value)} disabled={saving} aria-label="Capacity" /></div>
               <div><label style={labelStyle}>CURRENT OCCUPANTS</label><input type="number" min="0" style={inputStyle} value={form.currentOccupants} onChange={(e) => handleNumber('currentOccupants', e.target.value)} disabled={saving} aria-label="Current occupants" /></div>
+              <div><label style={labelStyle}>EVACUEE FAMILIES</label><input type="number" min="0" style={inputStyle} value={form.evacueeFamilies} onChange={(e) => handleNumber('evacueeFamilies', e.target.value)} disabled={saving} aria-label="Evacuee family count" /></div>
             </div>
+            {form.linkedEventId ? (
+              <div style={{ fontSize: 12, color: 'var(--muted)', marginTop: -4, marginBottom: 12 }}>
+                Evacuee families linked to: {eventLabel(form.linkedEventId)}
+              </div>
+            ) : null}
             <div style={{ fontSize: 12, color: occupancyFull ? 'var(--red, #dc2626)' : 'var(--muted)', fontWeight: occupancyFull ? 700 : 400, marginTop: -4, marginBottom: 12 }}>
               Occupancy: {Number(form.currentOccupants) || 0} / {Number(form.capacity) || 0}{occupancyFull ? ' — at capacity' : ''}
             </div>

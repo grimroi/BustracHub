@@ -268,7 +268,6 @@ export default function BDRRMCModule() {
   return (
     <div className="screen active">
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>BDRRMC / Disaster Response</h2>
         <button className="btn btn-p" onClick={openAdd}>+ Add Disaster Event</button>
       </div>
 

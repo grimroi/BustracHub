@@ -5,6 +5,7 @@ import BHSInventory from '../components/BHS/BHSInventory';
 import BDRRMCModule from '../components/BDRRMC/BDRRMCModule';
 import BDRRMCRelief from '../components/BDRRMC/BDRRMCRelief';
 import BDRRMCEvacuation from '../components/BDRRMC/BDRRMCEvacuation';
+import BDRRMCSummary from '../components/BDRRMC/BDRRMCSummary';
 import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import logo from '../assets/logo.png';
@@ -15646,6 +15647,7 @@ const handleGenerateCredentials = async (resident) => {
 )}
           {screen === 'bdrrmc' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+              <BDRRMCSummary />
               <BDRRMCModule />
               <BDRRMCRelief />
               <BDRRMCEvacuation />
