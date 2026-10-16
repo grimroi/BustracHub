@@ -20,6 +20,20 @@ const EMPTY_FORM = {
   claimStatus: 'Claimed',
 };
 
+// Formats a date for table display; empty/invalid values render as an em dash.
+const formatDate = (value) => {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString();
+};
+
+// A date stamped in a future calendar year is test/bad data (e.g. 2028).
+const isFutureYear = (value, currentYear) => {
+  if (!value) return false;
+  const d = new Date(value);
+  return !Number.isNaN(d.getTime()) && d.getFullYear() > currentYear;
+};
+
 // Offline-first save with 409 conflict retry (up to 3 attempts), matching BDRRMCModule.
 const putWithRetry = async (initialDoc, merge) => {
   let doc = initialDoc;
@@ -59,6 +73,20 @@ export default function BDRRMCRelief() {
         .map((r) => r.doc)
         .filter((d) => d && d.type === 'relief_distribution' && !d._deleted)
         .sort((a, b) => new Date(b.dateGiven || 0) - new Date(a.dateGiven || 0));
+
+      // Auto-clean test entries stamped with an impossible future year (e.g. 2028).
+      const currentYear = new Date().getFullYear();
+      for (const it of list) {
+        if (isFutureYear(it.dateGiven, currentYear)) {
+          it.dateGiven = '';
+          try {
+            await db.put({ ...it, dateGiven: '', updatedAt: new Date().toISOString() });
+          } catch (cleanErr) {
+            console.warn('Failed to clean future-dated relief record:', it._id, cleanErr);
+          }
+        }
+      }
+
       setItems(list);
     } catch (err) {
       console.error('Failed to load relief distributions:', err);
@@ -177,16 +205,17 @@ export default function BDRRMCRelief() {
   const labelStyle = { display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4 };
 
   return (
-    <div className="screen active">
+    <div className="screen active" style={{ paddingTop: 24, marginBottom: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>Relief Distribution</h2>
         <button className="btn btn-p" onClick={openAdd} aria-label="Record new relief distribution">+ Record Distribution</button>
       </div>
 
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', marginBottom: 14 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Show</span>
+        <div style={{ display: 'flex', gap: 2, padding: 2, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8 }}>
           {['All', 'Active', 'Archived'].map((t) => (
-            <button key={t} className="btn btn-g btn-sm" style={{ borderColor: filter === t ? 'var(--accent)' : 'var(--border)' }} onClick={() => setFilter(t)} aria-label={`Show ${t.toLowerCase()} records`}>{t}</button>
+            <button key={t} type="button" onClick={() => setFilter(t)} aria-pressed={filter === t} aria-label={`Show ${t.toLowerCase()} records`} style={{ border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer', background: filter === t ? 'var(--accent)' : 'transparent', color: filter === t ? '#fff' : 'var(--muted)' }}>{t}</button>
           ))}
         </div>
       </div>
@@ -213,7 +242,7 @@ export default function BDRRMCRelief() {
                   <td style={{ padding: '10px 12px', color: 'var(--text)', fontWeight: 600 }}>{it.residentName || '—'}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{it.reliefItem}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{it.quantity} {it.unit}</td>
-                  <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{it.dateGiven || '—'}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{formatDate(it.dateGiven)}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{it.notes || '—'}</td>
                   <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
                     <button className="btn btn-g btn-sm" onClick={() => openEdit(it)} style={{ marginRight: 6 }} aria-label={`Edit relief record for ${it.residentName || 'record'}`}>Edit</button>

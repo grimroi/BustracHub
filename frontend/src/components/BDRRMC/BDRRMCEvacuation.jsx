@@ -233,17 +233,17 @@ export default function BDRRMCEvacuation() {
   const occupancyFull = Number(form.capacity) > 0 && Number(form.currentOccupants) >= Number(form.capacity);
 
   return (
-    <div className="screen active">
+    <div className="screen active" style={{ paddingTop: 24, marginBottom: 24 }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>Evacuation Centers</h2>
         <button className="btn btn-p" onClick={openAdd} aria-label="Add evacuation center">+ Add Evacuation Center</button>
       </div>
 
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>Archive</div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', marginBottom: 14 }}>
+        <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Show</span>
+        <div style={{ display: 'flex', gap: 2, padding: 2, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8 }}>
           {['All', 'Active', 'Archived'].map((t) => (
-            <button key={t} className="btn btn-g btn-sm" style={{ borderColor: filter === t ? 'var(--accent)' : 'var(--border)' }} onClick={() => setFilter(t)} aria-label={`Show ${t.toLowerCase()} centers`}>{t}</button>
+            <button key={t} type="button" onClick={() => setFilter(t)} aria-pressed={filter === t} aria-label={`Show ${t.toLowerCase()} centers`} style={{ border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer', background: filter === t ? 'var(--accent)' : 'transparent', color: filter === t ? '#fff' : 'var(--muted)' }}>{t}</button>
           ))}
         </div>
       </div>

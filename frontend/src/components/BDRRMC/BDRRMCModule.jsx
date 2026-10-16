@@ -21,6 +21,20 @@ const EMPTY_FORM = {
 
 const BARANGAY_WIDE = 'Barangay-wide';
 
+// Formats a date for table display; empty/invalid values render as an em dash.
+const formatDate = (value) => {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? String(value) : d.toLocaleDateString();
+};
+
+// A date stamped in a future calendar year is test/bad data (e.g. 2028).
+const isFutureYear = (value, currentYear) => {
+  if (!value) return false;
+  const d = new Date(value);
+  return !Number.isNaN(d.getTime()) && d.getFullYear() > currentYear;
+};
+
 const purokNumber = (value) => {
   const m = String(value || '').match(/(?:zone|purok)\s*([1-9][0-9]?)/i);
   return m ? Number(m[1]) : null;
@@ -94,6 +108,20 @@ export default function BDRRMCModule() {
         .map((r) => r.doc)
         .filter((d) => d && d.type === 'disaster_event' && !d._deleted)
         .sort((a, b) => new Date(b.dateStarted || 0) - new Date(a.dateStarted || 0));
+
+      // Auto-clean test entries stamped with an impossible future year (e.g. 2028).
+      const currentYear = new Date().getFullYear();
+      for (const ev of list) {
+        if (isFutureYear(ev.dateStarted, currentYear)) {
+          ev.dateStarted = '';
+          try {
+            await db.put({ ...ev, dateStarted: '', updatedAt: new Date().toISOString() });
+          } catch (cleanErr) {
+            console.warn('Failed to clean future-dated disaster event:', ev._id, cleanErr);
+          }
+        }
+      }
+
       setEvents(list);
     } catch (err) {
       console.error('Failed to load disaster events:', err);
@@ -290,26 +318,26 @@ export default function BDRRMCModule() {
   const labelStyle = { display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4 };
 
   return (
-    <div className="screen active">
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <button className="btn btn-p" onClick={openAdd}>+ Add Disaster Event</button>
+    <div className="screen active" style={{ paddingTop: 24, marginBottom: 24 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+        <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>Disaster Events</h2>
+        <button className="btn btn-p" onClick={openAdd} aria-label="Add disaster event">+ Add Disaster Event</button>
       </div>
 
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>Event Type</div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', justifyContent: 'space-between', marginBottom: 14 }}>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', marginRight: 2 }}>Type</span>
           {['All','Typhoon','Flood','Fire','Earthquake','Others'].map((t) => (
-            <button key={t} className="btn btn-g btn-sm" style={{ borderColor: filter === t ? 'var(--accent)' : 'var(--border)' }} onClick={() => setFilter(t)}>{t}</button>
+            <button key={t} className="btn btn-g btn-sm" style={{ borderColor: filter === t ? 'var(--accent)' : 'var(--border)' }} onClick={() => setFilter(t)} aria-pressed={filter === t}>{t}</button>
           ))}
         </div>
-      </div>
-
-      <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 6, textTransform: 'uppercase' }}>Archive</div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {['All','Active','Archived'].map((t) => (
-            <button key={t} className="btn btn-g btn-sm" style={{ borderColor: archiveFilter === t ? 'var(--accent)' : 'var(--border)' }} onClick={() => setArchiveFilter(t)}>{t}</button>
-          ))}
+        <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+          <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Show</span>
+          <div style={{ display: 'flex', gap: 2, padding: 2, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8 }}>
+            {['All','Active','Archived'].map((t) => (
+              <button key={t} type="button" onClick={() => setArchiveFilter(t)} aria-pressed={archiveFilter === t} style={{ border: 'none', borderRadius: 6, padding: '4px 10px', fontSize: 11, fontWeight: 700, cursor: 'pointer', background: archiveFilter === t ? 'var(--accent)' : 'transparent', color: archiveFilter === t ? '#fff' : 'var(--muted)' }}>{t}</button>
+            ))}
+          </div>
         </div>
       </div>
 
@@ -332,7 +360,7 @@ export default function BDRRMCModule() {
                 <tr key={ev._id} style={{ borderTop: '1px solid var(--border)', opacity: ev.isArchived ? 0.6 : 1 }}>
                   <td style={{ padding: '10px 12px', color: 'var(--text)', fontWeight: 600 }}>{ev.eventType}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{ev.location}</td>
-                  <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{ev.dateStarted || '—'}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{formatDate(ev.dateStarted)}</td>
                   <td style={{ padding: '10px 12px' }}><span style={badgeStyle(ev.severity === 'Critical' ? 'red' : ev.severity === 'High' ? 'amber' : ev.severity === 'Medium' ? 'accent' : 'green')}>{ev.severity}</span></td>
                   <td style={{ padding: '10px 12px' }}><span style={badgeStyle(ev.status === 'Active' ? 'red' : ev.status === 'Monitoring' ? 'amber' : 'green')}>{ev.status}</span></td>
                   <td style={{ padding: '10px 12px', whiteSpace: 'nowrap' }}>
