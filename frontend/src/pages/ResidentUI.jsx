@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { localDb as db, forceSyncToRemote, remoteDb, stopPouchDBSync, onSyncStatusChange } from '../services/db';
 import { createAuditLog } from '../utils/auditLog';
-import { clearToken } from '../utils/tokenStore';
+import { clearActiveSessionOnly } from '../utils/tokenStore';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
 import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt, FaBell, FaHeartbeat, FaExclamationTriangle } from "react-icons/fa";
@@ -337,10 +337,8 @@ const showToast = useCallback((message, type = 'success') => {
     }).then((result) => {
       if (result.isConfirmed) {
         clearStoredUser();
-        clearToken();
+        clearActiveSessionOnly();
         stopPouchDBSync();
-        // Keep the offline_auth cache so offline login still works next time.
-        localStorage.removeItem('bustrac_loginTime');
         navigate('/login');
       }
     });

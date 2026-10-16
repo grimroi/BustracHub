@@ -95,11 +95,14 @@ export const apiFetch = async (path, options = {}) => {
   let response;
   try {
     response = await fetch(url, { ...fetchInit, headers });
-  } catch (err) {
+  } catch {
     // Network failure: surface as a tagged error so callers can fall
     // back to offline behavior without conflating it with an HTTP status.
     const offline = new Error('Network request failed.');
     offline.kind = 'network';
+    // Safe classification flag (no payload/PII). Lets callers (e.g. login)
+    // distinguish a connectivity outage from a server auth error.
+    offline.isNetworkError = true;
     throw offline;
   }
 

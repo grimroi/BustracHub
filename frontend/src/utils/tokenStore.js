@@ -15,6 +15,10 @@
 
 const STORAGE_KEY = 'bustrac_session_token';
 
+// Offline sessions are likewise per-tab: they exist only after a successful
+// device-bound offline login and are ended by logout or a forced re-auth.
+const OFFLINE_SESSION_KEY = 'bustrac_offline_session';
+
 // Informs the sync layer (src/services/db.js) that auth state changed so it
 // can start/stop live replication immediately instead of waiting for a
 // network event or page reload.
@@ -25,6 +29,35 @@ const notifyTokenChanged = (token) => {
     }
   } catch {
     // Best-effort only; sync falls back to the online/offline listeners.
+  }
+};
+
+export const setOfflineSession = () => {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.setItem(OFFLINE_SESSION_KEY, '1');
+    }
+  } catch {
+    // Best-effort; an unavailable store simply means no offline session.
+  }
+};
+
+export const hasOfflineSession = () => {
+  try {
+    if (typeof sessionStorage === 'undefined') return false;
+    return sessionStorage.getItem(OFFLINE_SESSION_KEY) === '1';
+  } catch {
+    return false;
+  }
+};
+
+export const clearOfflineSession = () => {
+  try {
+    if (typeof sessionStorage !== 'undefined') {
+      sessionStorage.removeItem(OFFLINE_SESSION_KEY);
+    }
+  } catch {
+    // Ignore — best-effort cleanup only.
   }
 };
 
@@ -64,13 +97,54 @@ export const setToken = (token) => {
   }
 };
 
-export const clearToken = () => {
+export const clearActiveSessionOnly = () => {
   try {
     if (typeof sessionStorage !== 'undefined') {
       sessionStorage.removeItem(STORAGE_KEY);
+      sessionStorage.removeItem(OFFLINE_SESSION_KEY);
+      sessionStorage.removeItem('bustrac_user');
     }
   } catch {
     // Ignore — best-effort cleanup only.
   }
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('bustrac_user');
+      localStorage.removeItem('bustrac_role');
+      localStorage.removeItem('bustrac_loginTime');
+    }
+  } catch {
+    // Ignore.
+  }
   notifyTokenChanged(null);
+};
+
+export const clearToken = () => {
+  // Backward-compatible: clear active session only (retain offline auth cache).
+  clearActiveSessionOnly();
+};
+
+export const clearDeviceAuthCache = async () => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem('bustrac_offline_auth');
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    const { localDb } = await import('../services/db.js');
+    const all = await localDb.allDocs({ include_docs: true });
+    const dels = [];
+    for (const r of all.rows) {
+      const d = r.doc;
+      if (d && d._id && d._id.startsWith('_local/user-')) {
+        dels.push({ _id: d._id, _rev: d._rev, _deleted: true });
+      }
+    }
+    if (dels.length) await localDb.bulkDocs(dels);
+  } catch {
+    // ignore
+  }
+  clearActiveSessionOnly();
 };

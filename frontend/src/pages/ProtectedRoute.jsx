@@ -1,6 +1,6 @@
 // frontend/src/pages/ProtectedRoute.jsx
 import { Navigate, useLocation } from 'react-router-dom';
-import { getToken } from '../utils/tokenStore';
+import { getToken, hasOfflineSession } from '../utils/tokenStore';
 
 function normalizeRole(raw) {
   if (!raw) return '';
@@ -24,8 +24,10 @@ export default function ProtectedRoute({ children, allowedRoles }) {
   const rawUser = localStorage.getItem('bustrac_user');
   const role = normalizeRole(localStorage.getItem('bustrac_role'));
 
-  // BOTH token (sessionStorage) AND cached user (localStorage) must be present.
-  const isLoggedIn = !!token && !!rawUser;
+  // A live server token OR a device-bound offline session (established only
+  // after a prior successful online login) counts, but the cached user object
+  // must still be present.
+  const isLoggedIn = (!!token || hasOfflineSession()) && !!rawUser;
 
   if (!isLoggedIn) {
     try {

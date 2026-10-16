@@ -450,6 +450,12 @@
     -webkit-backdrop-filter: none !important;
     backdrop-filter: none !important;
   }
+
+  /* Issuance workspace overlay (portaled to <body>) — never print it */
+  [data-issuance-overlay] {
+    display: none !important;
+    visibility: hidden !important;
+  }
 }
 
 

@@ -31,7 +31,7 @@ import { HearingScheduler } from '../components/HearingScheduler';
 import BlotterCertificatePrintModal from '../components/BlotterCertificatePrintModal';
 import { localDb as db, forceSyncToRemote } from '../services/db';
 import { createAuditLog, logConflictResolution } from '../utils/auditLog';
-import { clearToken } from '../utils/tokenStore';
+import { clearActiveSessionOnly } from '../utils/tokenStore';
 import { exportToExcel } from '../utils/excelExporter';
 import { calculateAge, isValidPHMobile } from '../utils/residentUtils';
 import "../styles/lightmode-fix.css";
@@ -2170,17 +2170,9 @@ const handleNav = useCallback((target) => {
 }, [nav, navigate]);
 
   const logout = useCallback(() => {
-  localStorage.removeItem('bustrac_user');
-  localStorage.removeItem('bustrac_role');
-  localStorage.removeItem('bustrac_offline_auth');
-  localStorage.removeItem('bustrac_loginTime');
-  sessionStorage.removeItem('bustrac_user');
-  // Clear the online session token. Note: deleting the client-side
-  // token does NOT revoke the server session (in-memory SESSIONS Map,
-  // 8h TTL). A server logout endpoint is planned for a later phase.
-  clearToken();
-  navigate('/login');
-}, [navigate]);
+    clearActiveSessionOnly();
+    navigate('/login');
+  }, [navigate]);
 
   // ─────────────────────────────────────────────
   // HANDLERS — STAFF BLOTTER / SUMMONS
@@ -4687,25 +4679,17 @@ useEffect(() => {
 
 useEffect(() => {
   let timer;
-  const expire = () => {
-    localStorage.removeItem('bustrac_user');
-    localStorage.removeItem('bustrac_role');
-    localStorage.removeItem('bustrac_offline_auth');
-    localStorage.removeItem('bustrac_loginTime');
-    sessionStorage.removeItem('bustrac_user');
-    // Clear the online session token on idle expiry. The server session
-    // is not revoked (no logout endpoint in this phase); the user must
-    // re-authenticate to obtain a new token.
-    clearToken();
-    Swal.fire({
-      icon: 'info',
-      title: 'Ang iyong session ay nag-expire dahil sa inactivity.',
-      text: 'Mag-login ulit upang magpatuloy.',
-      timer: 3000,
-      showConfirmButton: false,
-    });
-    navigate('/login');
-  };
+    const expire = () => {
+      clearActiveSessionOnly();
+      Swal.fire({
+        icon: 'info',
+        title: 'Ang iyong session ay nag-expire dahil sa inactivity.',
+        text: 'Mag-login ulit upang magpatuloy.',
+        timer: 3000,
+        showConfirmButton: false,
+      });
+      navigate('/login');
+    };
   const reset = () => {
     clearTimeout(timer);
     timer = setTimeout(expire, SESSION_TIMEOUT_MIN * 60 * 1000);
@@ -10814,6 +10798,9 @@ const handleGenerateCredentials = async (resident) => {
                     printMode={printMode}
                     setPrintMode={setPrintMode}
                     onOpenPrintPreview={onOpenPrintPreview}
+                    onIssuePrint={issueAndPrint}
+                    publicDomain={systemSettings?.publicDomain || settingsForm?.publicDomain}
+                    qrConfig={businessQrConfig}
                     showToast={showToast}
                     notifyDesktop={notifyDesktop} 
                     nav={nav} 

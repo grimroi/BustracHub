@@ -1,9 +1,13 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { createPortal } from 'react-dom';
 import '../styles/Certificates.css';
 import { localDb as db } from '../services/db';
 import { createAuditLog } from '../utils/auditLog';
-import { getApplicantName } from '../utils/certHelpers'; 
-   import { sendResidentSMS } from '../services/smsService';
+import { getApplicantName, normalizeCertType, validateCertificateData } from '../utils/certHelpers';
+import BarangayClearance from '../components/certificates/templates/BarangayClearance';
+import IndigencyTemplate from '../components/certificates/templates/IndigencyTemplate';
+import BusinessPermit from '../components/certificates/templates/BusinessPermit';
+import ResidencyCertificate from '../components/certificates/templates/ResidencyCertificate';
 
 
 
@@ -19,7 +23,7 @@ const formatDateTime = (dateString) => {
       hour: '2-digit',
       minute: '2-digit'
     });
-  } catch (err) {
+  } catch {
     return '—';
   }
 };
@@ -79,18 +83,19 @@ export default function CertPrintScreen({
   blotterVerifyQuery,
   setBlotterVerifyQuery,
   issuedCertificates = [],
-  printMode,
-  setPrintMode,
   onOpenPrintPreview,
+  onIssuePrint,
+  publicDomain,
+  qrConfig,
   showToast,
   notifyDesktop,
   nav,  
 }) {
   const [dbIssuedCertificates, setDbIssuedCertificates] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [processingId, setProcessingId] = useState(null); 
   const [printingId, setPrintingId] = useState(null); 
-  const workspaceRef = useRef(null);
+  const previewPaneRef = useRef(null);
+  const [previewZoom, setPreviewZoom] = useState(0.62);
   const [saving, setSaving] = useState(false);   
   const isInitialLoadRef = useRef(true); 
   const [blotterRecords, setBlotterRecords] = useState([]);
@@ -335,10 +340,9 @@ useEffect(() => {
 }, [dbIssuedCertificates, issuedCertificates]);
 
   const [issuedSearchQuery, setIssuedSearchQuery] = useState('');
-  // ✅ Filter states
-const [showIssuedFilters, setShowIssuedFilters] = useState(false);
-const [filterIssuedStatus, setFilterIssuedStatus] = useState('All');
-const [filterIssuedType, setFilterIssuedType] = useState('All');
+  // ✅ Filter states (status/type pinned to 'All' until the filter UI ships)
+const [filterIssuedStatus] = useState('All');
+const [filterIssuedType] = useState('All');
   const filteredIssuedAndReleased = issuedAndReleased.filter((cert) => {
   // 1. Search filter
   const query = issuedSearchQuery.toLowerCase().trim();
@@ -404,6 +408,117 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
     }
   }, [clearSelectedCert, setSelectedCertificate]);
 
+  // ── Issuance modal: lock body scroll + close on Escape ──
+  useEffect(() => {
+    if (!selectedCertificate) return undefined;
+    const onKeyDown = (e) => {
+      if (e.key === 'Escape') handleCloseWorkspace();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [selectedCertificate, handleCloseWorkspace]);
+
+  // ── Issuance modal: responsive scale for the live document preview ──
+  useEffect(() => {
+    const el = previewPaneRef.current;
+    if (!el || typeof ResizeObserver === 'undefined') return undefined;
+    const recompute = () => {
+      const available = el.clientWidth - 32;
+      if (available > 0) {
+        // 210mm ≈ 794px @ 96dpi (A4 width)
+        setPreviewZoom(Math.min(1, Math.max(0.3, available / 794)));
+      }
+    };
+    recompute();
+    const ro = new ResizeObserver(recompute);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [selectedCertificate]);
+
+  // ── Live certificate data for the preview (merges edits from the form) ──
+  const previewData = useMemo(() => {
+    if (!selectedCertificate) return null;
+    return {
+      ...selectedCertificate,
+      orNumber: issuanceMeta.orNumber || selectedCertificate.orNumber,
+      amountPaid:
+        issuanceMeta.amountPaid !== undefined && issuanceMeta.amountPaid !== ''
+          ? issuanceMeta.amountPaid
+          : selectedCertificate.amountPaid,
+      purpose: issuanceMeta.purpose || selectedCertificate.purpose,
+      dateIssued: issuanceMeta.dateIssued || selectedCertificate.dateIssued,
+      ctcNumber: issuanceMeta.ctcNumber || selectedCertificate.ctc?.number,
+      issuanceMeta,
+    };
+  }, [selectedCertificate, issuanceMeta]);
+
+  // ── Issuance gating: required-field validation + O.R. presence ──
+  const certValidation = useMemo(
+    () => validateCertificateData(previewData),
+    [previewData]
+  );
+  const orNumberMissing = !String(issuanceMeta?.orNumber || '').trim();
+  const issueDisabled =
+    saving || issuanceMeta.hasDerogatory || orNumberMissing || !certValidation.valid;
+
+  const renderPreviewTemplate = () => {
+    if (!previewData) return null;
+    const type = normalizeCertType(
+      selectedCertificate?.certificateType || selectedCertificate?.type
+    );
+    switch (type) {
+      case 'indigency':
+        return <IndigencyTemplate data={previewData} publicDomain={publicDomain} />;
+      case 'business':
+        return <BusinessPermit data={previewData} publicDomain={publicDomain} />;
+      case 'residency':
+        return <ResidencyCertificate data={previewData} publicDomain={publicDomain} />;
+      case 'clearance':
+      default:
+        return (
+          <BarangayClearance
+            data={previewData}
+            publicDomain={publicDomain}
+            qrConfig={qrConfig}
+          />
+        );
+    }
+  };
+
+  const handleIssuePrintAction = async () => {
+    const blockers = [
+      ...(issuanceMeta.hasDerogatory ? ['open blotter case found'] : []),
+      ...(orNumberMissing ? ['O.R. Number'] : []),
+      ...(certValidation.valid ? [] : certValidation.missing),
+    ];
+    if (blockers.length > 0) {
+      const msg = `Cannot issue — missing/blocked: ${blockers.join(', ')}.`;
+      if (typeof showToast === 'function') showToast(msg, 'error');
+      else alert(msg);
+      return;
+    }
+    if (typeof onIssuePrint !== 'function') {
+      const msg = 'Issue & Print is unavailable right now.';
+      if (typeof showToast === 'function') showToast(msg, 'error');
+      else alert(msg);
+      return;
+    }
+    setSaving(true);
+    try {
+      await onIssuePrint(selectedCertificate);
+    } catch (err) {
+      if (typeof showToast === 'function') showToast('Issue failed: ' + err.message, 'error');
+      else alert('Issue failed: ' + err.message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
   const handleSaveOnlyAction = async () => {
   if (!issuanceMeta?.orNumber || !issuanceMeta.orNumber.trim()) {
     const msg = 'OR Number is required before saving!';
@@ -458,78 +573,6 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
   setTimeout(() => setPrintingId(null), 600);
 }, [onOpenPrintPreview]);
 
-  const handleReleaseDocument = async (cert) => {
-  if (!cert || !cert._id) {
-    if (typeof showToast === 'function') {
-      showToast('Error: Walang valid na Certificate ID.', 'error');
-    } else {
-      alert('Error: Walang valid na Certificate ID.');
-    }
-    return;
-  }
-
-  setProcessingId(cert._id);
-
-  try {
-    const latestDoc = await db.get(cert._id);
-
-    const updatedCert = {
-      ...latestDoc,
-      status: 'Released',
-      step: 6,
-      releasedAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-
-    await db.put(updatedCert);
-
-    setDbIssuedCertificates((prev) =>
-      prev.map((c) => (c._id === cert._id ? updatedCert : c))
-    );
-
-    if (typeof createAuditLog === 'function') {
-      await createAuditLog({
-        action: 'RELEASE_CERTIFICATE',
-        module: 'CERTIFICATES',
-        recordId: cert._id,
-        details: `Released ${
-          cert.certificateType || 'Certificate'
-        } to ${getApplicantName(cert)}`,
-      });
-    }
-
-    if (typeof showToast === 'function') {
-      showToast('Certificate successfully released!', 'success');
-    } else {
-      alert('Certificate successfully released!');
-    }
-  } catch (e) {
-    console.error('Failed to release:', e);
-
-    if (e.status === 409) {
-      if (typeof showToast === 'function') {
-        showToast(
-          'Conflict: Ang record ay na-update na. Subukan muli.',
-          'warning'
-        );
-      } else {
-       showToast(
-  'error',
-  'Conflict: Ang record ay na-update na ng ibang device. Subukan muli.'
-);
-      }
-    } else {
-      if (typeof showToast === 'function') {
-        showToast(`Failed to release: ${e.message}`, 'error');
-      } else {
-        alert(`Failed to release: ${e.message}`);
-      }
-    }
-  } finally {
-    setProcessingId(null);
-  }
-};
-
   // ──────────────────────────────────────────────────────────────
   // 4. EFFECTS
   // ──────────────────────────────────────────────────────────────
@@ -547,16 +590,16 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
   }, [approvedCertificates, currentSelectedId, setSelectedCertificate]);
 
     return (
-    <div className="cert-print-screen" style={{ display: 'flex', flexDirection: 'column', gap: '16px', height: 'calc(100vh - 70px)' }}>
-      
-      {/* MAIN WORKSPACE: Split View Layout */}
-      <div style={{ display: 'flex', gap: '16px', flex: '0 0 72%', minHeight: 0, alignItems: 'stretch', overflow: 'hidden' }}>
-        
-        {/* LEFT PANEL: Approved Certificates Queue (40% Width) */}
-        <div className="cert-section-card" style={{ flex: '0 0 40%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
-          <div className="cert-section-header" style={{ padding: '16px', borderBottom: '1px solid var(--border)' }}>
-            <div className="cert-section-title" style={{ fontWeight: 600, fontSize: '15px', marginBottom: '8px' }}>
+    <div className="cert-print-screen" style={{ display: 'flex', flexDirection: 'column', gap: '20px', height: 'calc(100vh - 70px)' }}>
+
+      {/* MAIN PANEL: Approved Certificates Queue */}
+      <div className="cert-section-card" style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+          <div className="cert-section-header">
+            <div className="cert-section-title" style={{ fontSize: '15px' }}>
               Ready for Issuance
+              <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 10, background: 'var(--accent-bg)', color: 'var(--accent)', border: '1px solid rgba(79,142,247,0.25)' }}>
+                {filteredApprovedCertificates.length}
+              </span>
             </div>
             <input 
               type="text" 
@@ -564,7 +607,8 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
               placeholder="Search approved records..." 
               value={approvedSearchQuery} 
               onChange={(e) => setApprovedSearchQuery(e.target.value)} 
-              style={{ width: '100%', height: '36px', fontSize: '13px' }} 
+              aria-label="Search approved certificates"
+              style={{ width: '240px', height: '34px', fontSize: '12px', padding: '6px 12px' }} 
             />
           </div>
             <div className="cert-table-wrapper" style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
@@ -603,7 +647,15 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
                           {cert.certificateType || '—'}
                         </td>
                         <td style={{ padding: '12px', textAlign: 'right' }}>
-                          <span className={`badge ${isSelected ? 'b' : 'g'}`}>{isSelected ? 'Selected' : 'Process'}</span>
+                          <button
+                            type="button"
+                            className="btn btn-p btn-sm"
+                            onClick={(e) => { e.stopPropagation(); handleSelectCertificate(cert); }}
+                            aria-label={`Open issuance workspace for ${getApplicantName(cert)}`}
+                            style={{ fontSize: 11, padding: '5px 12px' }}
+                          >
+                            Open
+                          </button>
                         </td>
                       </tr>
                     );
@@ -614,188 +666,7 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
           </div>
         </div>
 
-        {/* RIGHT PANEL: Issuance Workspace (60% Width) */}
-        <div className="cert-section-card" style={{ flex: '0 0 60%', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0, maxHeight: '88vh' }}>
-          {selectedCertificate ? (
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%', maxHeight: '88vh', overflow: 'hidden', minHeight: 0 }}>
-              {/* Workspace Header */}
-              <div style={{ padding: '12px 16px', borderBottom: '1px solid var(--border)', background: 'var(--surface)', display: 'flex', gap: '10px', justifyContent: 'flex-end', alignItems: 'baseline', flexShrink: 0 }}>
-                <div style={{ fontSize: '15px', fontWeight: 700, color: 'var(--text)' }}>
-                  Issuance Workspace: {getApplicantName(selectedCertificate)}
-                </div>
-                <div style={{ fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
-                  {selectedCertificate.certificateType} • {selectedCertificate._id}
-                </div>
-              </div>
-              
-              {/* Workspace Scrollable Content */}
-              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                
-                {/* 1. Blotter Verification */}
-                <div className="fp cert-panel" style={{ background: 'var(--surface2)', padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                  <div className="fp-t" style={{ fontWeight: 600, marginBottom: '6px', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <span>Blotter Verification Check</span>
-                    {isVerifying ? (
-                      <span style={{ fontSize: '10px', color: 'var(--muted)' }}>Verifying...</span>
-                    ) : issuanceMeta.autoVerified ? (
-                      blotterMatches.length === 0 ? 
-                        <span className="badge g" style={{ fontSize: '10px' }}>✓ AUTO VERIFIED</span> :
-                        <span className="badge r" style={{ fontSize: '10px' }}>⚠ HAS RECORD</span>
-                    ) : null}
-                  </div>
-
-                  {/* Auto-filled search - readOnly na, hindi na mano-mano */}
-                  <input 
-                    className="fc" 
-                    placeholder="Auto-detected from resident..." 
-                    value={blotterVerifyQuery} 
-                    readOnly
-                    style={{ marginBottom: '8px', height: '32px', background: 'var(--surface)', opacity: 0.8 }} 
-                  />
-
-                  <div className="cert-mini-table-wrap" style={{ maxHeight: '70px', overflowY: 'auto', marginBottom: '6px', background: 'var(--surface)', borderRadius: '6px', border: '1px solid var(--border)' }}>
-                    <table className="cert-mini-table" style={{ width: '100%', fontSize: '12px' }}>
-                      <thead style={{ background: 'var(--surface2)', position: 'sticky', top: 0 }}>
-                        <tr>
-                          <th style={{ padding: '8px', textAlign: 'left', fontSize: '11px' }}>Respondent</th>
-                          <th style={{ padding: '8px', textAlign: 'left', fontSize: '11px' }}>Status</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {blotterMatches.length > 0 ? blotterMatches.map((b, idx) => (
-                          <tr key={b.id || idx} style={{ borderBottom: '1px solid var(--border)' }}>
-                            <td style={{ padding: '8px', fontSize: '12px' }}>{b.respondent || '—'}</td>
-                            <td style={{ padding: '8px' }}><span className={`badge ${b.status === 'Resolved' ? 'g' : 'r'}`}>{b.status || 'Open'}</span></td>
-                          </tr>
-                        )) : (
-                          <tr><td colSpan="2" style={{ padding: '12px', textAlign: 'center', color: 'var(--muted)', fontSize: '12px' }}>
-                            {blotterVerifyQuery ? '✓ No derogatory records found.' : 'Select resident to auto-verify.'}
-                          </td></tr>
-                        )}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  <label className="cert-checkbox" style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '6px', cursor: issuanceMeta.hasDerogatory ? 'not-allowed' : 'pointer', fontSize: '12px', fontWeight: 600, opacity: issuanceMeta.hasDerogatory ? 0.6 : 1 }}>
-                    <input 
-                      type="checkbox" 
-                      checked={issuanceMeta.noDerogatoryRecord || false} 
-                      disabled={issuanceMeta.hasDerogatory}
-                      onChange={(e) => setIssuanceMeta({ ...issuanceMeta, noDerogatoryRecord: e.target.checked })} 
-                    />
-                    {issuanceMeta.hasDerogatory ? 'Cannot issue - Has open blotter case' : 'I verify that there is No Derogatory Record (Auto).'}
-                  </label>
-                </div>
-
-                {/* 2. Receipt & CTC Details (Side-by-Side) */}
-                <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: '12px' }}>
-                  <div className="fp cert-panel" style={{ padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                    <div className="fp-t accent" style={{ fontWeight: 600, marginBottom: '12px', fontSize: '13px' }}>🧾 Receipt Details</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <div className="fg">
-                        <label className="fl" style={{ fontSize: '12px' }}>Purpose <span style={{ color: 'red' }}>*</span></label>
-                        <input className="fc" value={issuanceMeta.purpose || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, purpose: e.target.value }))} />
-                      </div>
-                      <div className="fg">
-                        <label className="fl" style={{ fontSize: '12px' }}>OR No. <span style={{ color: 'red' }}>*</span></label>
-                        <input type="text" className="fc" placeholder="OR-2026-XXXXX" value={issuanceMeta.orNumber || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, orNumber: e.target.value }))} />
-                      </div>
-                      <div className="fg">
-                        <label className="fl" style={{ fontSize: '12px' }}>Amount Paid (₱) <span style={{ color: 'red' }}>*</span></label>
-                        <input type="number" className="fc" value={issuanceMeta.amountPaid !== undefined ? issuanceMeta.amountPaid : ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, amountPaid: e.target.value }))} />
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="fp cert-panel" style={{ padding: '12px', borderRadius: '8px', border: '1px solid var(--border)' }}>
-                    <div className="fp-t accent" style={{ fontWeight: 600, marginBottom: '12px', fontSize: '13px' }}>🪪 CTC Details (Optional)</div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                      <div className="fg">
-                        <label className="fl" style={{ fontSize: '12px' }}>CTC No.</label>
-                        <input className="fc" value={issuanceMeta.ctcNumber || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, ctcNumber: e.target.value }))} />
-                      </div>
-                      <div className="fg">
-                        <label className="fl" style={{ fontSize: '12px' }}>CTC Amount Paid</label>
-                        <input type="number" className="fc" value={issuanceMeta.ctcAmountPaid || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, ctcAmountPaid: e.target.value }))} />
-                      </div>
-                      <div className="fg">
-                        <label className="fl" style={{ fontSize: '12px' }}>CTC Date Issued</label>
-                        <input type="date" className="fc" value={issuanceMeta.ctcDateIssued || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, ctcDateIssued: e.target.value }))} />
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              </div>
-
-              {/* 3. Action Buttons Footer */}
-              <div
-                style={{
-                  padding: '16px 20px',
-                  borderTop: '1px solid var(--border)',
-                  background: 'var(--surface)',
-                  display: 'flex',
-                  gap: '12px',
-                  justifyContent: 'flex-end',
-                  flexShrink: 0,
-                  position: 'sticky',
-                  bottom: 0,
-                  zIndex: 20,
-                  boxShadow: '0 -4px 10px -2px rgba(0, 0, 0, 0.25)',
-                }}
-              >
-                <button
-                  type="button"
-                  className="btn btn-g"
-                  onClick={() => setSelectedCertificate(null)}
-                >
-                  Cancel
-                </button>
-
-                <button
-                  type="button"
-                  className="btn btn-a"
-                  disabled={saving}
-                  onClick={handleSaveOnlyAction}
-                >
-                  {saving ? 'Saving...' : ' Save Only'}
-                </button>
-
-                <button
-  type="button"
-  id="btn-issue-print"
-  className="btn btn-p"
-  disabled={saving || issuanceMeta.hasDerogatory}
-  title={issuanceMeta.hasDerogatory ? 'Blocked: Has open blotter case' : 'Issue & Print'}
-  style={{
-    padding: '10px 24px',
-    fontWeight: 700,
-    opacity: issuanceMeta.hasDerogatory ? 0.6 : 1,
-    cursor: issuanceMeta.hasDerogatory ? 'not-allowed' : 'pointer',
-    background: issuanceMeta.hasDerogatory ? 'var(--surface2)' : undefined,
-    color: issuanceMeta.hasDerogatory ? 'var(--muted)' : undefined,
-    border: issuanceMeta.hasDerogatory ? '1px solid var(--border)' : undefined,
-    boxShadow: issuanceMeta.hasDerogatory ? 'none' : '0 4px 14px rgba(59,130,246,0.35)',
-  }}
->
-  {issuanceMeta.hasDerogatory ? '⛔ Blocked by Blotter' : saving ? 'Processing...' : ' Issue & Print Certificate'}
-</button>
-              </div>
-            </div>
-          ) : (
-            /* Empty State Placeholder */
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', color: 'var(--muted)' }}>
-              <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" style={{ opacity: 0.3, marginBottom: '16px' }}>
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-              </svg>
-              <h3 style={{ fontSize: '18px', fontWeight: 600, marginBottom: '8px', color: 'var(--text)' }}>No Certificate Selected</h3>
-              <p style={{ fontSize: '14px', textAlign: 'center', maxWidth: '300px' }}>Select an approved certificate from the list on the left to begin the issuance and printing process.</p>
-            </div>
-          )}
-        </div>
-      </div>
+      {/* (Issuance workspace now renders as a focused overlay modal at the end of this screen) */}
 
       {/* BOTTOM SECTION: Issued & Released History (Reprint Queue) */}
 <div 
@@ -1039,6 +910,238 @@ const [filterIssuedType, setFilterIssuedType] = useState('All');
     </table>
   </div>
 </div>
+
+      {/* ═══════════════════════════════════════════════════════════
+          ISSUANCE WORKSPACE — focused full-height overlay modal
+          ═══════════════════════════════════════════════════════════ */}
+      {selectedCertificate && createPortal(
+        <div
+          role="presentation"
+          data-issuance-overlay="true"
+          onClick={(e) => { if (e.target === e.currentTarget) handleCloseWorkspace(); }}
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1200,
+            background: 'rgba(3, 7, 18, 0.72)',
+            backdropFilter: 'blur(2px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: '24px',
+          }}
+        >
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={`Issuance workspace for ${getApplicantName(selectedCertificate)}`}
+            onClick={(e) => e.stopPropagation()}
+            style={{
+              width: 'min(1180px, 100%)',
+              height: 'min(92vh, 100%)',
+              display: 'flex',
+              flexDirection: 'column',
+              background: 'var(--surface)',
+              border: '1px solid var(--border)',
+              borderRadius: 14,
+              boxShadow: '0 24px 60px rgba(0, 0, 0, 0.5)',
+              overflow: 'hidden',
+            }}
+          >
+
+            {/* ── Header: resident name, certificate type, tracking reference ── */}
+            <div style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 16, padding: '18px 24px', borderBottom: '1px solid var(--border)', background: 'var(--surface2)', flexShrink: 0 }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                  {getApplicantName(selectedCertificate)}
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 8, flexWrap: 'wrap' }}>
+                  <span className="badge b">{selectedCertificate.certificateType || 'Certificate'}</span>
+                  <span style={{ fontSize: 12, color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                    Ref: {selectedCertificate.trackingCode || selectedCertificate._id}
+                  </span>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={handleCloseWorkspace}
+                aria-label="Close issuance workspace"
+                style={{ flexShrink: 0, width: 34, height: 34, borderRadius: 8, border: '1px solid var(--border)', background: 'transparent', color: 'var(--muted)', fontSize: 18, lineHeight: 1, cursor: 'pointer' }}
+              >
+                ✕
+              </button>
+            </div>
+
+            {/* ── Top section: blotter verification + clearance checkbox ── */}
+            <div style={{ padding: '16px 24px', borderBottom: '1px solid var(--border)', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
+                <span className="fp-t" style={{ margin: 0 }}>Blotter Verification</span>
+                {isVerifying ? (
+                  <span className="badge" style={{ fontSize: 11 }}>Verifying…</span>
+                ) : issuanceMeta.autoVerified ? (
+                  blotterMatches.length === 0 ? (
+                    <span className="badge g" style={{ fontSize: 11 }}>✓ No derogatory record</span>
+                  ) : (
+                    <span className="badge r" style={{ fontSize: 11 }}>⚠ Has record</span>
+                  )
+                ) : (
+                  <span className="badge" style={{ fontSize: 11 }}>Not verified</span>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input
+                  className="fc"
+                  placeholder="Auto-detected resident"
+                  value={blotterVerifyQuery}
+                  readOnly
+                  aria-label="Auto-detected resident for blotter verification"
+                  style={{ height: 38, fontSize: 13, padding: '0 12px', flex: '1 1 240px', maxWidth: 360, background: 'var(--surface2)' }}
+                />
+                <label className="cert-checkbox" style={{ display: 'flex', alignItems: 'center', gap: 10, fontSize: 13, fontWeight: 600, cursor: issuanceMeta.hasDerogatory ? 'not-allowed' : 'pointer', opacity: issuanceMeta.hasDerogatory ? 0.6 : 1 }}>
+                  <input
+                    type="checkbox"
+                    checked={issuanceMeta.noDerogatoryRecord || false}
+                    disabled={issuanceMeta.hasDerogatory}
+                    onChange={(e) => setIssuanceMeta({ ...issuanceMeta, noDerogatoryRecord: e.target.checked })}
+                    style={{ width: 16, height: 16 }}
+                  />
+                  {issuanceMeta.hasDerogatory ? 'Cannot issue — open blotter case found' : 'I verify there is no derogatory record (auto)'}
+                </label>
+              </div>
+
+              {blotterMatches.length > 0 && (
+                <div className="cert-mini-table-wrap" style={{ maxHeight: 132, overflowY: 'auto', borderRadius: 8, border: '1px solid var(--border)' }}>
+                  <table className="cert-mini-table" style={{ width: '100%' }}>
+                    <thead style={{ position: 'sticky', top: 0, background: 'var(--surface2)' }}>
+                      <tr>
+                        <th style={{ padding: '9px 12px', textAlign: 'left', fontSize: 11 }}>Respondent</th>
+                        <th style={{ padding: '9px 12px', textAlign: 'left', fontSize: 11 }}>Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {blotterMatches.map((b, idx) => (
+                        <tr key={b.id || idx} style={{ borderBottom: '1px solid var(--border)' }}>
+                          <td style={{ padding: '9px 12px', fontSize: 12.5 }}>{b.respondent || '—'}</td>
+                          <td style={{ padding: '9px 12px' }}><span className={`badge ${b.status === 'Resolved' ? 'g' : 'r'}`}>{b.status || 'Open'}</span></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </div>
+
+            {/* ── Middle section: live document preview + issuance details ── */}
+            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start' }}>
+
+              {/* Live certificate preview */}
+              <div style={{ flex: '1 1 520px', minWidth: 0 }}>
+                <div className="fp-t accent" style={{ marginBottom: 12 }}>Document Preview</div>
+                <div ref={previewPaneRef} style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, overflow: 'auto', maxHeight: '62vh' }}>
+                  <div style={{ zoom: previewZoom }}>
+                    {renderPreviewTemplate()}
+                  </div>
+                </div>
+                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, textAlign: 'center' }}>
+                  Live preview — updates as you edit the details.
+                </div>
+              </div>
+
+              {/* Receipt & CTC details */}
+              <div style={{ flex: '1 1 340px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+                <div className="fp cert-panel">
+                  <div className="fp-t accent">🧾 Receipt Details</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div className="fg">
+                      <label className="fl">Purpose <span style={{ color: 'red' }}>*</span></label>
+                      <input className="fc" value={issuanceMeta.purpose || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, purpose: e.target.value }))} />
+                    </div>
+                    <div className="fg">
+                      <label className="fl">OR No. <span style={{ color: 'red' }}>*</span></label>
+                      <input type="text" className="fc" placeholder="OR-2026-XXXXX" value={issuanceMeta.orNumber || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, orNumber: e.target.value }))} />
+                    </div>
+                    <div className="fg">
+                      <label className="fl">Amount Paid (₱) <span style={{ color: 'red' }}>*</span></label>
+                      <input type="number" className="fc" value={issuanceMeta.amountPaid !== undefined ? issuanceMeta.amountPaid : ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, amountPaid: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="fp cert-panel">
+                  <div className="fp-t accent">🪪 CTC Details (Optional)</div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                    <div className="fg">
+                      <label className="fl">CTC No.</label>
+                      <input className="fc" value={issuanceMeta.ctcNumber || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, ctcNumber: e.target.value }))} />
+                    </div>
+                    <div className="fg">
+                      <label className="fl">CTC Amount Paid</label>
+                      <input type="number" className="fc" value={issuanceMeta.ctcAmountPaid || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, ctcAmountPaid: e.target.value }))} />
+                    </div>
+                    <div className="fg">
+                      <label className="fl">CTC Date Issued</label>
+                      <input type="date" className="fc" value={issuanceMeta.ctcDateIssued || ''} onChange={(e) => setIssuanceMeta(prev => ({ ...prev, ctcDateIssued: e.target.value }))} />
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* ── Bottom footer: fixed action bar ── */}
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 16, flexWrap: 'wrap', padding: '18px 24px', borderTop: '1px solid var(--border)', background: 'var(--surface)', flexShrink: 0, boxShadow: '0 -6px 14px -6px rgba(0, 0, 0, 0.35)' }}>
+              <div style={{ fontSize: 13, fontWeight: 600, minHeight: 20 }}>
+                {issuanceMeta.hasDerogatory ? (
+                  <span style={{ color: 'var(--red, #ef4444)' }}>⛔ Cannot issue — open blotter case found.</span>
+                ) : orNumberMissing ? (
+                  <span style={{ color: 'var(--muted)' }}>Enter the O.R. Number to enable issuance.</span>
+                ) : !certValidation.valid ? (
+                  <span style={{ color: 'var(--muted)' }}>Missing required field(s): {certValidation.missing.join(', ')}.</span>
+                ) : (
+                  <span style={{ color: 'var(--green, #22c55e)' }}>✓ Ready to issue.</span>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                <button type="button" className="btn btn-g" onClick={handleCloseWorkspace}>
+                  Cancel
+                </button>
+                <button type="button" className="btn btn-a" disabled={saving} onClick={handleSaveOnlyAction}>
+                  {saving ? 'Saving…' : 'Save Only'}
+                </button>
+                <button
+                  type="button"
+                  id="btn-issue-print"
+                  className="btn btn-p"
+                  disabled={issueDisabled}
+                  onClick={handleIssuePrintAction}
+                  title={
+                    issuanceMeta.hasDerogatory
+                      ? 'Blocked: open blotter case'
+                      : orNumberMissing
+                        ? 'Enter the O.R. Number first'
+                        : !certValidation.valid
+                          ? `Missing: ${certValidation.missing.join(', ')}`
+                          : 'Issue & Print'
+                  }
+                  style={{
+                    padding: '10px 24px',
+                    fontWeight: 700,
+                    opacity: issueDisabled ? 0.6 : 1,
+                    cursor: issueDisabled ? 'not-allowed' : 'pointer',
+                    background: issueDisabled ? 'var(--surface2)' : undefined,
+                    color: issueDisabled ? 'var(--muted)' : undefined,
+                    border: issueDisabled ? '1px solid var(--border)' : undefined,
+                    boxShadow: issueDisabled ? 'none' : '0 4px 14px rgba(59,130,246,0.35)',
+                  }}
+                >
+                  {issuanceMeta.hasDerogatory ? '⛔ Blocked by Blotter' : saving ? 'Processing…' : 'Issue & Print Certificate'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>,
+        document.body
+      )}
 
     </div>
   );
