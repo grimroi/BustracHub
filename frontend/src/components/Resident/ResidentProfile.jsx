@@ -22,6 +22,13 @@ const showToast = (type, message) => {
   }
 };
 
+const isValidBirthdate = (value) => {
+  if (!value || typeof value !== 'string') return false;
+  const trimmed = value.trim();
+  if (!trimmed || /^(not\s*set|n\/a)$/i.test(trimmed)) return false;
+  return !Number.isNaN(new Date(trimmed).getTime());
+};
+
 export default function ResidentProfile({
   residentProfile,
   loggedInUser,
@@ -99,7 +106,9 @@ export default function ResidentProfile({
 
   const residentId = user.residentId || profile.residentId || profile._id || 'RES-XXXX';
   const birthdate = user.birthdate || profile.birthdate || profile.dateOfBirth || '';
-  const age = user.age || profile.age || calculateAge(birthdate) || '-';
+  const birthdateValid = isValidBirthdate(birthdate);
+  const age = birthdateValid ? `${calculateAge(birthdate)} years old` : 'Not set';
+  const editAge = isValidBirthdate(editableProfile.birthdate) ? calculateAge(editableProfile.birthdate) : null;
   const gender = user.gender || profile.gender || 'Not specified';
   const civilStatus = user.civilStatus || profile.civilStatus || profile.civil_status || 'Not specified';
   const contact = user.contact || profile.contact || profile.phone || 'Not set';
@@ -110,7 +119,7 @@ export default function ResidentProfile({
   const emergencyNumber = user.emergencyContactNumber || profile.emergencyContactNo || profile.emergencyContactNumber || '—';
 
   return (
-    <div className="screen active" style={{ padding: '0 16px 24px' }}>
+    <div className="screen active" style={{ padding: '0 16px 110px' }}>
       {/* Floating Toast Notification (Hindi na nagshi-shift ng UI) */}
       {saveSuccess && (
         <div style={{
@@ -203,7 +212,7 @@ export default function ResidentProfile({
               <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <FaUser size={10} /> Age
               </div>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{age} years old</div>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{age}</div>
             </div>
             <div>
               <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
@@ -265,9 +274,9 @@ export default function ResidentProfile({
                   max={new Date().toISOString().split('T')[0]}
                   style={{ width: '100%', padding: '9px 12px', borderRadius: 8, border: '1px solid var(--border)', background: 'var(--bg)', color: 'var(--text)', fontSize: 13 }}
                 />
-                {editableProfile.birthdate && (
+                {isValidBirthdate(editableProfile.birthdate) && (
                   <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 4 }}>
-                    Age: {calculateAge(editableProfile.birthdate) || '-'} years old
+                    Age: {editAge} years old
                   </div>
                 )}
               </div>
