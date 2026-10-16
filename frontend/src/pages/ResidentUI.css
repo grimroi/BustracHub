@@ -836,6 +836,11 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes resident-slideUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* Responsive Media Queries */
 @media (max-width: 768px) {
   /* Convert topbar layout on mobile */
@@ -898,7 +903,14 @@
 
   /* Add bottom spacing to prevent navigation overlap */
   .resident-root-container .content {
-    padding-bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+    padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+    scroll-padding-bottom: calc(120px + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* The footer sits outside .content, so pad the main #app column itself to
+     keep the footer (and any trailing content) clear of the fixed bottom nav. */
+  .resident-root-container #app {
+    padding-bottom: calc(110px + env(safe-area-inset-bottom, 0px));
   }
 
   /* Single-column grid for mobile viewports */

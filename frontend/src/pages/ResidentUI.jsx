@@ -6,7 +6,7 @@ import { createAuditLog } from '../utils/auditLog';
 import { clearActiveSessionOnly } from '../utils/tokenStore';
 import logo from '../assets/logo.png';
 import './ResidentUI.css';
-import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt, FaBell, FaHeartbeat, FaExclamationTriangle } from "react-icons/fa";
+import { FaHome, FaFileAlt, FaBullhorn, FaCommentDots, FaUser, FaBalanceScale, FaHandHoldingHeart, FaCalendarAlt, FaBell, FaHeartbeat, FaExclamationTriangle, FaEllipsisH } from "react-icons/fa";
 import Swal from 'sweetalert2'; // ? Added SweetAlert2 Import
 import EventRegistrationScreen from '../components/screens/EventRegistrationScreen';
 import {
@@ -34,6 +34,33 @@ import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import { fetchNotifications, createNotification, markAllReadForUser, getUnreadCount } from '../services/notifications';
 
 const CERT_FORM_INITIAL = { certType: '', certPurpose: '' };
+
+// Validates the certificate purpose so low-effort dummy text (e.g. "dfsghfgdhg")
+// cannot be submitted. Returns an error message, or null when the text is valid.
+const CERT_PURPOSE_MIN_LENGTH = 10;
+const validateCertPurpose = (raw) => {
+  const text = String(raw ?? '').trim();
+  if (!text) return 'Please state the purpose of the request.';
+  if (text.length < CERT_PURPOSE_MIN_LENGTH) {
+    return `Please provide a more detailed purpose (at least ${CERT_PURPOSE_MIN_LENGTH} characters).`;
+  }
+  if (!/[a-zA-Z]/.test(text)) {
+    return 'Please describe the purpose in words.';
+  }
+  // Must contain at least one vowel and not be a single repeated character —
+  // catches keyboard-mash entries such as "dfsghfgdhg" or "aaaaaaaaaa".
+  if (!/[aeiou]/i.test(text)) {
+    return 'That purpose doesn\u2019t look valid. Please describe it in plain words.';
+  }
+  if (/^(.)\1+$/.test(text.replace(/\s+/g, ''))) {
+    return 'That purpose doesn\u2019t look valid. Please describe it in plain words.';
+  }
+  // Reject long keyboard-mash runs of consonants (e.g. "dfghjkl", "sdfghj").
+  if (/[bcdfghjklmnpqrstvwxyz]{6,}/i.test(text.replace(/\s+/g, ''))) {
+    return 'That purpose doesn\u2019t look valid. Please describe it in plain words.';
+  }
+  return null;
+};
 
 // -- Resident identity matching ----------------------------------------------
 // DB-wide replication means every resident's device holds every document. These
@@ -112,6 +139,9 @@ export default function ResidentUI() {
   // Offline-first notifications (local, PouchDB `_local/` document)
   const [notifItems, setNotifItems] = useState([]);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+
+  // "More" bottom-nav drawer (secondary tabs on mobile)
+  const [moreOpen, setMoreOpen] = useState(false);
 
   // Certificate states
   const [showCertForm, setShowCertForm] = useState(false);
@@ -446,6 +476,12 @@ const showToast = useCallback((message, type = 'success') => {
 
     if (!certPurpose?.trim()) {
       Swal.fire('Error', 'Please state the purpose of the request.', 'error');
+      return;
+    }
+
+    const purposeError = validateCertPurpose(certPurpose);
+    if (purposeError) {
+      Swal.fire('Error', purposeError, 'error');
       return;
     }
 
@@ -1303,18 +1339,25 @@ useEffect(() => {
     setCertForm((prev) => ({ ...prev, [field]: e.target.value }));
   };
 
-  const navItems = [
+  // Primary items stay in the bottom bar (max 4 + "More"); everything else
+  // moves into the "More" drawer so labels never crowd/overlap on mobile.
+  const primaryNavItems = [
     { id: 's-home', label: 'Home', icon: <FaHome /> },
     { id: 's-certificates', label: 'Certificates', icon: <FaFileAlt /> },
+    { id: 's-bdrrmc', label: 'BDRRMC', icon: <FaExclamationTriangle /> },
+    { id: 's-profile', label: 'Profile', icon: <FaUser /> },
+  ];
+
+  const moreNavItems = [
     { id: 's-announcements', label: 'News', icon: <FaBullhorn /> },
     { id: 's-feedback', label: 'Feedback', icon: <FaCommentDots /> },
     { id: 's-blotter', label: 'Blotter', icon: <FaBalanceScale /> },
     { id: 's-assistance', label: 'Aid', icon: <FaHandHoldingHeart /> },
     { id: 's-events', label: 'Events', icon: <FaCalendarAlt /> },
-    { id: 's-profile', label: 'Profile', icon: <FaUser /> },
-  { id: 's-health', label: 'Health', icon: <FaHeartbeat /> },
-  { id: 's-bdrrmc', label: 'BDRRMC', icon: <FaExclamationTriangle /> },
+    { id: 's-health', label: 'Health', icon: <FaHeartbeat /> },
   ];
+
+  const moreActive = moreNavItems.some((item) => item.id === activeScreen);
 
   /* -- Render -- */
   return (
@@ -1465,17 +1508,70 @@ useEffect(() => {
 
         {/* Bottom Navigation */}
         <div className="bottom-nav">
-          {navItems.map((item) => {
+          {primaryNavItems.map((item) => {
             const active = activeScreen === item.id;
             return (
-              <button key={item.id} className={`bnav-item${active ? ' active' : ''}`} onClick={() => goToTab(item.id)} aria-current={active ? 'page' : undefined}>
+              <button key={item.id} className={`bnav-item${active ? ' active' : ''}`} onClick={() => { setMoreOpen(false); goToTab(item.id); }} aria-current={active ? 'page' : undefined}>
                 <span className="icon">{item.icon}</span>
                 <span>{item.label}</span>
                 <span className={`nav-selection-dot${active ? ' active' : ''}`} />
               </button>
             );
           })}
+          <button
+            type="button"
+            className={`bnav-item${moreActive ? ' active' : ''}`}
+            onClick={() => setMoreOpen(true)}
+            aria-haspopup="dialog"
+            aria-expanded={moreOpen}
+            aria-current={moreActive ? 'page' : undefined}
+          >
+            <span className="icon"><FaEllipsisH /></span>
+            <span>More</span>
+            <span className={`nav-selection-dot${moreActive ? ' active' : ''}`} />
+          </button>
         </div>
+
+        {/* "More" slide-up drawer for secondary tabs */}
+        {moreOpen && (
+          <div
+            role="presentation"
+            onClick={() => setMoreOpen(false)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.5)', zIndex: 400, display: 'flex', alignItems: 'flex-end', justifyContent: 'center' }}
+          >
+            <div
+              role="dialog"
+              aria-modal="true"
+              aria-label="More options"
+              tabIndex={-1}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => { if (e.key === 'Escape') setMoreOpen(false); }}
+              style={{ width: '100%', maxWidth: 480, background: 'var(--surface)', borderTopLeftRadius: 20, borderTopRightRadius: 20, border: '1px solid var(--border)', borderBottom: 'none', padding: '16px 16px calc(16px + env(safe-area-inset-bottom, 0px))', boxShadow: '0 -8px 32px rgba(0,0,0,0.3)', animation: 'resident-slideUp 0.22s ease-out' }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 14 }}>
+                <span style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)', letterSpacing: '0.3px' }}>More</span>
+                <button onClick={() => setMoreOpen(false)} aria-label="Close menu" style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 18, lineHeight: 1, cursor: 'pointer', padding: 4 }}>&#x2715;</button>
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
+                {moreNavItems.map((item) => {
+                  const active = activeScreen === item.id;
+                  return (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => { goToTab(item.id); setMoreOpen(false); }}
+                      aria-current={active ? 'page' : undefined}
+                      style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 6, padding: '14px 6px', borderRadius: 12, border: `1px solid ${active ? 'var(--primary)' : 'var(--border)'}`, background: active ? 'var(--primary-light)' : 'var(--surface2)', color: active ? 'var(--primary)' : 'var(--text)', fontFamily: 'var(--font)', fontSize: 11, fontWeight: 700, cursor: 'pointer', transition: 'all 0.15s ease' }}
+                    >
+                      <span style={{ fontSize: 20, display: 'flex' }}>{item.icon}</span>
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Footer */}
         <footer className="resident-footer" style={{ marginTop: 28, padding: '24px 16px 12px', textAlign: 'center', borderTop: '1px solid var(--border)', background: 'transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>

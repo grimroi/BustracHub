@@ -1,6 +1,5 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import Swal from 'sweetalert2';
-import { getStepFromStatus } from '../../utils/residentUtils';
 
 const showToast = (type, message) => {
   if (typeof Swal !== 'undefined' && Swal.fire) {
@@ -14,8 +13,6 @@ const showToast = (type, message) => {
     });
   }
 };
-
-const certSteps = ['Submitted', 'Review', 'Approved', 'Ready', 'Issued'];
 
 // Default Certificate Requirements List
 const DEFAULT_CERTIFICATE_REQUIREMENTS = {
@@ -53,12 +50,13 @@ export default function ResidentCertificates({
   updateCertField,
   submitCert,
   certSuccess,
-  setCertSuccess,
   filterTab,
   setFilterTab,
   handleCancelRequest,
   onRefresh,
 }) {
+  const [refreshing, setRefreshing] = useState(false);
+
   const selectedType = (
   certForm?.certType || 
   certForm?.type || 
@@ -66,10 +64,11 @@ export default function ResidentCertificates({
   ''
 ).trim();
 
+const purposeLen = certForm?.certPurpose?.length || 0;
+
 const activeRequirements = DEFAULT_CERTIFICATE_REQUIREMENTS[selectedType] || [];
 
 const handleCertTypeChange = (e) => {
-  const val = e.target.value;
   if (typeof updateCertField === 'function') {
     const res = updateCertField('certType');
     if (typeof res === 'function') {
@@ -89,16 +88,6 @@ const handleCertTypeChange = (e) => {
     });
   }, [myRequests, filterTab]);
 
-  const pendingRequestCount = useMemo(() => {
-    return myRequests.filter((r) => {
-      const status = (r.status || '').toLowerCase();
-      const step = Number(r.step || 1);
-      if (status === 'cancelled') return false;
-      if (['issued', 'released'].includes(status)) return false;
-      return step < 5;
-    }).length;
-  }, [myRequests]);
-
   const handleSubmit = async (e) => {
     e.preventDefault();
     const success = await submitCert(e);
@@ -108,6 +97,8 @@ const handleCertTypeChange = (e) => {
   };
   
     const handleRefreshRequests = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
     try {
       // The parent owns myRequests state and keeps it live via the PouchDB
       // changes feed, so ask it to reload rather than querying locally.
@@ -118,13 +109,15 @@ const handleCertTypeChange = (e) => {
     } catch (err) {
       console.error("Refresh failed", err);
       showToast('error', 'Failed to refresh. Please check your connection.');
+    } finally {
+      setRefreshing(false);
     }
   };
 
   return (
     <div
       className="screen active"
-      style={{ background: 'transparent', border: 'none', boxShadow: 'none', padding: 0 }}
+      style={{ background: 'transparent', border: 'none', boxShadow: 'none', padding: 0, paddingBottom: 90 }}
     >
       {/* Page Header */}
       <div className="page-hdr" style={{ marginBottom: 16 }}>
@@ -132,9 +125,9 @@ const handleCertTypeChange = (e) => {
         <div className="page-sub">Request and track your barangay certificates</div>
       </div>
 
-            {/* Request & Refresh Buttons */}
+      {/* Request & Refresh Buttons */}
       {!showCertForm && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 18 }}>
+        <div style={{ display: 'flex', gap: 8, marginBottom: 18, alignItems: 'center' }}>
           <button
             className="btn btn-primary"
             style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
@@ -147,16 +140,19 @@ const handleCertTypeChange = (e) => {
             <span>Request a Certificate</span>
           </button>
 
-          <button 
-            className="btn btn-g btn-sm" 
+          <button
+            type="button"
+            className="btn btn-g"
             onClick={handleRefreshRequests}
-            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+            disabled={refreshing}
+            aria-label="Refresh certificate status"
+            title="Refresh status"
+            style={{ flexShrink: 0, width: 44, height: 44, padding: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>
               <polyline points="23 4 23 10 17 10" />
               <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
             </svg>
-            <span>Refresh Status</span>
           </button>
         </div>
       )}
@@ -238,20 +234,24 @@ const handleCertTypeChange = (e) => {
             <div className="fg" style={{ marginBottom: 16 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 4 }}>
                 <label className="fl" style={{ margin: 0 }}>Purpose of Request *</label>
-                <span style={{ fontSize: 10, color: (certForm.certPurpose?.length || 0) > 200 ? 'var(--red)' : 'var(--muted)' }}>
-                  {certForm.certPurpose?.length || 0} / 200
+                <span style={{ fontSize: 10, color: (purposeLen > 200 || (purposeLen > 0 && purposeLen < 10)) ? 'var(--red)' : 'var(--muted)' }}>
+                  {purposeLen} / 200{purposeLen > 0 && purposeLen < 10 ? ' · min 10' : ''}
                 </span>
               </div>
               <textarea 
                 className="fc" 
                 rows="3" 
                 maxLength={200} 
+                minLength={10}
                 placeholder="e.g. For employment requirements at DOLE-Camarines Sur..." 
                 value={certForm.certPurpose} 
                 onChange={updateCertField('certPurpose')} 
                 required 
                 style={{ resize: 'none' }} 
               />
+              <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 4 }}>
+                Please describe the actual reason for this request (at least 10 characters).
+              </div>
             </div>
 
             <div style={{ fontSize: 11, color: 'var(--muted)', background: 'var(--surface2)', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: 16 }}>
@@ -299,7 +299,7 @@ const handleCertTypeChange = (e) => {
             <strong style={{ display: 'block', marginBottom: 2, fontSize: 14 }}>Request Filed Successfully!</strong>
             <div style={{ fontSize: 12, opacity: 0.9 }}>
               Tracking Reference:{" "}
-              <code style={{ background: 'var(--surface)', color: 'var(--green)', padding: '2px 6px', borderRadius: 4, fontWeight: 'bold', border: '1px solid var(--border)' }}>
+              <code style={{ background: 'var(--surface)', color: 'var(--green)', padding: '2px 6px', borderRadius: 4, fontWeight: 'bold', border: '1px solid var(--border)', display: 'inline-block', maxWidth: '100%', overflowWrap: 'anywhere', wordBreak: 'break-all' }}>
                 {certSuccess.refNumber}
               </code>
             </div>
@@ -333,19 +333,10 @@ const handleCertTypeChange = (e) => {
           const statusLabel = request.status || 'Pending';
           const isIssued = statusLabel === 'Issued' || stepCount >= 5;
           const isReady = statusLabel === 'Ready' || stepCount === 4;
-          const isApproved = statusLabel === 'Approved' || stepCount >= 3;
           const refNumber = request.refNumber || `CERT-${(request._id || '').slice(-6).toUpperCase()}`;
           const submittedDate = request.timestamp
             ? new Date(request.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
             : 'Recently added';
-
-          const getStatusLogText = () => {
-            if (isIssued) return 'Document Released / Completed';
-            if (isReady) return 'Document Ready for Pick-up at Barangay Hall';
-            if (isApproved) return 'Approved — Preparing Certificate Document';
-            if (stepCount === 2) return 'Under Administrative Review';
-            return 'Awaiting Captain / Admin Validation';
-          };
 
           return (
             <div className="card" key={request._id} style={{ padding: 18, marginBottom: 14, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)' }}>
@@ -398,10 +389,10 @@ const handleCertTypeChange = (e) => {
               </div>
 
               {/* Metadata */}
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, background: 'var(--surface2)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', marginBottom: 16, border: '1px solid var(--border)', fontSize: 12 }}>
-                <div style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr) minmax(0, 1fr)', gap: 8, background: 'var(--surface2)', padding: '10px 12px', borderRadius: 'var(--radius-sm)', marginBottom: 16, border: '1px solid var(--border)', fontSize: 12 }}>
+                <div style={{ minWidth: 0 }}>
                   <span style={{ color: 'var(--muted)' }}>Ref: </span>
-                  <code style={{ color: 'var(--text)', fontWeight: 700 }}>{refNumber}</code>
+                  <code style={{ color: 'var(--text)', fontWeight: 700, overflowWrap: 'anywhere', wordBreak: 'break-all' }}>{refNumber}</code>
                 </div>
                 <div style={{ textAlign: 'right', whiteSpace: 'nowrap' }}>
                   <span style={{ color: 'var(--muted)' }}>Filed: </span>
@@ -439,7 +430,7 @@ const handleCertTypeChange = (e) => {
                 Request Tracking Status
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '0', paddingBottom: 8 }}>
                 {[
                   { step: 1, label: 'Request Submitted', desc: 'Your request has been received by the system.' },
                   { step: 2, label: 'Under Review', desc: 'Barangay Secretary is verifying your details and blotter status.' },
