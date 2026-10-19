@@ -227,7 +227,7 @@ export default function LandingPage() {
         )}
 
         <section id="announcements" className="mb-16">
-          <SectionHeading eyebrow="Community Updates" title="Latest Announcements" description="Official announcements from Barangay Bustrac." />
+          <SectionHeading title="Latest Announcements" />
           {loading ? <LoadingGrid count={3} /> : data.announcements.length > 0 ? (
             <>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -243,7 +243,7 @@ export default function LandingPage() {
         </section>
 
         <section id="relief" className="mb-16">
-          <SectionHeading eyebrow="Relief & Assistance" title="Relief & Aid Advisories" description="Relief operations and assistance programs." />
+          <SectionHeading title="Relief & Aid Advisories" />
           {loading ? <LoadingGrid count={2} /> : data.advisories.length > 0 ? (
             <>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -259,7 +259,7 @@ export default function LandingPage() {
         </section>
 
         <section id="activities" className="mb-16">
-          <SectionHeading eyebrow="Community Calendar" title="Barangay Activities" description="Upcoming programs and community activities." />
+          <SectionHeading title="Barangay Activities" />
           {loading ? <LoadingGrid count={3} /> : data.activities.length > 0 ? (
             <>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
@@ -275,7 +275,7 @@ export default function LandingPage() {
         </section>
 
         <section id="services" className="mb-16">
-          <SectionHeading eyebrow="Public Services" title="Barangay Services" description="Access services through BUSTRAC HUB Resident Portal." />
+          <SectionHeading title="Barangay Services" />
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <ServiceCard title="Announcements" description="View official announcements." action="View Updates" onClick={() => scrollToSection('announcements')} iconPath="M11 5.882V19.24a1.76 1.76 0 01-3.417.592l-2.147-6.15M18 13a3 3 0 100-6" />
             <ServiceCard title="Certificate Tracking" description="Check status of certificate request." action="Check Status" onClick={() => goToLogin('tracking')} iconPath="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
@@ -323,8 +323,8 @@ export default function LandingPage() {
   );
 }
 
-function SectionHeading({ eyebrow, title, description }) {
-  return <div className="mb-6"><p className="text-xs font-bold uppercase tracking-wider text-emerald-400 mb-1">{eyebrow}</p><h3 className="text-2xl md:text-3xl font-extrabold text-white">{title}</h3><p className="text-sm text-slate-400 mt-1">{description}</p></div>;
+function SectionHeading({ title }) {
+  return <div className="mb-6"><h3 className="text-2xl md:text-3xl font-extrabold text-white">{title}</h3></div>;
 }
 function AnnouncementCard({ item, onSelect }) {
   return <article className="bg-slate-900/80 border border-slate-800 rounded-2xl p-6 flex flex-col justify-between hover:border-slate-700 transition-all"><div><span className="inline-flex px-2.5 py-1 rounded-md border border-emerald-500/20 bg-emerald-500/10 text-emerald-400 text-[10px] font-extrabold uppercase mb-4">{item.category}</span><h4 className="text-base font-bold text-white mb-2">{item.title}</h4><p className="text-xs text-slate-400 line-clamp-3">{item.description}</p></div><div className="mt-6 pt-4 border-t border-slate-800/80 flex justify-between items-center"><span className="text-[11px] text-slate-400 font-mono">{formatDate(item.date)}</span><button onClick={() => onSelect(item)} className="text-emerald-400 text-xs font-bold">Read details →</button></div></article>;

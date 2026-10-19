@@ -927,6 +927,50 @@ html[data-theme="light"] {
   background: var(--cl-surface-2);
 }
 
+/* ── Report-style table (used by BHS Health Station tabs) ── */
+.cert-report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.cert-report-table thead {
+  background: var(--surface2);
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+.cert-report-table thead th {
+  padding: 12px 16px;
+  text-align: left;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+.cert-report-table tbody tr {
+  transition: background 0.15s ease;
+  border-bottom: 1px solid var(--border);
+}
+.cert-report-table tbody tr:hover {
+  background: rgba(79, 142, 247, 0.06);
+}
+.cert-report-table tbody tr:last-child {
+  border-bottom: none;
+}
+.cert-report-table tbody td {
+  padding: 12px 16px;
+  color: var(--text);
+  vertical-align: middle;
+}
+.cert-report-table tbody td.clickable {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--primary);
+}
+
 /* ── Applicant cell ── */
 .cert-table-wrapper tbody td strong {
   font-weight: 600;
@@ -1099,6 +1143,46 @@ html[data-theme="light"] {
   color: var(--cl-text-muted);
   font-size: 13px;
   font-weight: 500;
+}
+
+/* Compact empty state for the Ready for Issuance queue (table body). */
+.cert-empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  text-align: center;
+  padding: 26px 20px;
+  margin: 16px;
+  border: 1px dashed var(--cl-border-strong);
+  border-radius: var(--cl-radius);
+  background: rgba(59, 130, 246, 0.04);
+  color: var(--cl-text-muted);
+}
+
+.cert-empty-state svg {
+  color: var(--cl-primary);
+  opacity: 0.7;
+  margin-bottom: 2px;
+}
+
+.cert-empty-state__title {
+  font-size: 13.5px;
+  font-weight: 700;
+  color: var(--cl-text);
+}
+
+.cert-empty-state__hint {
+  font-size: 12px;
+  color: var(--cl-text-muted);
+  max-width: 320px;
+}
+
+/* Let the Ready for Issuance and history tables fill their cards and scroll
+   internally instead of being capped at 420px (which left dead space). */
+.cert-print-screen .cert-table-wrapper {
+  max-height: none;
 }
 
 .spinner {
@@ -1455,6 +1539,77 @@ html[data-theme="light"] {
 
 .fp-t.accent {
   color: var(--cl-primary);
+}
+
+/* ═══ ISSUANCE WORKSPACE — document preview + receipt layout ═══ */
+/* Two independently scrollable columns so the live document preview and the
+   receipt / CTC inputs both stay fully reachable inside the modal. */
+.cert-issuance-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  gap: 20px;
+  padding: 20px 24px;
+  overflow: hidden;
+}
+
+.cert-document-preview {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cert-document-preview > .fp-t {
+  flex: 0 0 auto;
+}
+
+.cert-document-preview__pane {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 16px;
+}
+
+.cert-document-preview__caption {
+  flex: 0 0 auto;
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--muted);
+  text-align: center;
+}
+
+.cert-receipt-details {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+/* Stack the columns on narrower viewports: the workspace body becomes the
+   scroll container and the preview keeps a comfortable capped height. */
+@media (max-width: 880px) {
+  .cert-issuance-body {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+  }
+  .cert-document-preview__pane {
+    flex: 0 0 auto;
+    max-height: 68vh;
+  }
+  .cert-receipt-details {
+    overflow: visible;
+  }
 }
 
 /* ═══ SUCCESS TOAST (slide in) ═══ */

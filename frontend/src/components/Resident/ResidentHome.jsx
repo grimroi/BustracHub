@@ -1,6 +1,7 @@
-import { useState } from "react";
-import { FaBullhorn } from "react-icons/fa";
+import { useEffect, useState } from "react";
+import { FaBullhorn, FaCalendarAlt } from "react-icons/fa";
 import Swal from "sweetalert2";
+import { localDb as db } from "../../services/db";
 
 const EMERGENCY_HOTLINES = [
   { name: 'MDRRMO Nabua (Rescue)', sub: 'Disaster & Emergency Response', tel: '09175060294' },
@@ -24,6 +25,57 @@ export default function ResidentHome({
   // Emergency hotlines start collapsed so a stray tap on the Home view can never
   // dial out; every call additionally requires an explicit confirmation.
   const [hotlinesOpen, setHotlinesOpen] = useState(false);
+
+  // Disaster alert banner state (checked against localDb on mount).
+  const [activeDisaster, setActiveDisaster] = useState(null);
+  const [disasterChecked, setDisasterChecked] = useState(false);
+
+  // Upcoming barangay events (type: 'barangay_event', date >= today).
+  const [upcomingEvents, setUpcomingEvents] = useState([]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await db.find({ selector: { type: 'disaster_event' }, limit: 200 });
+        const active = (res.docs || []).filter(
+          (d) => d.isArchived !== true && d.status === 'Active'
+        );
+        if (!cancelled) setActiveDisaster(active[0] || null);
+      } catch (err) {
+        console.warn('[ResidentHome] Failed to load disaster alerts:', err?.message || err);
+        if (!cancelled) setActiveDisaster(null);
+      } finally {
+        if (!cancelled) setDisasterChecked(true);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const today = new Date().toISOString().split('T')[0];
+        const res = await db.find({ selector: { type: 'barangay_event' }, limit: 500 });
+        const upcoming = (res.docs || [])
+          .filter((e) => !e.archived && e.date && e.date >= today)
+          .sort((a, b) => String(a.date || '').localeCompare(String(b.date || '')));
+        if (!cancelled) setUpcomingEvents(upcoming);
+      } catch (err) {
+        console.warn('[ResidentHome] Failed to load upcoming events:', err?.message || err);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+
+  const formatEventDate = (value) => {
+    const [y, m, d] = String(value || '').split('-').map(Number);
+    if (!y || !m || !d) return value || '';
+    return new Date(y, m - 1, d).toLocaleDateString('en-PH', {
+      month: 'short', day: 'numeric', year: 'numeric',
+    });
+  };
 
   const confirmEmergencyCall = (hotline) => {
     // Move focus off the tapped button before SweetAlert2 opens: it marks the
@@ -97,6 +149,37 @@ export default function ResidentHome({
         </div>
       )}
 
+      {/* Disaster Alert Banner */}
+      {disasterChecked && activeDisaster && (
+        <button
+          type="button"
+          onClick={() => goToTab?.('s-bdrrmc')}
+          aria-label={`Active disaster: ${activeDisaster.eventType}. View evacuation centers.`}
+          style={{
+            display: 'block', width: '100%', textAlign: 'left', cursor: 'pointer',
+            marginBottom: 16, padding: '12px 14px', borderRadius: 12,
+            background: 'var(--red-bg, rgba(239, 68, 68, 0.1))',
+            border: '1px solid rgba(239, 68, 68, 0.4)',
+            color: 'var(--red)', fontSize: 13, fontWeight: 700, lineHeight: 1.4,
+          }}
+        >
+          ⚠️ Active Disaster: {activeDisaster.eventType || 'Disaster Event'} - Tap to view evacuation centers
+        </button>
+      )}
+      {disasterChecked && !activeDisaster && (
+        <div
+          role="status"
+          style={{
+            marginBottom: 16, padding: '10px 14px', borderRadius: 12,
+            background: 'var(--green-bg, rgba(34, 197, 94, 0.08))',
+            border: '1px solid rgba(34, 197, 94, 0.3)',
+            color: 'var(--green)', fontSize: 12.5, fontWeight: 700,
+          }}
+        >
+          ✅ No active disaster alerts
+        </div>
+      )}
+
       {/* Header */}
       <div className="page-hdr" style={{ marginBottom: 16 }}>
         <div className="page-title">{greetingText}, {loggedInUser?.fullName}!</div>
@@ -167,7 +250,11 @@ export default function ResidentHome({
                   fontSize: 13, fontWeight: 700, color: 'var(--text)',
                   display: 'flex', alignItems: 'center', gap: 8, minWidth: 0,
                 }}>
-                  <span style={{ flex: '1 1 auto', minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  <span style={{
+                    flex: '1 1 auto', minWidth: 0, overflow: 'hidden',
+                    display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical',
+                    whiteSpace: 'normal', wordBreak: 'break-word',
+                  }}>
                     {ann.title}
                   </span>
                   {/* NEW BADGE */}
@@ -200,6 +287,50 @@ export default function ResidentHome({
           <div style={{ textAlign: 'center', padding: '24px 10px', color: 'var(--muted)' }}>
             <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)' }}>No announcements yet.</div>
             <div style={{ fontSize: 12 }}>Check back later for new updates.</div>
+          </div>
+        )}
+      </div>
+
+      {/* Upcoming Events */}
+      <div className="card" style={{ padding: 18, marginBottom: 16, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>
+          <span className="card-title" style={{ fontSize: 14, fontWeight: 800, color: 'var(--text)' }}>
+            Upcoming Events
+          </span>
+          <button className="btn btn-ghost btn-sm" onClick={() => goToTab?.('s-events')} style={{ fontSize: 11, flexShrink: 0, whiteSpace: 'nowrap' }}>
+            View →
+          </button>
+        </div>
+        {upcomingEvents.length ? (
+          upcomingEvents.slice(0, 2).map((ev) => (
+            <div
+              key={ev._id}
+              className="list-item"
+              style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 0', borderBottom: '1px solid var(--border)', minWidth: 0 }}
+            >
+              <div className="list-icon" style={{
+                width: 36, height: 36, borderRadius: 10, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+                background: 'var(--surface2)', color: 'var(--primary)',
+              }}>
+                <FaCalendarAlt size={16} />
+              </div>
+              <div className="list-body" style={{ flex: 1, minWidth: 0 }}>
+                <div className="list-title" style={{
+                  fontSize: 13, fontWeight: 700, color: 'var(--text)',
+                  overflow: 'hidden', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical', wordBreak: 'break-word',
+                }}>
+                  {ev.title}
+                </div>
+                <div className="list-sub" style={{ fontSize: 11, color: 'var(--muted)' }}>
+                  {formatEventDate(ev.date)}{ev.location ? ` · ${ev.location}` : ''}
+                </div>
+              </div>
+            </div>
+          ))
+        ) : (
+          <div style={{ textAlign: 'center', padding: '20px 10px', color: 'var(--muted)' }}>
+            <div style={{ fontWeight: 700, fontSize: 13, color: 'var(--text)' }}>No upcoming events.</div>
+            <div style={{ fontSize: 12 }}>Check back later for community activities.</div>
           </div>
         )}
       </div>

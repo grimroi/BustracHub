@@ -1,5 +1,5 @@
-// src/components/EditUserModal.jsx
-import React, { useState } from 'react';
+﻿// src/components/EditUserModal.jsx
+import { useState, useMemo } from 'react';
 import Swal from 'sweetalert2';
 import { createAuditLog } from '../utils/auditLog';
 import { hashPassword } from '../utils/password';
@@ -17,7 +17,38 @@ export default function EditUserModal({ user, onClose, onSave, db, currentUser }
   const [showPassword, setShowPassword] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
+const isDirty = useMemo(() => {
+    return (
+      (formData.fullName || user.fullName || user.name || '') !== (user.fullName || user.name || '') ||
+      (formData.role || user.role || 'Resident') !== (user.role || 'Resident') ||
+      (formData.status || user.status || 'Active') !== (user.status || 'Active') ||
+      (formData.purok || user.purok || 'Purok 1') !== (user.purok || 'Purok 1') ||
+      (formData.contact || '') !== (user.contact || '') ||
+      (formData.email || '') !== (user.email || '') ||
+      (formData.newPassword || '').trim() !== ''
+    );
+  }, [formData, user]);
   const username = user.username || user.uname || '';
+  const handleClose = () => {
+    if (isDirty) {
+      Swal.fire({
+        icon: 'warning',
+        title: 'Discard changes?',
+        text: 'You have unsaved changes. Closing now will discard them.',
+        showCancelButton: true,
+        confirmButtonText: 'Discard',
+        cancelButtonText: 'Keep editing',
+        confirmButtonColor: '#dc2626',
+        zIndex: 100000,
+      }).then((result) => {
+        if (result.isConfirmed) {
+          onClose();
+        }
+      });
+      return;
+    }
+    onClose();
+  };
   const userDocId = user._id?.startsWith('user_') ? user._id : `user_${username.toLowerCase()}`;
 
   const handleSave = async (e) => {
@@ -32,7 +63,7 @@ export default function EditUserModal({ user, onClose, onSave, db, currentUser }
       let existingDoc;
       try {
         existingDoc = await db.get(userDocId);
-      } catch (notFound) {
+      } catch {
         // Fallback search by username if ID differed
         try {
           const findRes = await db.find({
@@ -43,7 +74,7 @@ export default function EditUserModal({ user, onClose, onSave, db, currentUser }
           if (findRes.docs && findRes.docs.length > 0) {
             existingDoc = findRes.docs[0];
           }
-        } catch (findErr) {
+        } catch {
           // Ignore
         }
       }
@@ -148,7 +179,7 @@ export default function EditUserModal({ user, onClose, onSave, db, currentUser }
         zIndex: 99999,
         padding: '16px',
       }}
-      onClick={onClose}
+      onClick={handleClose}
     >
       <div
         style={{
@@ -171,11 +202,11 @@ export default function EditUserModal({ user, onClose, onSave, db, currentUser }
             </span>
           </div>
           <button
-            onClick={onClose}
+            onClick={handleClose}
             className="btn btn-g btn-sm"
             style={{ borderRadius: '50%', width: '32px', height: '32px', padding: 0, display: 'flex', alignItems: 'center', justifyContent: 'center' }}
           >
-            ✕
+            âœ•
           </button>
         </div>
 
@@ -285,7 +316,7 @@ export default function EditUserModal({ user, onClose, onSave, db, currentUser }
           </div>
 
           <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end', marginTop: '12px' }}>
-            <button type="button" className="btn btn-g" onClick={onClose} disabled={isSaving}>
+            <button type="button" className="btn btn-g" onClick={handleClose} disabled={isSaving}>
               Cancel
             </button>
             <button type="submit" className="btn btn-p" disabled={isSaving}>

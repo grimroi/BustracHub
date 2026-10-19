@@ -119,7 +119,7 @@ export default function ResidentProfile({
   const emergencyNumber = user.emergencyContactNumber || profile.emergencyContactNo || profile.emergencyContactNumber || '—';
 
   return (
-    <div className="screen active" style={{ padding: '0 16px 110px' }}>
+    <div className="screen active resident-profile" style={{ padding: '0 16px 110px' }}>
       {/* Floating Toast Notification (Hindi na nagshi-shift ng UI) */}
       {saveSuccess && (
         <div style={{
@@ -154,7 +154,7 @@ export default function ResidentProfile({
 
       {/* Profile Card */}
       <div className="card" style={{ padding: 24, marginBottom: 16, textAlign: 'center', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 16 }}>
-        <div style={{
+        <div className="resident-profile-avatar" style={{
           width: 72, height: 72, borderRadius: '50%',
           background: 'linear-gradient(135deg, var(--primary) 0%, var(--primary-light) 100%)',
           display: 'flex', alignItems: 'center', justifyContent: 'center',
@@ -189,7 +189,7 @@ export default function ResidentProfile({
 
         {!isEditing ? (
           /* VIEW MODE */
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 12px' }}>
+          <div className="resident-profile-grid">
             <div>
               <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
                 <FaUser size={10} /> Full Name
@@ -230,7 +230,7 @@ export default function ResidentProfile({
         ) : (
           /* EDIT MODE - Personal Information */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div className="resident-form-grid">
               <div className="fg">
                 <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
                   First Name *
@@ -260,7 +260,7 @@ export default function ResidentProfile({
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div className="resident-form-grid">
               <div className="fg">
                 <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
                   <FaCalendarAlt style={{ marginRight: 4 }} size={11} /> Birthdate *
@@ -329,7 +329,7 @@ export default function ResidentProfile({
         {!isEditing ? (
           /* VIEW MODE */
           <>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '14px 12px' }}>
+            <div className="resident-profile-grid">
               <div>
                 <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 3, display: 'flex', alignItems: 'center', gap: 4 }}>
                   <FaPhone size={10} /> Contact
@@ -355,9 +355,9 @@ export default function ResidentProfile({
                 <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text)' }}>{address}</div>
               </div>
             </div>
-            <div style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
+            <div className="resident-profile-emergency" style={{ marginTop: 14, paddingTop: 14, borderTop: '1px solid var(--border)' }}>
               <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 8 }}>Emergency Contact</div>
-              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px 12px' }}>
+              <div className="resident-profile-grid resident-profile-grid--tight">
                 <div>
                   <div style={{ fontSize: 10, color: 'var(--muted)', marginBottom: 2 }}>Name</div>
                   <div style={{ fontSize: 12, fontWeight: 600, color: 'var(--text)' }}>{emergencyName}</div>
@@ -372,7 +372,7 @@ export default function ResidentProfile({
         ) : (
           /* EDIT MODE - Contact & Address */
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div className="resident-form-grid">
               <div className="fg">
                 <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
                   <FaPhone style={{ marginRight: 4 }} size={11} /> Contact Number *
@@ -401,7 +401,7 @@ export default function ResidentProfile({
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div className="resident-form-grid">
               <div className="fg">
                 <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
                   <FaMapMarkerAlt style={{ marginRight: 4 }} size={11} /> Purok / Zone *
@@ -435,7 +435,7 @@ export default function ResidentProfile({
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
+            <div className="resident-form-grid">
               <div className="fg">
                 <label className="fl" style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4, display: 'block' }}>
                   Emergency Contact Person

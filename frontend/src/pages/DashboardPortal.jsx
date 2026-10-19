@@ -1,8 +1,8 @@
 ﻿import React, { useState, useEffect, useCallback, useRef, useMemo, startTransition } from 'react';
 import ResidentsScreen from '../components/screens/ResidentsScreen';
-import BHSHealthRecords from '../components/BHS/BHSHealthRecords';
-import BHSInventory from '../components/BHS/BHSInventory';
+import HealthStation from '../components/BHS/HealthStation';
 import BDRRMCModule from '../components/BDRRMC/BDRRMCModule';
+import AidDistributionModule from '../components/AidDistribution/AidDistributionModule';
 import BDRRMCRelief from '../components/BDRRMC/BDRRMCRelief';
 import BDRRMCEvacuation from '../components/BDRRMC/BDRRMCEvacuation';
 import BDRRMCSummary from '../components/BDRRMC/BDRRMCSummary';
@@ -81,13 +81,37 @@ import {
 
 const SESSION_TIMEOUT_MIN = Number(import.meta.env.VITE_SESSION_TIMEOUT_MIN) || 15;
 
+// Offline-first save with 409 conflict retry (up to 3 attempts), mirroring the
+// soft-archive pattern used by the BDRRMC modules. Keeps the sync layer untouched.
+const putWithRetry = async (initialDoc, merge) => {
+  let doc = initialDoc;
+  let saved = false;
+  let attempts = 0;
+  while (attempts < 3 && !saved) {
+    try {
+      await db.put(doc);
+      saved = true;
+    } catch (err) {
+      if (err && err.status === 409) {
+        const fresh = await db.get(doc._id);
+        doc = { ...fresh, ...merge, updatedAt: new Date().toISOString() };
+        attempts += 1;
+      } else {
+        throw err;
+      }
+    }
+  }
+  if (!saved) throw new Error('Conflicting edit detected. Please try again.');
+  return doc;
+};
+
 // ─────────────────────────────────────────────
 // CONSTANTS
 // ─────────────────────────────────────────────
 
 const SCREEN_META = {
   dashboard:            ['Dashboard',                  ''], 
-  bhs: ['Barangay Health Station', 'BHS Module'],
+  bhs: ['Barangay Health Station', 'Health Services & Inventory'],
   bdrrmc: ['BDRRMC & Relief', 'Disaster Response Module'],
   'events-manage': ['Events Management', 'Community Module'],
   residents:            ['Manage Residents',           'Resident Registry Module'],
@@ -100,7 +124,8 @@ const SCREEN_META = {
   business_clearance:   ['Business Clearance',       'Certificate Issuance Module'],
   brgy_clearance:       ['Barangay Clearance (Individual)', 'Certificate Issuance Module'],
   programs:             ['Distribution Programs',      'Aid Distribution Module'],
-  'aid-encode':         ['Encode Distribution',        'Aid Distribution Module'],
+  'aid-distribution':    ['Aid Distribution',           'Aid Distribution Module'],
+  'aid-encode':         ['Relief Distribution',        'Aid Distribution Module'],
   'aid-logs':           ['Distribution Logs',          'Aid Distribution Module'],
   'add-beneficiary':    ['Add Beneficiaries',          'Aid Distribution Module'],
   'blotter-new':        ['File Blotter Entry',         'Blotter Module'],
@@ -123,6 +148,9 @@ const SCREEN_META = {
 const SCREEN_ALIASES = {
   pending: 'cert-req',
   'cert-pending': 'cert-req',
+  programs: 'aid-distribution',
+  'aid-encode': 'aid-distribution',
+  'aid-logs': 'aid-distribution',
 };
 
 const resolveScreen = (raw) => SCREEN_ALIASES[raw] || raw;
@@ -176,6 +204,11 @@ export const EMPTY_RESIDENT = {
   isDeceased: false,
   photoUrl: '',
 };
+
+// Volatile auto-managed keys excluded from the Add Resident dirty check
+// (fileDateUpdated defaults to the module-load date). Keep this minimal and
+// do not add real user data fields.
+const IGNORED_DIRTY_KEYS = new Set(['fileDateUpdated']);
 
 const INITIAL_COMPLAINT = {
   caseNum:      'BLT-2024-041',
@@ -605,6 +638,7 @@ export const mapDocToBlotter = (doc) => {
     cfaIssued: Boolean(doc.cfaIssued),
     details: doc.details || doc.narrative || doc.description || '',
     isVawc: Boolean(doc.isVawc || doc.type === 'VAWC' || caseType.includes('VAWC')),
+    isArchived: doc.isArchived === true,
      sla: doc.sla || null,
      attachments: doc.attachments || [], 
     hearings: Array.isArray(doc.hearings) ? doc.hearings : [],
@@ -877,19 +911,22 @@ const handlePrintBusinessDocument = async () => {
   }
 ]);
   const [auditLogs, setAuditLogs] = useState([]);
+const [recentAudit, setRecentAudit] = useState([]);
+const [recentAuditLoading, setRecentAuditLoading] = useState(true);
+const [recentAuditError, setRecentAuditError] = useState(false);
 
 const getStatusBadge = (status) => {
   switch (status) {
     case 'Settled / Resolved':
     case 'Settled':
     case 'Resolved':
-      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#dcfce7', color: '#15803d', fontWeight: 'bold' }}>✓ Settled</span>;
+      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(16, 185, 129, 0.15)', color: '#34d399', fontWeight: 'bold' }}>✓ Settled</span>;
     case 'Referred to Lupon':
-      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#fef3c7', color: '#b45309', fontWeight: 'bold' }}>⚠️ Referred to Lupon</span>;
+      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(245, 158, 11, 0.15)', color: '#fbbf24', fontWeight: 'bold' }}>⚠️ Referred to Lupon</span>;
     case 'Dismissed':
-      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#fee2e2', color: '#b91c1c', fontWeight: 'bold' }}>✕ Dismissed</span>;
+      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(239, 68, 68, 0.15)', color: '#f87171', fontWeight: 'bold' }}>✕ Dismissed</span>;
     default:
-      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: '#e0f2fe', color: '#0369a1', fontWeight: 'bold' }}>🔵 {status || 'Open'}</span>;
+      return <span style={{ padding: '4px 8px', borderRadius: '4px', background: 'rgba(59, 130, 246, 0.15)', color: '#60a5fa', fontWeight: 'bold' }}>🔵 {status || 'Open'}</span>;
   }
 };
 
@@ -945,20 +982,55 @@ const [feedbackList, setFeedbackList] = useState([
 
   // ── ROBUST LOCAL STATS (offline-first) ──
   // The dashboard cards used to derive Residents/Households/Voters from a
-  // Mango find() whose $or selector often returned nothing, leaving the cards
-  // at 0 even though localDb held the data. We now count straight from
-  // localDb.allDocs() (the same source window.localDb exposes) and recompute
-  // whenever replication reports it is synced.
+  // Mango find() whose $or selector often returned nothing. We now issue
+  // targeted per-type Mango find() calls (backed by the {type, isArchived}
+  // index) and fall back to a whole-DB allDocs() scan when they error or
+  // return no rows. Counts recompute whenever replication reports synced.
   const [dashboardStats, setDashboardStats] = useState({
     residents: 0,
     households: 0,
     voters: 0,
     openBlotters: 0,
+    activeDisasters: 0,
+    bhsRecords: 0,
+    lowStockMeds: 0,
   });
 
   const computeDashboardStats = useCallback(async () => {
     if (typeof db === 'undefined' || !db || typeof db.allDocs !== 'function') return null;
-    try {
+
+    // Shared commit helper: only replace state when a counter actually changes.
+    const commitStats = (next) => {
+      setDashboardStats((prev) =>
+        prev.residents === next.residents &&
+        prev.households === next.households &&
+        prev.voters === next.voters &&
+        prev.openBlotters === next.openBlotters &&
+        prev.activeDisasters === next.activeDisasters &&
+        prev.bhsRecords === next.bhsRecords &&
+        prev.lowStockMeds === next.lowStockMeds
+          ? prev
+          : next
+      );
+      console.log('[dashboard-stats] local PouchDB counts:', next);
+      return next;
+    };
+
+    // OPEN BLOTTER = Open / Pending / Under Mediation only. Resolved,
+    // Settled, Dismissed and CFA-referred cases are excluded.
+    const isOpenBlotter = (doc) => {
+      const status = String(doc.status || '').trim().toLowerCase();
+      if (doc.cfaIssued === true) return false;
+      if (/resolved|settled|dismissed|cfa|referred/.test(status)) return false;
+      return (
+        status === 'open' ||
+        status === 'pending' ||
+        status.startsWith('under mediation')
+      );
+    };
+
+    // Fallback: original whole-DB scan with the existing JS filters.
+    const computeFromAllDocs = async () => {
       const res = await db.allDocs({ include_docs: true });
       const rows = res.rows
         .map((r) => r.doc)
@@ -969,8 +1041,6 @@ const [feedbackList, setFeedbackList] = useState([
             !String(doc._id).startsWith('_design/')
         );
 
-      // Robust resident/household counts — match the real doc shape and skip
-      // archived docs (isArchived may be absent on live docs).
       const residents = rows.filter(
         (doc) => doc.type === 'resident' && doc.isArchived !== true
       );
@@ -989,39 +1059,128 @@ const [feedbackList, setFeedbackList] = useState([
         doc.docType === 'blotter' ||
         (typeof doc._id === 'string' && doc._id.toUpperCase().startsWith('BLT-'));
 
-      // OPEN BLOTTER = Open / Pending / Under Mediation only. Resolved,
-      // Settled, Dismissed and CFA-referred cases are excluded.
-      const openBlotters = rows.filter((doc) => {
-        if (!isBlotterDoc(doc)) return false;
-        const status = String(doc.status || '').trim().toLowerCase();
-        if (doc.cfaIssued === true) return false;
-        if (/resolved|settled|dismissed|cfa|referred/.test(status)) return false;
-        return (
-          status === 'open' ||
-          status === 'pending' ||
-          status.startsWith('under mediation')
-        );
-      });
+      const openBlotters = rows.filter(
+        (doc) => isBlotterDoc(doc) && isOpenBlotter(doc)
+      );
 
-      const next = {
+      // BDRRMC: active disaster events only (same predicate as the Mango path).
+      const activeDisasters = rows.filter(
+        (doc) =>
+          doc.type === 'disaster_event' &&
+          doc.isArchived !== true &&
+          doc.status === 'Active'
+      );
+
+      // BHS: health records + low-stock inventory items (same predicates as
+      // HealthRecordsTab / InventoryTab).
+      const bhsRecords = rows.filter((doc) => doc.type === 'health_record');
+      const lowStockMeds = rows.filter(
+        (doc) =>
+          doc.type === 'bhs_inventory' &&
+          (doc.quantity ?? 0) <= (doc.lowStockThreshold ?? 10)
+      );
+
+      return {
         residents: residents.length,
         households: households.length,
         voters: voters.length,
         openBlotters: openBlotters.length,
+        activeDisasters: activeDisasters.length,
+        bhsRecords: bhsRecords.length,
+        lowStockMeds: lowStockMeds.length,
       };
-      setDashboardStats((prev) =>
-        prev.residents === next.residents &&
-        prev.households === next.households &&
-        prev.voters === next.voters &&
-        prev.openBlotters === next.openBlotters
-          ? prev
-          : next
+    };
+
+    try {
+      // Hardened path: three targeted Mango queries backed by the
+      // {type, isArchived} index instead of a whole-DB allDocs scan.
+      // Resident/household selectors mirror the JS filters below. PouchDB
+      // $ne also matches live docs that omit isArchived.
+      const [residentsRes, householdsRes, blotterRes, disasterRes, healthRes, inventoryRes] = await Promise.all([
+        db.find({
+          selector: { type: 'resident', isArchived: { $ne: true } },
+          fields: ['_id', 'isRegisteredVoter', 'voter'],
+          limit: 100000,
+        }),
+        db.find({
+          selector: { type: 'household', isArchived: { $ne: true } },
+          fields: ['_id'],
+          limit: 100000,
+        }),
+        db.find({
+          selector: {
+            $or: [
+              { type: 'blotter' },
+              { type: 'blotter_record' },
+              { type: 'blotter_report' },
+              { docType: 'blotter' },
+              { _id: { $gte: 'BLT-', $lt: 'BLT-\uffff' } },
+            ],
+          },
+          fields: ['_id', 'status', 'cfaIssued'],
+          limit: 100000,
+        }),
+        db.find({
+          selector: { type: 'disaster_event', isArchived: { $ne: true } },
+          fields: ['_id', 'status'],
+          limit: 100000,
+        }),
+        db.find({
+          selector: { type: 'health_record' },
+          fields: ['_id'],
+          limit: 100000,
+        }),
+        db.find({
+          selector: { type: 'bhs_inventory' },
+          fields: ['_id', 'quantity', 'lowStockThreshold'],
+          limit: 100000,
+        }),
+      ]);
+
+      const residentDocs = residentsRes.docs || [];
+      const householdDocs = householdsRes.docs || [];
+      const blotterDocs = blotterRes.docs || [];
+      const disasterDocs = disasterRes.docs || [];
+      const healthDocs = healthRes.docs || [];
+      const inventoryDocs = inventoryRes.docs || [];
+      const bhsRecords = healthDocs.length;
+      const lowStockMeds = inventoryDocs.filter(
+        (doc) => (doc.quantity ?? 0) <= (doc.lowStockThreshold ?? 10)
+      ).length;
+
+      // Only an all-empty result falls back. Partial results are trusted.
+      if (
+        residentDocs.length + householdDocs.length + blotterDocs.length + disasterDocs.length === 0
+      ) {
+        throw new Error('Mango dashboard queries returned no rows');
+      }
+
+      const voters = residentDocs.filter(
+        (doc) => doc.isRegisteredVoter === true || doc.voter === true
       );
-      console.log('[dashboard-stats] local PouchDB counts:', next);
-      return next;
-    } catch (err) {
-      console.warn('[dashboard-stats] Failed to compute local stats:', err?.message || err);
-      return null;
+      const openBlotters = blotterDocs.filter((doc) => isOpenBlotter(doc));
+      const activeDisasters = disasterDocs.filter((doc) => doc.status === 'Active');
+
+      return commitStats({
+        residents: residentDocs.length,
+        households: householdDocs.length,
+        voters: voters.length,
+        openBlotters: openBlotters.length,
+        activeDisasters: activeDisasters.length,
+        bhsRecords,
+        lowStockMeds,
+      });
+    } catch (findErr) {
+      console.warn(
+        '[dashboard-stats] Mango path failed, using allDocs fallback:',
+        findErr?.message || findErr
+      );
+      try {
+        return commitStats(await computeFromAllDocs());
+      } catch (err) {
+        console.warn('[dashboard-stats] Failed to compute local stats:', err?.message || err);
+        return null;
+      }
     }
   }, []);
 
@@ -1037,20 +1196,76 @@ const [feedbackList, setFeedbackList] = useState([
     };
   }, [computeDashboardStats]);
 
+  // Recompute the KPI counters whenever a local record changes, so cards such
+  // as "Active Disasters" stay accurate after edits made on other screens
+  // (e.g. the BDRRMC module) instead of waiting for the next sync event.
+  useEffect(() => {
+    if (typeof db === 'undefined' || !db || typeof db.changes !== 'function') return undefined;
+    let timer = null;
+    const feed = db.changes({ since: 'now', live: true }).on('change', () => {
+      clearTimeout(timer);
+      timer = setTimeout(() => computeDashboardStats(), 600);
+    });
+    return () => {
+      clearTimeout(timer);
+      feed.cancel();
+    };
+  }, [computeDashboardStats]);
+
+  useEffect(() => {
+    let cancelled = false;
+  const fetchRecentAudit = async () => {
+    setRecentAuditLoading(true);
+    setRecentAuditError(false);
+    try {
+      let logs = [];
+      try {
+        const res = await db.find({ selector: { type: 'audit_log' }, sort: [{ timestamp: 'desc' }], limit: 5 });
+        logs = (res.docs || []).slice(0, 5);
+      } catch {
+        const all = await db.allDocs({ include_docs: true });
+        logs = all.rows
+          .map((r) => r.doc)
+          .filter((d) => d && (d.type === 'audit_log' || d.docType === 'audit_log'))
+          .sort((a, b) => new Date(b.timestamp || b.createdAt || 0) - new Date(a.timestamp || a.createdAt || 0))
+          .slice(0, 5);
+      }
+      if (!cancelled) setRecentAudit(logs);
+    } catch (err) {
+      console.warn('Failed to load recent audit:', err?.message || err);
+      if (!cancelled) { setRecentAudit([]); setRecentAuditError(true); }
+    } finally {
+      if (!cancelled) setRecentAuditLoading(false);
+    }
+  };
+  fetchRecentAudit();
+  return () => { cancelled = true; };
+}, []);
+
   // ── BLOTTER CASE OUTCOMES (single source of truth) ──
-  // Derive every dashboard blotter figure from the same `blotterList` using
-  // mutually exclusive and collectively exhaustive buckets so the breakdown
-  // rows always add up to the header total (blotterList.length). Previously the
+  // Derive every dashboard blotter figure from the same non-archived blotter
+  // subset using mutually exclusive and collectively exhaustive buckets so the
+  // breakdown rows always add up to the header total (non-archived count). Previously the
   // settled/CFA rows came from `blotterList` (find) while the active row came
   // from `dashboardStats.openBlotters` (allDocs), and cases with statuses like
   // 'Dismissed'/'Referred to Lupon'/'Resolved' fell into no bucket at all —
   // making the rows sum (38) disagree with the total (41).
+  // Soft-archive policy: dashboard blotter KPIs represent ACTIVE records only.
+  // Archived records (isArchived === true) are dropped once here so every
+  // active/open/pending blotter metric agrees with the Manage Blotter "Active"
+  // view. Computed once and reused by the outcome buckets, the pending badge
+  // count and the open-blotter trend.
+  const nonArchivedBlotters = useMemo(
+    () => (blotterList || []).filter((b) => b.isArchived !== true),
+    [blotterList]
+  );
+
   const blotterOutcome = useMemo(() => {
     let settled = 0;
     let cfa = 0;
     let active = 0;
     let other = 0;
-    (blotterList || []).forEach((b) => {
+    (nonArchivedBlotters || []).forEach((b) => {
       const status = String(b.status || '').trim().toLowerCase();
       const isSettled = status === 'settled / resolved' || status === 'settled' || status === 'resolved';
       const isCfa = !isSettled && (
@@ -1070,7 +1285,7 @@ const [feedbackList, setFeedbackList] = useState([
       else other += 1;
     });
     return { settled, cfa, active, other, total: settled + cfa + active + other };
-  }, [blotterList]);
+  }, [nonArchivedBlotters]);
 
   const settledBlotterCount = blotterOutcome.settled;
   const cfaBlotterCount = blotterOutcome.cfa;
@@ -1143,7 +1358,9 @@ const initials = displayName
 
   const [syncState, setSyncState] = useState(navigator.onLine ? 'synced' : 'offline');
   const [isDbProcessing, setIsDbProcessing] = useState(false);
-  const [lastSynced, setLastSynced] = useState(null);     
+  const [lastSynced, setLastSynced] = useState(() => {
+  try { return localStorage.getItem('bustrac_last_synced') || null; } catch { return null; }
+});     
 const [pendingCount, setPendingCount] = useState(0);  
     const [syncDetail, setSyncDetail] = useState(null);
     const [toasts, setToasts] = useState([]);
@@ -1607,6 +1824,7 @@ useEffect(() => {
 
   // ── DYNAMIC AID PROGRAMS STATE (2026 REALISTIC INITIAL DATA WITH V2 CACHE) ──
   const [programsList, setProgramsList] = useState([]);
+const [programsLoaded, setProgramsLoaded] = useState(false);
   
 
 useEffect(() => {
@@ -1632,6 +1850,8 @@ useEffect(() => {
       }
     } catch (err) {
       console.warn('Failed to load programs from PouchDB:', err);
+    } finally {
+      setProgramsLoaded(true);
     }
   };
   const timer = setTimeout(loadProgramsFromDB, 1000);
@@ -2103,7 +2323,7 @@ useEffect(() => {
   const [householdsList, setHouseholdsList] = useState([]);
   const [selectedHouseholdId, setSelectedHouseholdId] = useState(null);
   const [selectedHousehold, setSelectedHousehold] = useState(null);
-  const EMPTY_HOUSEHOLD = { head: '', address: '', purok: '' };
+  const EMPTY_HOUSEHOLD = { head: '', address: '', purok: '', notes: '' };
   const [householdForm, setHouseholdForm] = useState(EMPTY_HOUSEHOLD);
   const [householdAssignmentMode, setHouseholdAssignmentMode] = useState('existing');
   const [saving, setSaving] = useState(false);
@@ -2147,15 +2367,18 @@ const filteredHouseholds = sortedHouseholds.filter((h) => {
   // HANDLERS — SHARED
   // ─────────────────────────────────────────────
   const nav = useCallback((id) => {
-  const resolvedId = resolveScreen(id);
-  if (ADMIN_ONLY_SCREENS.includes(resolvedId) && role !== 'admin') {
-    showToast('Access denied. Admin-only module.', 'error');
-    return;
-  }
-  setScreen(resolvedId);
-  navigate(`?page=${resolvedId}`);
-  window.history.pushState({ internalScreen: resolvedId }, '', '');
-}, [navigate, role, showToast]);
+    if (id === 'aid-encode') setAidTab('encode');
+    else if (id === 'aid-logs') setAidTab('logs');
+    else if (id === 'programs') setAidTab('programs');
+    const resolvedId = resolveScreen(id);
+    if (ADMIN_ONLY_SCREENS.includes(resolvedId) && role !== 'admin') {
+      showToast('Access denied. Admin-only module.', 'error');
+      return;
+    }
+    setScreen(resolvedId);
+    navigate(`?page=${resolvedId}`);
+    window.history.pushState({ internalScreen: resolvedId }, '', '');
+  }, [navigate, role, showToast]);
 
 const handleNav = useCallback((target) => {
   if (target === 'add-resident') {
@@ -2225,6 +2448,48 @@ const handleNav = useCallback((target) => {
   // ─────────────────────────────────────────────
   const updateResidentField = (field, value) =>
     setResidentForm((prev) => ({ ...prev, [field]: value }));
+
+  // Dirty check for the Add Resident modal: photo present or any field
+  // differs from EMPTY_RESIDENT. Compare primitives via String(), objects
+  // via JSON.stringify(). Returns false when both sides are absent.
+  const isResidentFormDirty = useCallback(() => {
+    if (photoPreviewUrl) return true;
+    if (!residentForm && !EMPTY_RESIDENT) return false;
+    const base = EMPTY_RESIDENT || {};
+    const form = residentForm || {};
+    const keys = new Set([...Object.keys(base), ...Object.keys(form)]);
+    for (const key of keys) {
+      if (IGNORED_DIRTY_KEYS.has(key)) continue;
+      const next = form[key];
+      const original = base[key];
+      if (next && original && typeof next === 'object' && typeof original === 'object') {
+        if (JSON.stringify(next) !== JSON.stringify(original)) return true;
+      } else if (String(next) !== String(original)) {
+        return true;
+      }
+    }
+    return false;
+  }, [residentForm, photoPreviewUrl]);
+
+  // Close the Add Resident modal, confirming first when the form is dirty.
+  const requestCloseAddResident = useCallback(async () => {
+    if (!isResidentFormDirty()) {
+      setShowAddResidentModal(false);
+      return;
+    }
+    const res = await Swal.fire({
+      icon: 'warning',
+      title: 'Discard this resident entry?',
+      text: 'You have unsaved data in the form. Closing now will discard it.',
+      showCancelButton: true,
+      confirmButtonText: 'Discard',
+      cancelButtonText: 'Keep editing',
+      confirmButtonColor: '#dc2626',
+    });
+    if (res.isConfirmed) {
+      setShowAddResidentModal(false);
+    }
+  }, [isResidentFormDirty, setShowAddResidentModal]);
   
   const handlePhotoChange = (e) => {
   const file = e.target.files?.[0];
@@ -2578,6 +2843,7 @@ const submitAddResident = async (e) => {
         head: householdForm.head.trim(),
         address: householdForm.address.trim(),
         purok: householdForm.purok,
+        notes: (householdForm.notes || '').trim(),
         purokClass: householdPurokClass,
         members: 0,
         createdAt,
@@ -2720,8 +2986,13 @@ const submitAddResident = async (e) => {
   // =========================================================
   // SCENARIO B: CREATE NEW RESIDENT
   // =========================================================
-  const newResidentId = generateUUID();
-  const residentDisplayId = `RES-${Date.now().toString(36).slice(-4).toUpperCase()}`;  
+  // Sequential resident id (RES-XXXX) derived from the highest existing id.
+  const maxResidentSeq = residentsList.reduce((max, res) => {
+  if (res.isArchived === true) return max;           // active only
+  const match = /^RES-(\d{4})$/.exec(String(res.id || ''));  // 4 digits only
+  return match ? Math.max(max, parseInt(match[1], 10)) : max;
+}, 0);
+  const newResidentId = `RES-${String(maxResidentSeq + 1).padStart(4, '0')}`;
 
   const newResident = {
     id: newResidentId,
@@ -3150,6 +3421,83 @@ if (typeof setSelectedBlotter === 'function') {
   }
 };
 
+const handleSaveBlotterDetails = async () => {
+  const targetCase = selectedBlotter || {};
+  const docId = targetCase._id || targetCase.trackingNo || targetCase.id || targetCase.caseNo;
+  if (!docId) {
+    showToast('error', 'Unable to identify the case record.');
+    return;
+  }
+  if (!editDetailForm.incidentType && !editDetailForm.location && !editDetailForm.narrative && !editDetailForm.respondent) {
+    setEditDetailForm((prev) => ({ ...prev, incidentType: targetCase.incidentType || targetCase.type || '', location: targetCase.location || targetCase.purok || '', narrative: targetCase.narrative || targetCase.details || targetCase.statement || '', respondent: targetCase.respondent || targetCase.respondentName || '' }));
+  }
+  setEditDetailSaving(true);
+  try {
+    let doc;
+    try {
+      doc = await db.get(docId);
+    } catch (getErr) {
+      const allRes = await db.allDocs({ include_docs: true });
+      const foundRow = allRes.rows.find((r) => r.doc && (
+        r.doc._id === docId || r.doc.trackingNo === docId || r.doc.caseNo === docId || r.doc.id === docId
+      ));
+      if (foundRow) {
+        doc = foundRow.doc;
+      } else {
+        throw new Error(`Record with ID ${docId} not found in database.`);
+      }
+    }
+
+    const nowIso = new Date().toISOString();
+    const updatedDoc = {
+      ...selectedBlotter,
+      ...doc,
+      type: editDetailForm.incidentType || selectedBlotter.incidentType || selectedBlotter.type || doc.type || doc.incidentType,
+      incidentType: editDetailForm.incidentType || selectedBlotter.incidentType || doc.incidentType || doc.type,
+      location: editDetailForm.location || selectedBlotter.location || doc.location || doc.purok,
+      narrative: editDetailForm.narrative || selectedBlotter.narrative || doc.narrative || doc.details || doc.statement,
+      respondent: editDetailForm.respondent || selectedBlotter.respondent || doc.respondent || doc.respondentName,
+      updatedAt: nowIso,
+      _rev: doc._rev,
+    };
+
+    const putRes = await db.put(updatedDoc);
+    updatedDoc._rev = putRes.rev;
+
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+
+    if (typeof setSelectedBlotter === 'function') {
+      setSelectedBlotter(updatedDoc);
+    }
+    localStorage.setItem('active_blotter_data', JSON.stringify(updatedDoc));
+    if (typeof setBlotterList === 'function') {
+      setBlotterList((prev) => prev.map((item) => (item._id === updatedDoc._id || item.trackingNo === updatedDoc.trackingNo ? updatedDoc : item)));
+    }
+
+    try {
+      await createAuditLog({
+        action: 'UPDATE_BLOTTER_DETAILS',
+        module: 'BLOTTER',
+        recordId: doc.refNumber || doc._id || docId,
+        user: `${currentUser?.username || 'admin'} (admin)`,
+        details: `Updated case details (type, location, narrative, respondent) for Case Ref: ${doc.refNumber || doc._id || docId}`
+      });
+    } catch (auditErr) {
+      console.warn('Audit log creation failed:', auditErr);
+    }
+
+    setEditDetailOpen(false);
+    showToast('success', 'Case details updated successfully.');
+  } catch (err) {
+    console.error('Failed to update blotter case details:', err);
+    showToast('error', `Unable to update case details: ${err.message}`);
+  } finally {
+    setEditDetailSaving(false);
+  }
+};
+
 const handleStatusDropdownChange = async (newStatus) => {
   if (!selectedBlotter) return;
 
@@ -3182,6 +3530,94 @@ const handleStatusDropdownChange = async (newStatus) => {
     }
   }
 };
+
+  // ---------------------------------------------
+  // HANDLERS - BLOTTER SOFT-ARCHIVE (ACTIVE / RESTORE)
+  // ---------------------------------------------
+  const handleArchiveBlotter = async (record) => {
+    const confirmResult = await Swal.fire({
+      title: 'Archive blotter record?',
+      text: 'This marks the record as archived and hides it from the active blotter list. The record remains in the database and audit trail for traceability.',
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Archive',
+      cancelButtonText: 'Cancel',
+    });
+    if (!confirmResult.isConfirmed) return;
+
+    try {
+      const fresh = await db.get(record._id);
+      const archivedAt = new Date().toISOString();
+      const doc = { ...fresh, isArchived: true, archivedAt, updatedAt: archivedAt };
+      await putWithRetry(doc, { isArchived: true, archivedAt });
+
+      try { await forceSyncToRemote(); } catch (syncErr) { console.warn('Force sync after blotter archive failed (non-blocking):', syncErr); }
+
+      if (typeof setBlotterList === 'function') {
+        setBlotterList((prev) => prev.map((item) => (
+          item._id === doc._id ? { ...item, isArchived: true } : item
+        )));
+      }
+
+      try {
+        await createAuditLog({
+          action: 'BLOTTER_ARCHIVE',
+          module: 'BLOTTER',
+          recordId: record.id || record.trackingNo || record.refNumber || record._id,
+          details: 'Blotter record archived.',
+        });
+      } catch (auditErr) {
+        console.warn('Audit log failed (non-blocking):', auditErr);
+      }
+
+      showToast('Blotter record archived.', 'success');
+    } catch (err) {
+      console.error('Failed to archive blotter record:', err);
+      showToast(`Failed to archive blotter record: ${err.message}`, 'error');
+    }
+  };
+
+  const handleRestoreBlotter = async (record) => {
+    const confirmResult = await Swal.fire({
+      title: 'Restore blotter record?',
+      text: 'This returns the record to the active blotter list.',
+      icon: 'info',
+      showCancelButton: true,
+      confirmButtonText: 'Restore',
+      cancelButtonText: 'Cancel',
+    });
+    if (!confirmResult.isConfirmed) return;
+
+    try {
+      const fresh = await db.get(record._id);
+      const doc = { ...fresh, isArchived: false, archivedAt: null, updatedAt: new Date().toISOString() };
+      await putWithRetry(doc, { isArchived: false, archivedAt: null });
+
+      try { await forceSyncToRemote(); } catch (syncErr) { console.warn('Force sync after blotter restore failed (non-blocking):', syncErr); }
+
+      if (typeof setBlotterList === 'function') {
+        setBlotterList((prev) => prev.map((item) => (
+          item._id === doc._id ? { ...item, isArchived: false } : item
+        )));
+      }
+
+      try {
+        await createAuditLog({
+          action: 'BLOTTER_RESTORE',
+          module: 'BLOTTER',
+          recordId: record.id || record.trackingNo || record.refNumber || record._id,
+          details: 'Blotter record restored.',
+        });
+      } catch (auditErr) {
+        console.warn('Audit log failed (non-blocking):', auditErr);
+      }
+
+      showToast('Blotter record restored.', 'success');
+    } catch (err) {
+      console.error('Failed to restore blotter record:', err);
+      showToast(`Failed to restore blotter record: ${err.message}`, 'error');
+    }
+  };
 
   // ─────────────────────────────────────────────
   // HANDLERS — ADMIN BENEFICIARY LIST
@@ -3439,7 +3875,7 @@ const handleStatusDropdownChange = async (newStatus) => {
 // Dynamic Calculations para sa Dashboard Panels
 // KPI cards read the robust localDb counts computed by computeDashboardStats()
 // so they survive a Mango find() mismatch and refresh after sync completes.
-const totalResidents = dashboardStats.residents;
+const totalResidents = (residentsList || []).filter((r) => r.isArchived !== true).length;
 const totalHouseholds = dashboardStats.households;
 const totalVoters = dashboardStats.voters;
 const getHouseholdMembersCount = (householdId) => {
@@ -3449,6 +3885,7 @@ const getHouseholdMembersCount = (householdId) => {
 // Safe Purok Counter (Ina-extract at pino-format ang Purok kahit may kasamang Zone o Address text)
 const getPurokCount = (purokNumber) => {
   return residentsList.filter(r => {
+    if (r.isArchived === true) return false;
     const p = String(r.purok || r.address || '').toLowerCase();
     return p.includes(`purok ${purokNumber}`) || p.includes(`purok${purokNumber}`);
   }).length;
@@ -3497,7 +3934,7 @@ const voterTrend = computeTrend(
   (r) => r.createdAt
 );
 const certTrend = computeTrend(issuedCertificates, (c) => c.createdAt || c.dateSubmitted || c.date);
-const blotterTrend = computeTrend(blotterList, (b) => b.dateFiled || b.date || b.incidentDate || b.createdAt);
+const blotterTrend = computeTrend(nonArchivedBlotters, (b) => b.dateFiled || b.date || b.incidentDate || b.createdAt);
 const feedbackTrend = computeTrend(feedbackList, (f) => f.rawTimestamp || f.timestamp || f.createdAt);
 
 const [currentBeneficiaryId, setCurrentBeneficiaryId] = useState('');
@@ -3515,10 +3952,13 @@ useEffect(() => {
 
 // ── AID ENCODE CONFIGURATION STATES ──
 const [currentProgramId, setCurrentProgramId] = useState('PROG-2024-004');
-const [aidType, setAidType] = useState('Rice — 5kg');
+const [aidType, setAidType] = useState('');
 const [remarks, setRemarks] = useState('');
+const [dateGiven, setDateGiven] = useState(new Date().toISOString().split('T')[0]);
 const [duplicateAlert, setDuplicateAlert] = useState('');
 const [successMessage, setSuccessMessage] = useState('');
+const [aidTab, setAidTab] = useState('programs');
+const [bdrrmcTab, setBdrrmcTab] = useState('summary');
 
 
 const [aidLogs, setAidLogs] = useState([]);
@@ -3967,6 +4407,11 @@ const handleEncodeSubmit = async (e) => {
     return;
   }
 
+  if (!aidType.trim()) {
+    showToast('Ilagay muna ang uri ng ayuda (Aid Type).', 'error');
+    return;
+  }
+
   const targetProg = programsList.find((p) => p.id === selectedProgramId);
   const targetResident = residentsList.find((r) => r.id === selectedResidentId);
   
@@ -4013,6 +4458,7 @@ const handleEncodeSubmit = async (e) => {
     programId: selectedProgramId,
     aid: aidType || 'Relief Goods',
     qty: quantity || 1,
+    dateGiven: dateGiven || new Date().toISOString().split('T')[0],
     remarks: remarks || '',
     officer: typeof displayName !== 'undefined' ? displayName.split(' ')[0] : 'Mark Gian Cortero',
     time: timeStamp,
@@ -4055,6 +4501,7 @@ const handleEncodeSubmit = async (e) => {
     setResidentSearch('');
     setAidType('');
     setQuantity(1);
+    setDateGiven(new Date().toISOString().split('T')[0]);
     setRemarks('');
     setDuplicateAlert('');
     setFormAttempted(false);
@@ -4501,6 +4948,7 @@ const [filterStatus, setFilterStatus] = useState('All Status');
 const [dateFrom, setDateFrom] = useState('');
 const [dateTo, setDateTo] = useState('');
 const [filterVawc, setFilterVawc] = useState(false);
+const [filterArchive, setFilterArchive] = useState('Active');
 
 const sortedBlotters = useMemo(() => {
   if (!blotterList || !Array.isArray(blotterList)) return [];
@@ -4511,6 +4959,10 @@ const sortedBlotters = useMemo(() => {
     return timeB - timeA; // Pinakabago sa taas
   });
 }, [blotterList]);
+
+// Archive policy: records are active while isArchived !== true.
+const activeBlotterTotal = sortedBlotters.filter((b) => b.isArchived !== true).length;
+const archivedBlotterTotal = sortedBlotters.filter((b) => b.isArchived === true).length;
 
 const filteredBlotters = sortedBlotters.filter((b) => {
   const query = (blotterSearch || '').toLowerCase().trim();
@@ -4541,8 +4993,13 @@ const filteredBlotters = sortedBlotters.filter((b) => {
   // 5. VAWC Toggle Filtering
   const matchesVawc = !filterVawc || b.isVawc === true || b.vawc === true || b.type === 'VAWC';
 
+  // 6. Archive Status Filtering (Active / Archived / All)
+  const matchesArchive =
+    filterArchive === 'All' ||
+    (filterArchive === 'Archived' ? b.isArchived === true : b.isArchived !== true);
+
   return (
-    matchesSearch && matchesType && matchesStatus && matchesDateFrom && matchesDateTo && matchesVawc
+    matchesSearch && matchesType && matchesStatus && matchesDateFrom && matchesDateTo && matchesVawc && matchesArchive
   );
 });
 
@@ -4591,6 +5048,9 @@ const [actionType, setActionType] = useState(''); // '1st_summon', '2nd_summon',
 const [scheduleDate, setScheduleDate] = useState('');
 const [actionNotes, setActionNotes] = useState('');
 const [actionSaving, setActionSaving] = useState(false);
+const [editDetailOpen, setEditDetailOpen] = useState(false);
+const [editDetailForm, setEditDetailForm] = useState({ incidentType: '', location: '', narrative: '', respondent: '' });
+const [editDetailSaving, setEditDetailSaving] = useState(false);
 
 // ── CTC MASTERLIST STATES ──
 const [ctcQuery, setCtcQuery] = useState('');
@@ -5523,6 +5983,34 @@ async function checkForConflicts() {
 
 
 
+// Resolve a display name from a conflict document, trying every field a
+// resident record may carry before falling back to a registry lookup by ID.
+const resolveConflictDocName = (doc) => {
+  if (!doc) return '';
+  return (
+    doc.full_name ||
+    doc.name ||
+    doc.residentName ||
+    doc.fullName ||
+    `${doc.firstName || ''} ${doc.lastName || ''}`.trim() ||
+    ''
+  );
+};
+
+// Look up a resident in the live registry (residentsList) and the static
+// demo registry (residentsRegistry) by id / _id / rbiId / residentId.
+const findResidentById = (residentId) => {
+  if (!residentId) return null;
+  const id = String(residentId);
+  const haystack = [...(residentsList || []), ...(residentsRegistry || [])];
+  return (
+    haystack.find(
+      (r) => r.id === id || r._id === id || r.rbiId === id || r.residentId === id
+    ) ||
+    null
+  );
+};
+
 // Fetch all conflicted documents from PouchDB
 const fetchDatabaseConflicts = async () => {
   if (typeof db === 'undefined') return;
@@ -5535,10 +6023,22 @@ const fetchDatabaseConflicts = async () => {
         for (const conflictRev of row.doc._conflicts) {
           try {
             const conflictingDoc = await db.get(row.id, { rev: conflictRev });
-            
+
+            const conflictDoc = row.doc;
+            const residentId = conflictDoc.residentId || conflictingDoc?.residentId || '';
+
+            let rawName =
+              resolveConflictDocName(conflictDoc) ||
+              resolveConflictDocName(conflictingDoc) ||
+              '';
+
+            if (!rawName && residentId) {
+              const matched = findResidentById(residentId);
+              rawName = matched ? (resolveConflictDocName(matched) || matched.name || '') : '';
+            }
+
             // 🔒 XSS SANITIZATION: Prevent <script> injection
-            const rawName = row.doc.name || `${row.doc.firstName || ''} ${row.doc.lastName || ''}`.trim() || 'Unknown Resident';
-            const sanitizedName = String(rawName).replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            const sanitizedName = String(rawName || 'Unknown Resident').replace(/</g, "&lt;").replace(/>/g, "&gt;");
             
             const docADate = conflictDocTime(row.doc);
 const docBDate = conflictDocTime(conflictingDoc);
@@ -5553,6 +6053,7 @@ const changedFieldsDisplay = diff.length === 0 ? '—' : diff.map((d) => d.label
 const conflictRecord = {
   id: `${row.id}-${conflictRev}`,
   docId: row.id,
+  residentId: residentId || undefined,
   residentName: sanitizedName,
   winningRev: row.doc._rev,
   conflictRev: conflictRev,
@@ -6116,17 +6617,17 @@ const pendingRequestsCount = useMemo(() => {
     const step = Number(c.step || 1);
     if (step >= 2 && step <= 4) return true;
     if (step === 1) {
-      return ['under review', 'proceeding', 'for approval', 'approved', 'pending', 'ready'].includes(status);
+      return ['submitted', 'under review', 'proceeding', 'for approval', 'approved', 'pending', 'ready'].includes(status);
     }
     return false;
   }).length;
 }, [issuedCertificates]);
 
 const pendingBlotterCount = useMemo(() => {
-  return blotterList.filter(
-    (b) => b.status === 'Open' || b.status === 'Under Mediation'
-  ).length;
-}, [blotterList]);
+  // Reuse the dashboard open-blotter metric so the sidebar badge and the
+  // dashboard banner/card can never disagree (same nonArchived row set).
+  return activeBlotterCount;
+}, [activeBlotterCount]);
 
 const activeFeedbackCount = useMemo(() => {
   return feedbackList.filter(
@@ -9524,12 +10025,19 @@ const handleGenerateCredentials = async (resident) => {
                   residentsList={residentsList}
                   householdsList={householdsList}
                   programsList={programsList}
+                  programsLoaded={programsLoaded}
                   blotterList={blotterList}
                   feedbackList={feedbackList}
                   conflictsList={conflictsList}
                   pendingRequestsCount={pendingRequestsCount}
                   pendingBlotterCount={pendingBlotterCount}
                   activeFeedbackCount={activeFeedbackCount}
+                  syncState={syncState}
+                  pendingCount={pendingCount}
+                  lastSynced={lastSynced}
+                  recentAudit={recentAudit}
+                  recentAuditLoading={recentAuditLoading}
+                  recentAuditError={recentAuditError}
                   totalResidents={totalResidents}
                   totalHouseholds={totalHouseholds}
                   totalVoters={totalVoters}
@@ -9543,6 +10051,9 @@ const handleGenerateCredentials = async (resident) => {
                   activeBlotterCount={activeBlotterCount}
                   otherBlotterCount={otherBlotterCount}
                   openBlotterCount={activeBlotterCount}
+                  activeDisasters={dashboardStats.activeDisasters}
+                  bhsRecordsCount={dashboardStats.bhsRecords}
+                  lowStockCount={dashboardStats.lowStockMeds}
                   feedbackSummary={feedbackSummary}
                   residentTrend={residentTrend}
                   householdTrend={householdTrend}
@@ -9550,7 +10061,6 @@ const handleGenerateCredentials = async (resident) => {
                   certTrend={certTrend}
                   blotterTrend={blotterTrend}
                   feedbackTrend={feedbackTrend}
-                  syncState={syncState}
                   nav={handleNav}
                 />
               )}
@@ -12160,7 +12670,9 @@ const handleGenerateCredentials = async (resident) => {
             {/* ════════════════════════════════════════
                 SCREEN: DISTRIBUTION PROGRAMS
                 ════════════════════════════════════════ */}
-                {screen === 'programs' && (
+                {screen === 'aid-distribution' && (
+                  <AidDistributionModule activeTab={aidTab} onTabChange={setAidTab}>
+                    {aidTab === 'programs' && (
                   <div className="screen active">
                     {showNewProgramForm && (
                       <form onSubmit={handleCreateProgram} className="form-card-glass" style={{ background: 'rgba(30, 41, 59, 0.6)', backdropFilter: 'blur(10px)', border: '1px solid rgba(79, 142, 247, 0.2)', padding: '16px', borderRadius: '8px', marginBottom: '20px' }}>
@@ -12511,12 +13023,15 @@ const handleGenerateCredentials = async (resident) => {
                       </div>
                     )}
                   </div>
-                )}               
+                )}
+                  </AidDistributionModule>
+                )}
+
 
             {/* ════════════════════════════════════════
                 SCREEN: ENCODE DISTRIBUTION
                 ════════════════════════════════════════ */}
-              {screen === 'aid-encode' && (
+              {aidTab === 'encode' && (
   <div className="screen active" style={{ padding: '24px', maxWidth: '1200px', margin: '0 auto' }}>
     
     {/* ── 1. GLOBAL ALERTS (Success & Batch Mode) ── */}
@@ -12573,8 +13088,9 @@ const handleGenerateCredentials = async (resident) => {
         <form onSubmit={(e) => { e.preventDefault(); handleEncodeSubmit(); }}>
           {/* Relief Program */}
           <div className="fg" style={{ marginBottom: '16px' }}>
-            <label className="fl">Relief Program <span style={{ color: 'var(--red)' }}>*</span></label>
+            <label className="fl" htmlFor="aid-encode-program">Relief Program <span style={{ color: 'var(--red)' }}>*</span></label>
             <select 
+              id="aid-encode-program"
               className="fc" 
               value={selectedProgramId} 
               style={{ border: (formAttempted && !selectedProgramId) ? '1px solid var(--red)' : undefined, height: '42px' }}
@@ -12601,9 +13117,10 @@ const handleGenerateCredentials = async (resident) => {
 
           {/* Beneficiary Resident */}
           <div className="fg" style={{ marginBottom: '16px' }}>
-            <label className="fl">Beneficiary Resident <span style={{ color: 'var(--red)' }}>*</span></label>
+            <label className="fl" htmlFor="aid-encode-beneficiary">Beneficiary Resident <span style={{ color: 'var(--red)' }}>*</span></label>
             <ResidentCombobox 
-  residents={residentsList} 
+  id="aid-encode-beneficiary"
+  residents={(residentsList || []).filter((r) => r.isArchived !== true)}
   value={selectedResidentId} 
   onChange={(res) => {
     const id = res?.id || res?._id || res || '';
@@ -12627,25 +13144,39 @@ const handleGenerateCredentials = async (resident) => {
           </div>
 
           {/* Aid Type & Quantity Grid */}
-          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr', gap: '12px', marginBottom: '16px' }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1.5fr 1fr 1fr', gap: '12px', marginBottom: '16px' }}>
             <div className="fg">
-              <label className="fl">Aid Type <span style={{ color: 'var(--red)' }}>*</span></label>
-              <input type="text" className="fc" value={aidType} onChange={(e) => setAidType(e.target.value)} placeholder="e.g., Rice — 5kg" style={{ height: '42px' }} />
+              <label className="fl" htmlFor="aid-encode-aid-type">Aid Type <span style={{ color: 'var(--red)' }}>*</span></label>
+              <select id="aid-encode-aid-type" className="fc" value={aidType} onChange={(e) => setAidType(e.target.value)} style={{ height: '42px' }}>
+                <option value="">-- Select Aid Type --</option>
+                <option value="Rice 5kg">Rice 5kg</option>
+                <option value="Drinking Water 5L">Drinking Water 5L</option>
+                <option value="Food Pack">Food Pack</option>
+                <option value="Blanket">Blanket</option>
+                <option value="Medicine">Medicine</option>
+                <option value="Financial Assistance">Financial Assistance</option>
+                <option value="Hygiene Kit">Hygiene Kit</option>
+                <option value="Others">Others</option>
+              </select>
             </div>
             <div className="fg">
-              <label className="fl">Qty <span style={{ color: 'var(--red)' }}>*</span></label>
+              <label className="fl" htmlFor="aid-encode-quantity">Quantity <span style={{ color: 'var(--red)' }}>*</span></label>
               <div style={{ display: 'flex', alignItems: 'stretch', border: '1px solid var(--border)', borderRadius: '8px', overflow: 'hidden', background: 'var(--surface2)', height: '42px' }}>
                 <button type="button" onClick={() => setQuantity(prev => Math.max(1, (Number(prev) || 1) - 1))} className="btn btn-g" style={{ borderRadius: 0, border: 'none', borderRight: '1px solid var(--border)', padding: '0 12px' }}>−</button>
-                <input type="number" min="1" value={quantity} onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} className="fc" style={{ textAlign: 'center', border: 'none', background: 'transparent', boxShadow: 'none', padding: 0, MozAppearance: 'textfield' }} />
+                <input id="aid-encode-quantity" type="number" min="1" value={quantity} onChange={(e) => setQuantity(Math.max(1, parseInt(e.target.value) || 1))} className="fc" style={{ textAlign: 'center', border: 'none', background: 'transparent', boxShadow: 'none', padding: 0, MozAppearance: 'textfield' }} />
                 <button type="button" onClick={() => setQuantity(prev => (Number(prev) || 0) + 1)} className="btn btn-g" style={{ borderRadius: 0, border: 'none', borderLeft: '1px solid var(--border)', padding: '0 12px' }}>+</button>
               </div>
+            </div>
+            <div className="fg">
+              <label className="fl" htmlFor="aid-encode-date-given">Date Given <span style={{ color: 'var(--red)' }}>*</span></label>
+              <input id="aid-encode-date-given" type="date" className="fc" value={dateGiven} max={new Date().toISOString().split('T')[0]} onChange={(e) => setDateGiven(e.target.value)} style={{ height: '42px' }} />
             </div>
           </div>
 
           {/* Remarks */}
           <div className="fg" style={{ marginBottom: '20px' }}>
-            <label className="fl">Remarks (Optional)</label>
-            <textarea className="fc" placeholder="Any special notes..." value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} style={{ resize: 'none' }} />
+            <label className="fl" htmlFor="aid-encode-remarks">Remarks (Optional)</label>
+            <textarea id="aid-encode-remarks" className="fc" placeholder="Any special notes..." value={remarks} onChange={(e) => setRemarks(e.target.value)} rows={2} style={{ resize: 'none' }} />
           </div>
 
           {/* Submit Button */}
@@ -12653,15 +13184,20 @@ const handleGenerateCredentials = async (resident) => {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" style={{ marginRight: '8px' }}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></svg>
             Add Entry to Log
           </button>
+          {(!selectedProgramId || !selectedResidentId) && (
+            <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '8px', textAlign: 'center' }}>
+              Select a relief program and beneficiary to enable submission.
+            </div>
+          )}
         </form>
       </div>
 
-      {/* RIGHT PANEL: Recent Session Activity */}
+      {/* RIGHT PANEL: Recent Encodings (This Session) */}
       <div className="card" style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', overflow: 'hidden', display: 'flex', flexDirection: 'column', maxHeight: 'calc(100vh - 140px)' }}>
         <div style={{ padding: '16px 20px', background: 'var(--surface2)', borderBottom: '1px solid var(--border)', display: 'flex', alignItems: 'center', gap: '10px' }}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="var(--primary)" strokeWidth="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
           <div>
-            <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Recent Session Activity</div>
+            <div style={{ fontSize: '14px', fontWeight: 700, color: 'var(--text)' }}>Recent Encodings (This Session)</div>
             <div style={{ fontSize: '11px', color: 'var(--muted)' }}>Real-time encoding logs</div>
           </div>
         </div>
@@ -12678,10 +13214,11 @@ const handleGenerateCredentials = async (resident) => {
             <tbody>
               {aidLogs.length === 0 ? (
                 <tr>
-                  <td colSpan="3" style={{ textAlign: 'center', padding: '40px 16px', color: 'var(--muted)' }}>
+                  <td colSpan="3" style={{ textAlign: 'center', padding: '32px', color: 'var(--muted)' }}>
                     <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '8px' }}>
                       <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ opacity: 0.4 }}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
-                      <span>No logs recorded yet for this session.</span>
+                      <span>No encodings yet in this session.</span>
+                      <span style={{ fontSize: '11px' }}>Encodings you save will appear here.</span>
                     </div>
                   </td>
                 </tr>
@@ -12695,7 +13232,7 @@ const handleGenerateCredentials = async (resident) => {
                         {log.status === 'OK' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>}
                         {log.status === 'Synced' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>}
                         {log.status === 'Error' && <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ marginRight: '4px' }}><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><path d="M12 9v4"/><path d="M12 17h.01"/></svg>}
-                        {log.status}
+                        {log.status === 'OK' ? 'RECORDED' : log.status}
                       </span>
                     </td>
                   </tr>
@@ -12713,7 +13250,7 @@ const handleGenerateCredentials = async (resident) => {
             {/* ════════════════════════════════════════
                 SCREEN: DISTRIBUTION LOGS
                ════════════════════════════════════════ */}
-              {screen === 'aid-logs' && (
+              {aidTab === 'logs' && (
                 <div className="screen active">                
                   <div className="tw">
                     <div className="tb">
@@ -12755,7 +13292,7 @@ const handleGenerateCredentials = async (resident) => {
                         <tr>
                           <th>Log #</th>
                           <th>Beneficiary</th>
-                          <th>Program ID</th>
+                           <th>Program</th>
                           <th>Aid</th>
                           <th>Encoded By</th>
                           <th>Time</th>
@@ -12774,8 +13311,8 @@ const handleGenerateCredentials = async (resident) => {
                             <tr key={log.id}>
                               <td style={mono10}>{log.id}</td>
                               <td>{log.residentName}</td>
-                              <td>{log.programId || 'N/A'}</td>
-                              <td>{log.aid}</td>
+                               <td>{log.programName || log.program || log.programId || '—'}</td>
+                               <td>{log.itemName || log.aid || log.item || '—'}</td>
                               <td>{log.officer}</td>
                               <td style={{ fontSize: '10px' }}>{log.time}</td>
                               <td>
@@ -12796,7 +13333,19 @@ const handleGenerateCredentials = async (resident) => {
                 SCREEN: FILE BLOTTER ENTRY
                 ════════════════════════════════════════ */}
               {screen === 'blotter-new' && (
-              <div className="screen active" style={{ position: 'relative' }}>
+              <div className="screen active blotter-compact" style={{ position: 'relative' }}>
+                <style>{`
+                  .blotter-compact { font-size: 13px; }
+                  .blotter-compact .fp { padding: 10px 12px !important; margin-bottom: 10px !important; }
+                  .blotter-compact .fg { margin-bottom: 8px !important; }
+                  .blotter-compact .fl { font-size: 11px !important; margin-bottom: 3px !important; }
+                  .blotter-compact .fc { padding: 6px 8px !important; font-size: 13px !important; }
+                  .blotter-compact textarea.fc { min-height: 100px !important; }
+                  .blotter-compact [style*="gap:"] { gap: 8px !important; }
+                  .blotter-compact [style*="marginTop"] { margin-top: 6px !important; }
+                  .blotter-compact [style*="marginBottom"] { margin-bottom: 6px !important; }
+                  .blotter-compact [style*="padding:"] { padding: 6px 8px !important; }
+                `}</style>
                 <form onSubmit={(e) => e.preventDefault()}>
                   {/* System Metadata - Header Panel */}
                   <div className="fp" style={{ marginBottom: '16px' }}>
@@ -13162,7 +13711,7 @@ const handleGenerateCredentials = async (resident) => {
                 SCREEN: MANAGE BLOTTER
                 ════════════════════════════════════════ */}
                 {screen === 'blotter-manage' && (
-                  <div className="screen active">
+                  <div className="screen active blotter-manage-screen">
 
                     <div className="tw">
                       <div className="filter-bar">
@@ -13234,7 +13783,27 @@ const handleGenerateCredentials = async (resident) => {
                             <span>VAWC Only</span>
                           </label>
 
-                          {(blotterSearch || filterType !== 'All Types' || filterStatus !== 'All Status' || dateFrom || dateTo || filterVawc) && (
+                          <div style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                            <label
+                              htmlFor="blotter-archive-filter"
+                              style={{ fontSize: '10.5px', fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.4px', whiteSpace: 'nowrap' }}
+                            >
+                              Archive view
+                            </label>
+                            <select
+                              id="blotter-archive-filter"
+                              className="filter-select"
+                              value={filterArchive}
+                              onChange={(e) => setFilterArchive(e.target.value)}
+                              title="Archive status"
+                            >
+                              <option value="Active">Active</option>
+                              <option value="Archived">Archived</option>
+                              <option value="All">All</option>
+                            </select>
+                          </div>
+
+                          {(blotterSearch || filterType !== 'All Types' || filterStatus !== 'All Status' || dateFrom || dateTo || filterVawc || filterArchive !== 'Active') && (
                             <button
                               type="button"
                               className="filter-bar__reset"
@@ -13245,6 +13814,7 @@ const handleGenerateCredentials = async (resident) => {
                                 setDateFrom('');
                                 setDateTo('');
                                 setFilterVawc(false);
+                                setFilterArchive('Active');
                               }}
                               title="Clear all filters"
                             >
@@ -13259,7 +13829,7 @@ const handleGenerateCredentials = async (resident) => {
                         </div>
 
                         <div className="filter-bar__actions">
-                          <button type="button" className="btn btn-g" onClick={handleExportBlotterToExcel} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
+                          <button type="button" className="btn btn-g" onClick={() => window.print()} style={{ display: 'inline-flex', alignItems: 'center', gap: '6px' }}>
                             <svg width="14" height="14" viewBox="0 0 24 24" fill="none"
                                 stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                               <path d="M6 9V2h12v7" />
@@ -13284,8 +13854,18 @@ const handleGenerateCredentials = async (resident) => {
                         </div>
                       </div>
 
-                      <table>
-                        <thead>
+                      <div className="print-report-header" style={{ display: 'none' }}>
+                        <div style={{ fontSize: '16px', fontWeight: '800', color: '#000', marginBottom: '4px' }}>
+                          Barangay Bustrac - Manage Blotter Records Report
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#333', marginBottom: '12px' }}>
+                          Generated on {new Date().toLocaleDateString('en-PH', { year: 'numeric', month: 'long', day: 'numeric' })}
+                        </div>
+                      </div>
+
+                      <div style={{ overflowX: 'auto' }}>
+                        <table className="blotter-table">
+                        <thead style={{ position: 'sticky', top: 0, zIndex: 10, background: 'var(--surface2)' }}>
                           <tr>
                             <th>Case #</th>
                             <th>Type</th>
@@ -13294,7 +13874,7 @@ const handleGenerateCredentials = async (resident) => {
                             <th>Location</th>
                             <th>Date</th>
                             <th>Status</th>
-                            <th>Actions</th>
+                            <th className="blotter-actions-head">Actions</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -13330,8 +13910,8 @@ const handleGenerateCredentials = async (resident) => {
 
                               return (
                                 <tr key={b._id || b.id}>
-                                  <td style={mono10}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                  <td style={{ ...mono10, whiteSpace: 'nowrap', fontVariantNumeric: 'tabular-nums' }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '6px', whiteSpace: 'nowrap' }}>
                                       {b.id || b.trackingNo || b.refNumber || b._id}
                                       {b.attachments && b.attachments.length > 0 && (
                                         <span
@@ -13355,18 +13935,18 @@ const handleGenerateCredentials = async (resident) => {
                                       )}
                                     </div>
                                   </td>
-                                  <td>{b.type || b.incidentType ? (b.type || b.incidentType).replace('_', ' ') : 'N/A'}</td>
+<td style={{ textTransform: 'capitalize' }}>{b.type || b.incidentType ? (b.type || b.incidentType).replace('_', ' ') : 'N/A'}</td>
 <td><strong>{b.complainant || b.complainantName || 'N/A'}</strong></td>
-                                   <td><strong>{b.respondent || b.respondentName || 'Under Investigation'}</strong></td>
-                                  <td><strong>{b.location || b.purok || 'Brgy. Bustrac'}</strong></td>
-                                  <td style={{ fontSize: '11px' }}>{b.date || b.incidentDate || 'N/A'}</td>
+                                    <td><strong>{b.respondent || b.respondentName || 'Under Investigation'}</strong></td>
+                                   <td style={{ textTransform: 'capitalize' }}><strong>{b.location || b.purok || 'Brgy. Bustrac'}</strong></td>
+                                   <td style={{ fontSize: '11px', whiteSpace: 'nowrap' }}>{(() => { const v = b.date || b.incidentDate || 'N/A'; const d = new Date(v); return Number.isNaN(d.getTime()) ? v : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }); })()}</td>
                                   <td>
-                                    <span className={`badge ${isSettled ? 'g' : isCfaIssued ? 'r' : 'a'}`}>
+                                    <span className={`badge ${isSettled ? 'g' : isCfaIssued ? 'r' : 'a'}`} style={{ whiteSpace: 'nowrap' }}>
                                       {b.status}
                                     </span>
                                   </td>
-                                  <td>
-                                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap', alignItems: 'center' }}>
+                                  <td className="blotter-actions-cell">
+                                    <div className="blotter-actions" style={{ whiteSpace: 'nowrap' }}>
                                       <button
                                         className="btn btn-g btn-sm"
                                         onClick={() => {
@@ -13451,6 +14031,22 @@ const handleGenerateCredentials = async (resident) => {
                                           {isCfaIssued ? 'Print CFA' : 'Print Certificate'}
                                         </button>
                                       )}
+
+                                      {b.isArchived === true ? (
+                                        <button
+                                          className="btn btn-g btn-sm"
+                                          onClick={() => handleRestoreBlotter(b)}
+                                        >
+                                          Restore
+                                        </button>
+                                      ) : (
+                                        <button
+                                          className="btn btn-danger btn-sm"
+                                          onClick={() => handleArchiveBlotter(b)}
+                                        >
+                                          Archive
+                                        </button>
+                                      )}
                                     </div>
                                   </td>
                                 </tr>
@@ -13459,13 +14055,20 @@ const handleGenerateCredentials = async (resident) => {
                           )}
                         </tbody>
                       </table>
+                      </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '12px', padding: '0 4px' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px', marginTop: '12px', padding: '0 4px' }}>
                         <span style={{ fontSize: '12px', color: 'var(--muted)', fontWeight: 500 }}>
-                          Showing <strong style={{ color: 'var(--text)' }}>{filteredBlotters.length}</strong> of <strong style={{ color: 'var(--text)' }}>{blotterList.length}</strong> records
+                          {filterArchive === 'Archived' ? (
+                            <>Showing <strong style={{ color: 'var(--text)' }}>{filteredBlotters.length}</strong> of <strong style={{ color: 'var(--text)' }}>{archivedBlotterTotal}</strong> archived blotter records</>
+                          ) : filterArchive === 'Active' ? (
+                            <>Showing <strong style={{ color: 'var(--text)' }}>{filteredBlotters.length}</strong> of <strong style={{ color: 'var(--text)' }}>{activeBlotterTotal}</strong> active blotter records</>
+                          ) : (
+                            <>Showing <strong style={{ color: 'var(--text)' }}>{filteredBlotters.length}</strong> of <strong style={{ color: 'var(--text)' }}>{blotterList.length}</strong> records</>
+                          )}
                           {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && ' (filtered)'}
                         </span>
-                        {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc) && (
+                        {(filterType !== 'All Types' || filterStatus !== 'All Status' || blotterSearch || dateFrom || dateTo || filterVawc || filterArchive !== 'Active') && (
                           <button
                             className="btn btn-sm btn-g"
                             onClick={() => {
@@ -13475,6 +14078,7 @@ const handleGenerateCredentials = async (resident) => {
                               setDateFrom('');
                               setDateTo('');
                               setFilterVawc(false);
+                              setFilterArchive('Active');
                             }}
                             style={{ fontSize: '12px', padding: '4px 10px' }}
                           >
@@ -13505,9 +14109,9 @@ const handleGenerateCredentials = async (resident) => {
 
   const getPartyId = (partyData, fallbackId) => {
     if (typeof partyData === 'object' && partyData !== null) {
-      return partyData.id || partyData.residentId || fallbackId || 'Registered Resident';
+      return partyData.id || partyData.residentId || fallbackId || 'N/A';
     }
-    return fallbackId || 'Registered Resident';
+    return fallbackId || 'N/A';
   };
 
   const complainantDisplayName = getPartyName(currentCase.complainant, currentCase.complainantName || currentCase.compName);
@@ -13516,12 +14120,69 @@ const handleGenerateCredentials = async (resident) => {
   
   const caseHistory = Array.isArray(currentCase.history) ? currentCase.history : [];
 
+  const fmtDateShort = (v) => {
+    if (!v) return 'N/A';
+    const d = new Date(v);
+    return Number.isNaN(d.getTime()) ? String(v) : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+  };
+
+  const openEditCaseDetails = () => {
+    const c = currentCase || {};
+    setEditDetailForm({
+      incidentType: c.incidentType || c.type || '',
+      location: c.location || c.purok || '',
+      narrative: c.narrative || c.details || c.statement || '',
+      respondent: c.respondent || c.respondentName || ''
+    });
+    setEditDetailOpen(true);
+  };
+
   return (
-    <div className="screen active" style={{ display: 'flex', flexDirection: 'column', gap: 20, maxWidth: '1200px', margin: '0 auto' }}>
-      
+    <div className="screen active" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(450px, 1fr))', gap: '20px', maxWidth: '1200px', margin: '0 auto', width: '100%', alignItems: 'start' }}>
+      {editDetailOpen && (
+        <div style={{ position: 'fixed', inset: 0, zIndex: 10000, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'rgba(0,0,0,0.5)' }}>
+          <form onSubmit={(e) => e.preventDefault()} style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '12px', padding: '24px', width: '100%', maxWidth: '560px', maxHeight: '90vh', overflowY: 'auto' }}>
+            <h3 style={{ margin: '0 0 16px', fontSize: '16px', fontWeight: '800', color: 'var(--text)' }}>Edit Case Details</h3>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: 'var(--muted)', marginBottom: '4px', textTransform: 'uppercase' }}>Incident Type</label>
+              <select className="fc" value={editDetailForm.incidentType} onChange={(e) => setEditDetailForm({ ...editDetailForm, incidentType: e.target.value })} style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)' }}>
+                <option value="">Keep current</option>
+                <option value="Noise Complaint">Noise Complaint</option>
+                <option value="Physical Altercation">Physical Altercation</option>
+                <option value="Domestic Violence">Domestic Violence</option>
+                <option value="Theft">Theft</option>
+                <option value="Trespassing">Trespassing</option>
+                <option value="Property Dispute">Property Dispute</option>
+                <option value="Harassment">Harassment</option>
+                <option value="Threat">Threat</option>
+                <option value="Vandalism">Vandalism</option>
+                <option value="Others">Others</option>
+              </select>
+            </div>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: 'var(--muted)', marginBottom: '4px', textTransform: 'uppercase' }}>Location</label>
+              <input className="fc" value={editDetailForm.location} onChange={(e) => setEditDetailForm({ ...editDetailForm, location: e.target.value })} placeholder="e.g. Purok 5, near the public plaza" style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)' }} />
+            </div>
+            <div style={{ marginBottom: '16px' }}>
+              <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: 'var(--muted)', marginBottom: '4px', textTransform: 'uppercase' }}>Respondent</label>
+              <input className="fc" value={editDetailForm.respondent} onChange={(e) => setEditDetailForm({ ...editDetailForm, respondent: e.target.value })} placeholder="Respondent name" style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)' }} />
+            </div>
+            <div style={{ marginBottom: '20px' }}>
+              <label style={{ display: 'block', fontSize: '11px', fontWeight: '700', color: 'var(--muted)', marginBottom: '4px', textTransform: 'uppercase' }}>Incident Narrative</label>
+              <textarea className="fc" rows={4} value={editDetailForm.narrative} onChange={(e) => setEditDetailForm({ ...editDetailForm, narrative: e.target.value })} placeholder="Provide a detailed chronological statement..." style={{ width: '100%', padding: '8px 10px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--surface2)', color: 'var(--text)', resize: 'vertical' }} />
+            </div>
+            <div style={{ display: 'flex', gap: '10px', justifyContent: 'flex-end' }}>
+              <button type="button" className="btn btn-g" onClick={() => setEditDetailOpen(false)} style={{ flex: 0 }}>Cancel</button>
+              <button type="submit" className="btn btn-p" onClick={handleSaveBlotterDetails} disabled={editDetailSaving} style={{ flex: 1 }}>{editDetailSaving ? 'Saving...' : 'Save Changes'}</button>
+            </div>
+          </form>
+        </div>
+      )}
+      {/* ═══ LEFT COLUMN: Case Tracking, Narrative & Parties ═══ */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
       {/* ═══ HEADER: Case Status & Quick Actions ═══ */}
-      <div className="fp" style={{ padding: '20px', background: 'linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%)' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px', flexWrap: 'wrap', gap: '12px' }}>
+      <div className="fp" style={{ padding: '14px', background: 'linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%)' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px', flexWrap: 'wrap', gap: '10px' }}>
           <div>
             <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '4px' }}>
               Case Tracking Number
@@ -13532,6 +14193,14 @@ const handleGenerateCredentials = async (resident) => {
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
             {getStatusBadge(currentCase?.status || 'Open')}
+            <button
+              type="button"
+              className="btn btn-p"
+              onClick={openEditCaseDetails}
+              style={{ display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              ✏️ Edit Case Details
+            </button>
             <button
               type="button"
               className="btn btn-g"
@@ -13548,37 +14217,55 @@ const handleGenerateCredentials = async (resident) => {
         </div>
         
         {/* Quick Stats */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '12px' }}>
-          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: '10px' }}>
+          <div style={{ padding: '10px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Date Filed</div>
             <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)' }}>
-              {currentCase.dateFiled || currentCase.date || 'N/A'}
+              {fmtDateShort(currentCase.dateFiled || currentCase.date)}
             </div>
           </div>
-          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+          <div style={{ padding: '10px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Incident Type</div>
-            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)' }}>
+            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)', textTransform: 'capitalize' }}>
               {currentCase.incidentType || currentCase.type || 'N/A'}
             </div>
           </div>
-          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+          <div style={{ padding: '10px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Summons Issued</div>
             <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--amber)' }}>
               {currentCase.summonCount || 0} / 3
             </div>
           </div>
-          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+          <div style={{ padding: '10px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
             <div style={{ fontSize: '10px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '4px' }}>Location</div>
-            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)' }}>
+            <div style={{ fontSize: '14px', fontWeight: '700', color: 'var(--text)', textTransform: 'capitalize' }}>
               {currentCase.location || 'N/A'}
             </div>
           </div>
         </div>
       </div>
 
+      {/* ═══ INCIDENT NARRATIVE ═══ */}
+      <div className="fp" style={{ padding: '16px' }}>
+        <div className="fp-t" style={{ marginBottom: '12px', paddingBottom: '10px', borderBottom: '2px solid var(--border)' }}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+          </svg>
+          Incident Narrative
+        </div>
+        <div style={{ padding: '14px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', lineHeight: '1.6', color: 'var(--text)' }}>
+          {caseNarrative}
+        </div>
+      </div>
+
+
+
       {/* ═══ PARTIES INVOLVED ═══ */}
-      <div className="fp" style={{ padding: '20px' }}>
-        <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)' }}>
+      <div className="fp" style={{ padding: '14px' }}>
+        <div className="fp-t" style={{ marginBottom: '10px', paddingBottom: '8px', borderBottom: '2px solid var(--border)' }}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2" />
             <circle cx="9" cy="7" r="4" />
@@ -13588,161 +14275,48 @@ const handleGenerateCredentials = async (resident) => {
           Parties Involved
         </div>
         
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
           {/* Complainant */}
-          <div style={{ padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '8px', fontWeight: '700' }}>
+          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '6px', fontWeight: '700' }}>
               Complainant (Nagrereklamo)
             </div>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text)', marginBottom: '8px' }}>
+            <div style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text)', marginBottom: '6px' }}>
               {complainantDisplayName}
             </div>
             <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
               ID: <span style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>{getPartyId(currentCase.complainant, currentCase.compID)}</span>
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
               Status: {currentCase.complainant?.isNonResident ? 'External Party' : 'Verified Resident'}
             </div>
           </div>
 
           {/* Respondent */}
-          <div style={{ padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
-            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '8px', fontWeight: '700' }}>
+          <div style={{ padding: '12px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)' }}>
+            <div style={{ fontSize: '11px', color: 'var(--muted)', textTransform: 'uppercase', marginBottom: '6px', fontWeight: '700' }}>
               Respondent (Inirereklamo)
             </div>
-            <div style={{ fontSize: '16px', fontWeight: '700', color: 'var(--text)', marginBottom: '8px' }}>
+            <div style={{ fontSize: '15px', fontWeight: '700', color: 'var(--text)', marginBottom: '6px' }}>
               {respondentDisplayName}
             </div>
             <div style={{ fontSize: '12px', color: 'var(--muted)' }}>
               ID: <span style={{ fontFamily: 'var(--mono)', color: 'var(--accent)' }}>{getPartyId(currentCase.respondent, currentCase.respID)}</span>
             </div>
-            <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
+            <div style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '2px' }}>
               Status: {currentCase.respondent?.isNonResident ? 'External Party' : 'Verified Resident'}
             </div>
           </div>
         </div>
       </div>
 
-      {/* ═══ INCIDENT NARRATIVE ═══ */}
-      <div className="fp" style={{ padding: '20px' }}>
-        <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)' }}>
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-          </svg>
-          Incident Narrative
-        </div>
-        <div style={{ padding: '16px', background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)', fontSize: '13px', lineHeight: '1.6', color: 'var(--text)' }}>
-          {caseNarrative}
-        </div>
-      </div>
-      
-      {/* ═══ EVIDENCE & ATTACHMENTS ═══ */}
-      {currentCase.attachments && currentCase.attachments.length > 0 && (
-        <div className="fp" style={{ padding: '20px' }}>
-          <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)' }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M21.44 11.05l-9.19 9.19a6 6 0 0 1-8.49-8.49l9.19-9.19a4 4 0 0 1 5.66 5.66l-9.2 9.19a2 2 0 0 1-2.83-2.83l8.49-8.48" />
-            </svg>
-            Submitted Evidence & Attachments ({currentCase.attachments.length})
-          </div>
-          
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))', gap: '12px' }}>
-            {currentCase.attachments.map((att) => {
-              const isImage = att.type?.startsWith('image/');
-              const isVideo = att.type?.startsWith('video/');
-              const isPdf = att.type === 'application/pdf';
+      </div>{/* /.left-column */}
 
-              return (
-                <div key={att.id} style={{ background: 'var(--surface2)', borderRadius: '8px', border: '1px solid var(--border)', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-                  
-                  {/* Preview Area */}
-                  <div style={{ height: '140px', background: 'var(--surface)', display: 'flex', alignItems: 'center', justifyContent: 'center', position: 'relative' }}>
-                    {isImage && att.data ? (
-                      <img src={att.data} alt={att.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
-                    ) : isVideo ? (
-                      <div style={{ color: 'var(--muted)', textAlign: 'center' }}>
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
-                        <div style={{ fontSize: '10px', marginTop: '4px' }}>Video File</div>
-                      </div>
-                    ) : isPdf ? (
-                      <div style={{ color: '#ef4444', textAlign: 'center' }}>
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg>
-                        <div style={{ fontSize: '10px', marginTop: '4px' }}>PDF Document</div>
-      </div>
-                    ) : (
-                      <div style={{ color: 'var(--muted)', textAlign: 'center' }}>
-                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"></path><polyline points="13 2 13 9 20 9"></polyline></svg>
-                      </div>
-                    )}
-                  </div>
-                  
-                  {/* File Info & Action Area */}
-                  <div style={{ padding: '12px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                    <div>
-                      <div style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text)', marginBottom: '4px', wordBreak: 'break-word' }}>
-                        {att.name}
-                      </div>
-                      <div style={{ fontSize: '11px', color: 'var(--muted)' }}>
-                        Size: {att.size}
-                      </div>
-                    </div>
-                    
-                    {/* Download / View Button */}
-                    <button 
-                      onClick={() => {
-                        // 1. Convert Base64 to Blob
-                        const fetchImage = async () => {
-                          const res = await fetch(att.data);
-                          const blob = await res.blob();
-                          const blobUrl = URL.createObjectURL(blob);
-                          
-                          // 2. Open in new tab using the safe Blob URL
-                          window.open(blobUrl, '_blank');
-                          
-                          // 3. Clean up memory after a short delay
-                          setTimeout(() => URL.revokeObjectURL(blobUrl), 10000);
-                        };
-                        fetchImage();
-                      }} 
-                      style={{ 
-                        marginTop: '10px', 
-                        display: 'flex', 
-                        alignItems: 'center', 
-                        justifyContent: 'center', 
-                        gap: '6px', 
-                        padding: '8px', 
-                        background: 'var(--primary)', 
-                        color: '#fff', 
-                        borderRadius: '6px', 
-                        fontSize: '12px', 
-                        fontWeight: 600, 
-                        border: 'none', 
-                        cursor: 'pointer', 
-                        transition: 'opacity 0.2s' 
-                      }} 
-                      onMouseEnter={(e) => e.currentTarget.style.opacity = '0.9'} 
-                      onMouseLeave={(e) => e.currentTarget.style.opacity = '1'}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                        <circle cx="12" cy="12" r="3" />
-                      </svg>
-                      View Full Size
-                    </button>
-                  </div>
-                  </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
+      {/* ═══ RIGHT COLUMN: Resolution & History ═══ */}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 20, minWidth: 0 }}>
       {/* ═══ CASE ACTION PANEL ═══ */}
-      <div className="fp" style={{ padding: '20px', background: 'linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%)', border: '2px solid var(--border)' }}>
-        <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)', fontSize: '16px' }}>
+      <div className="fp" style={{ padding: '16px', background: 'linear-gradient(135deg, var(--surface) 0%, var(--surface2) 100%)', border: '2px solid var(--border)' }}>
+        <div className="fp-t" style={{ marginBottom: '12px', paddingBottom: '10px', borderBottom: '2px solid var(--border)', fontSize: '16px' }}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
             <path d="M12 2v4" />
             <path d="M12 18v4" />
@@ -13754,7 +14328,7 @@ const handleGenerateCredentials = async (resident) => {
           Case Resolution Actions
         </div>
         
-        <div role="tablist" aria-label="Blotter case workspace" style={{ display: 'flex', gap: '8px', marginBottom: '18px', flexWrap: 'wrap' }}>
+        <div role="tablist" aria-label="Blotter case workspace" style={{ display: 'flex', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
           {[
             { key: 'schedule', label: 'Hearing Schedule & Mediation' },
             { key: 'summons', label: 'Summons & Case Status' },
@@ -13800,7 +14374,7 @@ const handleGenerateCredentials = async (resident) => {
             />
 
             {/* Status Actions */}
-            <div style={{ marginTop: '20px', paddingTop: '20px', borderTop: '1px solid var(--border)' }}>
+            <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px solid var(--border)' }}>
               <CaseStatusActions currentCase={currentCase} db={db} setBlotterList={setBlotterList} onPrintCFA={handleOpenPrint} />
             </div>
           </>
@@ -13809,8 +14383,8 @@ const handleGenerateCredentials = async (resident) => {
 
       {/* ═══ CASE HISTORY TIMELINE ═══ */}
       {caseHistory.length > 0 && (
-        <div className="fp" style={{ padding: '20px' }}>
-          <div className="fp-t" style={{ marginBottom: '16px', paddingBottom: '12px', borderBottom: '2px solid var(--border)' }}>
+        <div className="fp" style={{ padding: '16px' }}>
+          <div className="fp-t" style={{ marginBottom: '12px', paddingBottom: '10px', borderBottom: '2px solid var(--border)' }}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
               <circle cx="12" cy="12" r="10" />
               <polyline points="12 6 12 12 16 14" />
@@ -13855,6 +14429,7 @@ const handleGenerateCredentials = async (resident) => {
         </div>
       )}
 
+      </div>{/* /.right-column */}
     </div>
   );
 })()}
@@ -14807,7 +15382,7 @@ const handleGenerateCredentials = async (resident) => {
                                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M12 3L2.5 20h19L12 3z" /><path d="M12 9v5" /><path d="M12 17h.01" /></svg>
                                           {item.residentName || 'Unknown Document'}
                                         </h3>
-                                        <p style={{ fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)', margin: '4px 0 0' }}>ID: {item.docId || 'N/A'}</p>
+                                        <p style={{ fontSize: '12px', color: 'var(--muted)', fontFamily: 'var(--mono)', margin: '4px 0 0' }}>ID: {item.residentId || item.docId || 'N/A'}</p>
                                       </div>
                                     </div>
 
@@ -15627,17 +16202,69 @@ const handleGenerateCredentials = async (resident) => {
                   </div>
 )}
           {screen === 'bhs' && (
-  <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-    <BHSHealthRecords />
-    <BHSInventory />
-  </div>
-)}
+            <HealthStation />
+          )}
           {screen === 'bdrrmc' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
-              <BDRRMCSummary />
-              <BDRRMCModule />
-              <BDRRMCRelief />
-              <BDRRMCEvacuation />
+              <div
+                role="tablist"
+                aria-label="BDRRMC sections"
+                style={{
+                  display: 'flex',
+                  gap: '6px',
+                  padding: '6px',
+                  background: 'var(--surface2)',
+                  border: '1px solid var(--border)',
+                  borderRadius: '10px',
+                  marginBottom: '20px',
+                  maxWidth: '720px',
+                }}
+              >
+                {[
+                  { id: 'summary', label: 'Summary', icon: '📊' },
+                  { id: 'events', label: 'Disaster Events', icon: '🚨' },
+                  { id: 'relief', label: 'Relief Distribution', icon: '📦' },
+                  { id: 'evac', label: 'Evacuation Centers', icon: '🏠' },
+                ].map((t) => {
+                  const active = bdrrmcTab === t.id;
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={active}
+                      onClick={() => setBdrrmcTab(t.id)}
+                      style={{
+                        flex: 1,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        gap: '8px',
+                        padding: '10px 14px',
+                        border: 'none',
+                        borderRadius: '8px',
+                        cursor: 'pointer',
+                        fontSize: '13px',
+                        fontWeight: 700,
+                        background: active ? 'var(--primary)' : 'transparent',
+                        color: active ? '#fff' : 'var(--muted)',
+                        transition: 'all 0.18s ease',
+                      }}
+                    >
+                      <span aria-hidden="true" style={{ fontSize: '15px' }}>
+                        {t.icon}
+                      </span>
+                      <span>{t.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              <div className="bdrrmc-tab-content">
+                {bdrrmcTab === 'summary' && <BDRRMCSummary onSwitchTab={setBdrrmcTab} />}
+                {bdrrmcTab === 'events' && <BDRRMCModule />}
+                {bdrrmcTab === 'relief' && <BDRRMCRelief />}
+                {bdrrmcTab === 'evac' && <BDRRMCEvacuation />}
+              </div>
             </div>
           )}
           {/* Fallback for unknown screens (e.g. legacy 'pending' links) */}
@@ -16759,7 +17386,7 @@ className="modal-card"
 {showAddResidentModal && (
   <div 
     style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.75)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 99999, padding: '20px' }} 
-    onClick={() => setShowAddResidentModal(false)}
+    onClick={requestCloseAddResident}
   >
     <div 
       style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '16px', width: '100%', maxWidth: '900px', maxHeight: '90vh', overflowY: 'auto', boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.5)' }} 
@@ -16774,7 +17401,7 @@ className="modal-card"
             Please fill out the required fields below to register a new resident.
           </p>
         </div>
-        <button onClick={() => setShowAddResidentModal(false)} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '24px', cursor: 'pointer' }}>
+        <button onClick={requestCloseAddResident} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: '24px', cursor: 'pointer' }}>
           ✕
         </button>
       </div>
@@ -16799,7 +17426,13 @@ className="modal-card"
   nav={nav}
   setEditingResidentId={setEditingResidentId}
   EMPTY_RESIDENT={EMPTY_RESIDENT}
-  onCancel={() => setShowAddResidentModal(false)}
+  households={householdsList}
+  householdAssignmentMode={householdAssignmentMode}
+  setHouseholdAssignmentMode={setHouseholdAssignmentMode}
+  householdForm={householdForm}
+  setHouseholdForm={setHouseholdForm}
+  canCreateHousehold={role === 'admin'}
+  onCancel={requestCloseAddResident}
 />
       </div>
     </div>

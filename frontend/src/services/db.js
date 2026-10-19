@@ -10,6 +10,14 @@ if (typeof localDb.setMaxListeners === 'function') {
   localDb.setMaxListeners(500);
 }
 
+const isConflictAutoResolveDisabled = () => {
+  try {
+    return localStorage.getItem('BSTRAC_DISABLE_CONFLICT_AUTORESOLVE') === '1';
+  } catch {
+    return false;
+  }
+};
+
 // Remote replication runs exclusively through the authenticated backend
 // proxy at /api/sync/:dbId. CouchDB admin credentials live only in
 // server/.env and are never shipped to the browser bundle, so direct
@@ -57,6 +65,67 @@ let retryDelay = 5000;
 const MAX_RETRY_DELAY = 60000;
 // Guards against stacking overlapping one-shot "Sync Now" replications.
 let forceSyncInFlight = null;
+
+// ── Per-document sync state ─────────────────────────────────────────────
+// Tracks, per local doc id, the revision that has been confirmed pushed to
+// the remote CouchDB server. A doc counts as "synced" only while its current
+// `_rev` still matches the last confirmed revision — an offline edit bumps the
+// local `_rev`, so the record automatically drops back to "LOCAL LOG" until the
+// next successful replication snapshots the new rev.
+//
+// The snapshot is taken from the live sync engine's idle `paused` event (no
+// error), i.e. exactly when replication is caught up and every replicable doc
+// has been pushed. It reads only local metadata (`allDocs`), so it is safe to
+// run offline and never does a network round-trip per record.
+const SYNCED_REVS_KEY = 'bustrac_synced_revs';
+let syncedRevs = {};
+let docSyncListeners = [];
+
+try {
+  syncedRevs = JSON.parse(localStorage.getItem(SYNCED_REVS_KEY)) || {};
+} catch {
+  syncedRevs = {};
+}
+
+const persistSyncedRevs = () => {
+  try {
+    localStorage.setItem(SYNCED_REVS_KEY, JSON.stringify(syncedRevs));
+  } catch {
+    /* storage full / private mode — keep the in-memory map only */
+  }
+};
+
+// Subscribe to per-document sync updates. Returns an unsubscribe function.
+export const onDocSyncChange = (cb) => {
+  docSyncListeners.push(cb);
+  return () => {
+    docSyncListeners = docSyncListeners.filter((l) => l !== cb);
+  };
+};
+
+const emitDocSync = (ids) => {
+  docSyncListeners.forEach((cb) => {
+    try {
+      cb(ids);
+    } catch {
+      /* listener errors must not break sync */
+    }
+  });
+};
+
+// True only while the doc's current revision equals the last confirmed-pushed
+// revision. Purely local metadata read — never touches the network.
+export const isDocSynced = (doc) => {
+  if (!doc || !doc._id || !doc._rev) return false;
+  return syncedRevs[doc._id] === doc._rev;
+};
+
+const recordSyncedDoc = (id, rev) => {
+  if (!id || !rev) return false;
+  if (syncedRevs[id] === rev) return false;
+  syncedRevs[id] = rev;
+  return true;
+};
 
 export const onSyncStatusChange = (cb) => {
   syncStatusListeners.push(cb);
@@ -283,6 +352,40 @@ const makeReplicationFilter = () => {
   };
 };
 
+// Snapshot the current revision of every replicable local doc as "confirmed
+// pushed". Called from the sync engine's idle `paused` event (no error) and
+// after a completed force-sync — both signal replication is caught up, so
+// every doc that the filter allows has reached the remote. Non-replicable /
+// `_local/` / `_design/` docs are skipped so they can never report as synced.
+const snapshotSyncedRevs = async () => {
+  try {
+    const filter = makeReplicationFilter();
+    const res = await localDb.allDocs({ include_docs: true });
+    const changedIds = [];
+    for (const row of res.rows) {
+      const doc = row.doc;
+      if (!doc || !doc._id) continue;
+      const id = String(doc._id);
+      if (id.startsWith('_local/') || id.startsWith('_design/')) continue;
+      if (doc._deleted) continue;
+      let allowed = false;
+      try {
+        allowed = filter(doc) !== false;
+      } catch {
+        allowed = false;
+      }
+      if (!allowed) continue;
+      if (recordSyncedDoc(doc._id, doc._rev)) changedIds.push(doc._id);
+    }
+    if (changedIds.length) {
+      persistSyncedRevs();
+      emitDocSync(changedIds);
+    }
+  } catch (err) {
+    log('warn', 'Synced-revision snapshot failed:', err?.message || err);
+  }
+};
+
 // PouchDB errors are inconsistent (number, string, or object), so derive the
 // HTTP status defensively to distinguish auth problems from network problems.
 const getErrorStatus = (err) => {
@@ -457,8 +560,12 @@ const startLiveSync = () => {
       log('log', 'Replication paused — local changes saved.');
       resetRetry();
       emitSync('synced', 0);
-      // Replication is idle with no error — safe point to clean up conflicts.
-      resolveDbConflicts().catch(() => {});
+      // Replication is idle with no error — safe point to clean up conflicts
+      // and to mark every replicable doc as confirmed pushed (LOCAL LOG → SYNCED).
+      if (!isConflictAutoResolveDisabled()) {
+        resolveDbConflicts().catch(() => {});
+      }
+      snapshotSyncedRevs().catch(() => {});
     }
   });
 
@@ -603,6 +710,9 @@ export const forceSyncToRemote = async () => {
         .on('complete', (info) => {
           syncInstance.removeAllListeners();
           log('log', 'Force sync complete', info);
+          // A completed one-shot sync means every replicable doc reached the
+          // remote — snapshot the new revisions so badges flip to SYNCED.
+          snapshotSyncedRevs().catch(() => {});
           resolve(info);
         })
         .on('error', (err) => {
@@ -675,6 +785,7 @@ export const initDbIndices = async () => {
         localDb.createIndex({ index: { fields: ['type', 'timestamp'] } }),
         localDb.createIndex({ index: { fields: ['docType'] } }),
         localDb.createIndex({ index: { fields: ['type'] } }),
+        localDb.createIndex({ index: { fields: ['type', 'isArchived'] } }),
         // BHS module indexes
         localDb.createIndex({ index: { fields: ['type', 'residentId', 'recordType'] } }),
         localDb.createIndex({ index: { fields: ['type', 'residentId', 'dateAdministered'] } }),
@@ -791,5 +902,9 @@ if (typeof window !== 'undefined') {
 initDbIndices()
   .then(() => migrateExistingCertificates())
   .then(() => purgeLegacyReplicableLocalDocs())
-  .then(() => resolveDbConflicts())
+  .then(() => {
+    if (!isConflictAutoResolveDisabled()) {
+      return resolveDbConflicts();
+    }
+  })
   .catch((err) => console.error('Error during DB init/migration:', err));

@@ -62,6 +62,24 @@ const validateCertPurpose = (raw) => {
   return null;
 };
 
+// Certificate "pending" rule for the duplicate guard. Mirrors the Admin
+// dashboard pendingRequestsCount rule (DashboardPortal.jsx): a doc is pending
+// when its status is not terminal and either step is 2..4 or the step-1 status
+// is one of the active review states. 'submitted' is added because a resident's
+// own new request starts at status 'Submitted' (step 1), so a just-filed
+// request must still block an immediate duplicate of the same type.
+const CERT_TERMINAL_STATUSES = ['issued', 'released', 'cancelled', 'needs revision', 'returned', 'denied', 'rejected'];
+const CERT_STEP1_PENDING_STATUSES = ['submitted', 'under review', 'proceeding', 'for approval', 'approved', 'pending', 'ready'];
+const isPendingCertRequest = (doc) => {
+  if (!doc) return false;
+  const status = String(doc.status || '').trim().toLowerCase();
+  if (CERT_TERMINAL_STATUSES.includes(status)) return false;
+  const step = Number(doc.step || 1);
+  if (step >= 2 && step <= 4) return true;
+  if (step === 1) return CERT_STEP1_PENDING_STATUSES.includes(status);
+  return false;
+};
+
 // -- Resident identity matching ----------------------------------------------
 // DB-wide replication means every resident's device holds every document. These
 // helpers keep the Home metrics (and list views) strictly limited to records
@@ -139,6 +157,8 @@ export default function ResidentUI() {
   // Offline-first notifications (local, PouchDB `_local/` document)
   const [notifItems, setNotifItems] = useState([]);
   const [notifPanelOpen, setNotifPanelOpen] = useState(false);
+  const notifPanelRef = useRef(null);
+  const notifButtonRef = useRef(null);
 
   // "More" bottom-nav drawer (secondary tabs on mobile)
   const [moreOpen, setMoreOpen] = useState(false);
@@ -403,9 +423,26 @@ const showToast = useCallback((message, type = 'success') => {
       const byType = (type) => docs.filter((d) => d.type === type || d.docType === type);
       const sortTs = (a, b) => new Date(b.timestamp || b.updatedAt || b.createdAt || b.dateFiled || 0) - new Date(a.timestamp || a.updatedAt || a.createdAt || a.dateFiled || 0);
 
+      // Only genuine blotter/incident docs qualify: an explicit blotter type, or
+      // a reference that starts with "BLT-". Certificate requests (CERT-RES-*)
+      // must never match, even though they also carry a ref/tracking number.
+      const isBlotterDoc = (doc) => {
+        if (!doc) return false;
+        if (
+          doc.docType === 'blotter' ||
+          doc.type === 'blotter' ||
+          doc.type === 'blotter_record' ||
+          doc.type === 'blotter_report'
+        ) {
+          return true;
+        }
+        return [doc.trackingNo, doc.caseNo, doc.caseNum, doc.refNumber, doc._id].some(
+          (ref) => typeof ref === 'string' && ref.trim().toUpperCase().startsWith('BLT-')
+        );
+      };
+
       const userBlotters = docs.filter((doc) => {
-        const isBlotterDoc = doc.docType === 'blotter' || doc.type === 'blotter' || doc.type === 'blotter_record' || Boolean(doc.trackingNo || doc.caseNo || doc.caseNum || doc.refNumber);
-        return isBlotterDoc && isResidentInvolvedInBlotter(doc);
+        return isBlotterDoc(doc) && isResidentInvolvedInBlotter(doc);
       }).map(normalizeBlotterDoc).filter(Boolean).sort(sortTs);
       setMyBlotters(userBlotters);
 
@@ -493,23 +530,53 @@ const showToast = useCallback((message, type = 'success') => {
     setIsSubmittingCert(true);
 
     try {
-      const recentCheck = await db.allDocs({
-        include_docs: true,
-        startkey: 'CERT-',
-        endkey: 'CERT-\ufff0'
-      });
-
-      const userPendingCerts = recentCheck.rows
-        .map(r => r.doc)
-        .filter(
-          doc =>
-            doc.residentId === currentUser.residentId &&
+      // Duplicate-pending guard: block a second request for the SAME certificate
+      // type while an earlier one is still pending. Different types remain
+      // allowed. Candidate lookup uses the {type, residentId} index; ownership is
+      // re-checked with the same rule the resident list uses.
+      let duplicatePending = null;
+      try {
+        const pendingRes = await db.find({
+          selector: {
+            type: 'certificate_request',
+            residentId: currentUser.residentId,
+          },
+          fields: ['_id', 'certificateType', 'status', 'step', 'residentId'],
+          limit: 200,
+        });
+        duplicatePending = (pendingRes.docs || []).find(
+          (doc) =>
+            isOwnedByResident(doc) &&
             doc.certificateType === certType &&
-            ['Submitted', 'Under Review', 'Pending'].includes(doc.status)
+            isPendingCertRequest(doc)
         );
+      } catch (findErr) {
+        // Fallback: bounded allDocs scan over the CERT- key range.
+        console.warn('Cert duplicate check find() failed, using allDocs:', findErr?.message || findErr);
+        const recentCheck = await db.allDocs({
+          include_docs: true,
+          startkey: 'CERT-',
+          endkey: 'CERT-\ufff0'
+        });
+        duplicatePending = recentCheck.rows
+          .map(r => r.doc)
+          .find(
+            (doc) =>
+              doc &&
+              isOwnedByResident(doc) &&
+              doc.certificateType === certType &&
+              isPendingCertRequest(doc)
+          );
+      }
 
-      if (userPendingCerts.length >= 3) {
-        Swal.fire('Limit Reached', 'You already have 3 pending requests for this certificate type.', 'warning');
+      if (duplicatePending) {
+        blurActiveElement();
+        Swal.fire({
+          icon: 'warning',
+          title: 'Request already pending',
+          text: `You already have a pending ${certType} request (Ref: ${duplicatePending.refNumber || duplicatePending._id}). Please wait for the barangay to process it before filing another.`,
+          confirmButtonText: 'Understood'
+        });
         setIsSubmittingCert(false);
         return;
       }
@@ -585,7 +652,7 @@ const showToast = useCallback((message, type = 'success') => {
       setIsSubmittingCert(false);
     }
   },
-  [certForm, loadData, isSubmittingCert]
+  [certForm, loadData, isSubmittingCert, isOwnedByResident]
 );
 
   // 5f. submitFeedback � deps: []
@@ -1113,6 +1180,29 @@ const showToast = useCallback((message, type = 'success') => {
     });
   }, []);
 
+  // Close the notifications popover on outside click / tap or Escape.
+  useEffect(() => {
+    if (!notifPanelOpen) return undefined;
+    const handlePointerDown = (event) => {
+      const panel = notifPanelRef.current;
+      const button = notifButtonRef.current;
+      if (panel && panel.contains(event.target)) return;
+      if (button && button.contains(event.target)) return;
+      setNotifPanelOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key === 'Escape') setNotifPanelOpen(false);
+    };
+    document.addEventListener('mousedown', handlePointerDown);
+    document.addEventListener('touchstart', handlePointerDown);
+    document.addEventListener('keydown', handleKeyDown);
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown);
+      document.removeEventListener('touchstart', handlePointerDown);
+      document.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [notifPanelOpen]);
+
   const notifUnread = useMemo(() => getUnreadCount(notifItems), [notifItems]);
 
   // 7a. Load data kapag ready na ang user
@@ -1369,12 +1459,13 @@ useEffect(() => {
             <img src={logo} alt="Barangay Logo" style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'contain', flexShrink: 0 }} />
             <span className="resident-header__title" style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)', letterSpacing: '0.3px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Bustrac Hub</span>
           </div>
-          <div className="resident-header__actions" style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: 'auto' }}>
+          <div className="resident-header__actions" style={{ position: 'relative', display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', justifyContent: 'flex-end', marginLeft: 'auto' }}>
             {/* Syncing is fully automatic for residents � no manual retry
                 control. SyncStatusIndicator only reports the current state. */}
             <SyncStatusIndicator syncState={syncState} pendingCount={pendingCount} lastSynced={lastSync} detail={syncDetail} />
-            <div style={{ position: 'relative' }}>
+            <div>
               <button
+                ref={notifButtonRef}
                 type="button"
                 onClick={toggleNotifPanel}
                 style={{ position: 'relative', background: 'var(--surface2)', border: '1px solid var(--border)', color: 'var(--text)', borderRadius: '50%', width: 36, height: 36, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', transition: 'all 0.2s ease' }}
@@ -1389,7 +1480,7 @@ useEffect(() => {
                 )}
               </button>
               {notifPanelOpen && (
-                <div className="resident-notif-panel" style={{ position: 'absolute', right: 0, top: 'calc(100% + 8px)', width: 340, maxWidth: 'calc(100vw - 24px)', maxHeight: 420, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 12px 32px rgba(0,0,0,0.18)', zIndex: 300, padding: 8 }}>
+                <div ref={notifPanelRef} className="resident-notif-panel" style={{ position: 'absolute', right: 0, left: 'auto', top: 'calc(100% + 8px)', width: 'min(340px, calc(100vw - 24px))', maxHeight: 420, overflowY: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12, boxShadow: '0 12px 32px rgba(0,0,0,0.18)', zIndex: 300, padding: 8 }}>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '4px 8px 8px', borderBottom: '1px solid var(--border)', marginBottom: 4 }}>
                     <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text)' }}>Notifications</span>
                     <button onClick={toggleNotifPanel} style={{ background: 'none', border: 'none', color: 'var(--muted)', fontSize: 16, cursor: 'pointer' }} aria-label="Close notifications">&#x2715;</button>
@@ -1468,7 +1559,7 @@ useEffect(() => {
           )}
 
           {!isLoading && !loadError && activeScreen === 's-certificates' && (
-            <ResidentCertificates loggedInUser={loggedInUser} myRequests={myRequests} showCertForm={showCertForm} setShowCertForm={setShowCertForm} certForm={certForm} updateCertField={updateCertField} submitCert={submitCert} certSuccess={certSuccess} setCertSuccess={setCertSuccess} filterTab={filterTab} setFilterTab={setFilterTab} handleCancelRequest={handleCancelRequest} onRefresh={loadData} />
+            <ResidentCertificates loggedInUser={loggedInUser} myRequests={myRequests} showCertForm={showCertForm} setShowCertForm={setShowCertForm} certForm={certForm} updateCertField={updateCertField} submitCert={submitCert} certSuccess={certSuccess} setCertSuccess={setCertSuccess} filterTab={filterTab} setFilterTab={setFilterTab} handleCancelRequest={handleCancelRequest} />
           )}
 
           {!isLoading && !loadError && activeScreen === 's-announcements' && (
@@ -1574,13 +1665,13 @@ useEffect(() => {
         )}
 
         {/* Footer */}
-        <footer className="resident-footer" style={{ marginTop: 28, padding: '24px 16px 12px', textAlign: 'center', borderTop: '1px solid var(--border)', background: 'transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+        <footer className="resident-footer" style={{ marginTop: 8, padding: '24px 16px 12px', textAlign: 'center', borderTop: '1px solid var(--border)', background: 'transparent', display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 800, color: 'var(--text)', letterSpacing: '0.4px' }}>Bustrac Hub</span>
             <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'var(--primary-light)', color: 'var(--primary, #3b82f6)', border: '1px solid var(--primary-light)' }}>v1.0</span>
           </div>
           <div style={{ fontSize: 11, color: 'var(--muted)', opacity: 0.75, lineHeight: 1.4 }}>
-            � {new Date().getFullYear()} Barangay Bustrac, Nabua. All rights reserved.
+            &copy; {new Date().getFullYear()} Barangay Bustrac, Nabua. All rights reserved.
           </div>
         </footer>
       </div>

@@ -1,0 +1,430 @@
+/* ==========================================
+   Health Station (BHS) — dedicated stylesheet
+   ========================================== */
+
+/* Tab bar */
+.bhs-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface2);
+  border-radius: 10px 10px 0 0;
+  overflow: hidden;
+}
+.bhs-tab {
+  flex: 1;
+  padding: 12px 16px;     /* slightly taller */
+  font-size: 15px;        /* ← bigger text */
+  font-weight: 700;  
+  border: none;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition: background 0.2s ease, color 0.2s ease, border-color 0.2s ease;
+}
+.bhs-tab:hover {
+  background: var(--primary-light);
+  background: color-mix(in srgb, var(--primary) 8%, transparent);
+}
+.bhs-tab--active {
+  background: transparent;
+  color: var(--primary);
+  border-bottom: 3px solid var(--primary);
+  border-radius: 6px 6px 0 0;
+}
+
+/* Section wrapper — natural height, block layout (no flex/overflow crushing siblings) */
+.bhs-section {
+  padding: 0;
+  display: block;
+}
+
+/* Compact stat cards with icon */
+.bhs-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 16px;
+  padding: 20px;
+  margin-bottom: 0;
+}
+
+.bhs-stat-card {
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--border);
+  border-radius: 10px;
+  padding: 14px 20px;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  gap: 8px;
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.bhs-stat-card:hover {
+  border-color: color-mix(in srgb, var(--primary) 30%, transparent);
+  background: color-mix(in srgb, var(--primary) 4%, var(--surface2));
+}
+.bhs-stat-icon {
+  width: 36px;
+  height: 36px;
+  min-width: 36px;
+  border-radius: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 17px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+}
+.bhs-stat-card--blue { border-left-color: var(--primary); }
+.bhs-stat-card--blue .bhs-stat-icon { background: color-mix(in srgb, var(--primary) 14%, transparent); }
+.bhs-stat-card--green { border-left-color: var(--green); }
+.bhs-stat-card--green .bhs-stat-icon { background: color-mix(in srgb, var(--green) 14%, transparent); }
+.bhs-stat-card--amber { border-left-color: var(--amber); }
+.bhs-stat-card--amber .bhs-stat-icon { background: color-mix(in srgb, var(--amber) 14%, transparent); }
+.bhs-stat-card--red { border-left-color: var(--red); }
+.bhs-stat-card--red .bhs-stat-icon { background: color-mix(in srgb, var(--red) 14%, transparent); }
+.bhs-stat-card--purple { border-left-color: var(--purple); }
+.bhs-stat-card--purple .bhs-stat-icon { background: color-mix(in srgb, var(--purple) 14%, transparent); }
+.bhs-stat-card--teal { border-left-color: var(--teal); }
+.bhs-stat-card--teal .bhs-stat-icon { background: color-mix(in srgb, var(--teal) 14%, transparent); }
+.bhs-stat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.bhs-stat-label {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  white-space: nowrap;
+}
+.bhs-stat-value {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--text);
+  line-height: 1.1;
+}
+.bhs-stat-hint {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+/* Filter pill row — hard-separated from stat cards */
+.bhs-filters {
+  display: flex;
+  gap: 6px;
+  margin-top: 24px !important;
+  margin-bottom: 20px;
+  padding: 0 20px;
+  flex-wrap: wrap;
+  align-items: center;
+  position: relative;
+  z-index: 1;
+}
+
+/* Filter pills — look like clickable buttons */
+.bhs-filter-btn {
+  padding: 6px 14px;
+  font-size: 11px;
+  font-weight: 700;
+  border: 1px solid var(--border);
+  background: var(--surface2);
+  color: var(--text);
+  cursor: pointer;
+  border-radius: 999px;
+  transition: background 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+}
+.bhs-filter-btn:hover {
+  background: color-mix(in srgb, var(--primary) 10%, var(--surface2));
+  border-color: color-mix(in srgb, var(--primary) 35%, var(--border));
+}
+.bhs-filter-btn--active {
+  background: var(--primary);
+  border-color: var(--primary);
+  color: #fff;
+}
+.bhs-filter-btn--active:hover {
+  background: var(--primary);
+  border-color: var(--primary);
+}
+
+/* Sortable column headers */
+.bhs-sort-header {
+  cursor: pointer;
+  user-select: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.bhs-sort-icon {
+  font-size: 10px;
+  color: var(--primary);
+}
+.bhs-sort-active {
+  color: var(--primary);
+}
+
+/* Stock status badges — proper pill shape */
+.bhs-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 84px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+}
+.bhs-badge--ok {
+  background: var(--green-bg);
+  color: var(--green);
+  border: 1px solid var(--green-border);
+}
+.bhs-badge--low {
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid var(--red-border);
+}
+.bhs-badge--expiring {
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+}
+
+/* Empty state */
+.bhs-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 48px 20px;
+  color: var(--muted);
+}
+.bhs-empty-icon {
+  font-size: 40px;
+  margin-bottom: 10px;
+  opacity: 0.5;
+  display: block;
+}
+.bhs-empty-title {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.bhs-empty-hint {
+  font-size: 12px;
+  max-width: 360px;
+}
+
+/* Table: fixed scroll height, zebra rows + hover */
+.bhs-section .cert-table-wrapper {
+  flex: none;
+  min-height: 0;
+  height: auto;
+  padding: 0 20px;
+  background: transparent;
+  border: none;
+  max-height: 450px;
+  overflow-y: auto;
+}
+/* Fixed column layout — BHS tables (columns respect th width percentages) */
+.bhs-table-fixed {
+  table-layout: fixed;
+  width: 100%;
+}
+/* Compact action buttons inside BHS tables (out-specifies global btn-sm !important) */
+.bhs-section .cert-report-table .btn-sm {
+  padding: 4px 8px !important;
+  font-size: 11px !important;
+}
+.bhs-section .cert-report-table tbody tr {
+  transition: background 0.15s ease;
+}
+.bhs-section .cert-report-table tbody tr:nth-child(even) {
+  background: color-mix(in srgb, var(--surface2) 70%, transparent);
+}
+.bhs-section .cert-report-table tbody tr:nth-child(odd) {
+  background: transparent;
+}
+.bhs-section .cert-report-table tbody tr:hover {
+  background: color-mix(in srgb, var(--primary) 7%, transparent);
+}
+.bhs-section .cert-report-table tbody tr:first-child {
+  border-top: 1px solid var(--border);
+}
+
+/* Pagination bar — hugs the table, matches card surface */
+.bhs-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 20px 14px;
+  flex-wrap: wrap;
+  background: transparent;
+  margin-top: 2px;
+}
+.bhs-pagination-info {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 600;
+}
+.bhs-pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bhs-pagination-page {
+  font-size: 12px;
+  color: var(--muted);
+  font-weight: 700;
+  padding: 0 8px;
+  white-space: nowrap;
+}
+/* Header count pill (fixes undefined --primary-bg/--primary-border) */
+.bhs-count-pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 10px;
+  margin-left: 8px;
+  background: color-mix(in srgb, var(--primary) 14%, transparent);
+  color: var(--primary);
+  border: 1px solid color-mix(in srgb, var(--primary) 25%, transparent);
+}
+.bhs-count-pill--amber {
+  background: var(--amber-bg);
+  color: var(--amber);
+  border: 1px solid var(--amber-border);
+}
+
+/* Modal form layout */
+.bhs-form-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px 14px;
+  margin-bottom: 14px;
+}
+.bhs-form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  margin-bottom: 12px;
+  min-width: 0;
+}
+.bhs-form-grid .bhs-form-group {
+  margin-bottom: 0;
+}
+.bhs-form-group--full {
+  grid-column: 1 / -1;
+}
+.bhs-form-label {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+.bhs-form-input {
+  height: 40px;
+  padding: 0 12px;
+  font-size: 13px;
+  background: var(--surface2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  width: 100%;
+  box-sizing: border-box;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+.bhs-form-input:focus {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primary) 18%, transparent);
+}
+.bhs-form-input:disabled {
+  opacity: 0.6;
+}
+textarea.bhs-form-input {
+  height: auto;
+  min-height: 84px;
+  padding: 10px 12px;
+  line-height: 1.45;
+  resize: vertical;
+}
+.bhs-form-hint {
+  font-size: 11px;
+  color: var(--green);
+  font-weight: 600;
+}
+.bhs-form-note {
+  padding: 9px 12px;
+  background: var(--surface2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.bhs-form-footer {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  align-items: center;
+  border-top: 1px solid var(--border);
+  padding-top: 14px;
+  margin-top: 4px;
+}
+
+/* Table cell clickable patient name */
+.bhs-cell-patient {
+  cursor: pointer;
+  font-weight: 700;
+  color: var(--primary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.bhs-cell-patient:hover {
+  text-decoration: underline;
+}
+
+/* Responsive */
+@media (max-width: 640px) {
+  .bhs-stats {
+    grid-template-columns: 1fr 1fr;
+  }
+  .bhs-form-grid {
+    grid-template-columns: 1fr;
+  }
+  .bhs-tabs {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .bhs-tab {
+    white-space: nowrap;
+    min-width: 120px;
+  }
+  .cert-table-wrapper {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+  .cert-report-table {
+    min-width: 700px;
+  }
+}
+
+.bhs-stat-card--purple { border-left-color: var(--purple, #8b5cf6); }
+.bhs-stat-card--purple .bhs-stat-icon { background: color-mix(in srgb, var(--purple, #8b5cf6) 14%, transparent); }

@@ -390,14 +390,14 @@ export function HearingScheduler({ currentCase, db, setBlotterList, setSelectedB
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
       {/* Summary strip */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 10 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 10 }}>
         {[
           { label: 'Total Sessions', value: hearings.length, tone: 'info' },
           { label: 'Completed', value: completed.length, tone: 'ok' },
           { label: 'Upcoming', value: upcoming.length, tone: 'warn' },
           { label: 'Summons', value: `${Number(currentCase?.summonCount || 0)} / 3`, tone: 'muted' },
         ].map((stat) => (
-          <div key={stat.label} style={{ padding: 12, background: 'var(--surface2)', borderRadius: 10, border: '1px solid var(--border)' }}>
+          <div key={stat.label} style={{ padding: 10, background: 'var(--surface2)', borderRadius: 10, border: '1px solid var(--border)' }}>
             <div style={{ fontSize: 10, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.4px', marginBottom: 4 }}>{stat.label}</div>
             <div style={{ fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>{stat.value}</div>
           </div>

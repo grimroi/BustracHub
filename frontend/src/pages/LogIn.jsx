@@ -156,6 +156,17 @@ export default function LogIn() {
 
     const finishOfflineLogin = (localUser) => {
       const userRole = String(localUser.role || localUser.user?.role || '').trim().toLowerCase();
+      // Drop any identity left over from a previous session in this tab. The
+      // replication filter (services/db.js) reads getCurrentUser(), which looks
+      // at sessionStorage['bustrac_user'] BEFORE localStorage, so a stale
+      // resident entry here would otherwise shadow the incoming identity.
+      try {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.removeItem('bustrac_user');
+        }
+      } catch {
+        // Best-effort; a missing/blocked sessionStorage is non-fatal.
+      }
       localStorage.setItem('bustrac_role', userRole);
       localStorage.setItem('bustrac_user', JSON.stringify(localUser.user));
       localStorage.setItem('bustrac_loginTime', new Date().toISOString());
@@ -229,6 +240,24 @@ export default function LogIn() {
             return;
           }
 
+          // Establish the NEW identity BEFORE setToken(). setToken() dispatches
+          // 'bustrac:token-changed' synchronously, which starts live replication
+          // and builds the per-session replication filter. That filter reads the
+          // role from storage once and caches it, so a stale identity from a
+          // previous session (in localStorage, or in sessionStorage which
+          // getCurrentUser reads first) would otherwise be captured and applied
+          // to the whole sync session.
+          try {
+            if (typeof sessionStorage !== 'undefined') {
+              sessionStorage.removeItem('bustrac_user');
+            }
+          } catch {
+            // Best-effort; a missing/blocked sessionStorage is non-fatal.
+          }
+          localStorage.setItem('bustrac_role', userRole);
+          localStorage.setItem('bustrac_user', JSON.stringify(data.user));
+          localStorage.setItem('bustrac_loginTime', new Date().toISOString());
+
           // Store the server-issued session token ONLY for a successful
           // online login. A missing or empty token is never stored, so a
           // failed or partial response cannot leave a stale token behind.
@@ -237,10 +266,6 @@ export default function LogIn() {
           }
           // A successful online login supersedes any stale offline session.
           clearOfflineSession();
-
-          localStorage.setItem('bustrac_role', userRole);
-          localStorage.setItem('bustrac_user', JSON.stringify(data.user));
-          localStorage.setItem('bustrac_loginTime', new Date().toISOString());
 
           let passwordHash = null;
           try {

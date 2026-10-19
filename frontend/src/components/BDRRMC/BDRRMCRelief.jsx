@@ -4,6 +4,7 @@ import Swal from 'sweetalert2';
 import { localDb as db, forceSyncToRemote } from '../../services/db';
 import { createAuditLog } from '../../utils/auditLog';
 import { generateUUID } from '../../utils/helpers';
+import './BDRRMC.css';
 
 // SweetAlert mixin that renders ABOVE the portal modals (zIndex 10000).
 const BdrrmcSwal = Swal.mixin({ zIndex: 10001 });
@@ -205,13 +206,13 @@ export default function BDRRMCRelief() {
   const labelStyle = { display: 'block', fontSize: 11, fontWeight: 700, color: 'var(--muted)', marginBottom: 4 };
 
   return (
-    <div className="screen active" style={{ paddingTop: 24, marginBottom: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div className="screen active">
+      <div className="bdrrmc-section-header">
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>Relief Distribution</h2>
         <button className="btn btn-p" onClick={openAdd} aria-label="Record new relief distribution">+ Record Distribution</button>
       </div>
 
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', marginBottom: 14 }}>
+      <div className="bdrrmc-filters" style={{ justifyContent: 'flex-end' }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Show</span>
         <div style={{ display: 'flex', gap: 2, padding: 2, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8 }}>
           {['All', 'Active', 'Archived'].map((t) => (
@@ -223,11 +224,12 @@ export default function BDRRMCRelief() {
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>Loading...</div>
       ) : visible.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', background: 'var(--surface2)', border: '1px dashed var(--border)', borderRadius: 10 }}>
-          {filter === 'Archived' ? 'No archived records.' : 'No relief distributions found.'}
+        <div className="bdrrmc-empty">
+          <div className="bdrrmc-empty-icon">📦</div>
+          <div>{filter === 'Archived' ? 'No archived records.' : 'No relief distributions found.'}</div>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+        <div className="bdrrmc-table-wrap">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead style={{ background: 'var(--surface2)' }}>
               <tr>

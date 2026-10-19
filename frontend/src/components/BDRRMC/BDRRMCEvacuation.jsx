@@ -4,6 +4,7 @@ import Swal from 'sweetalert2';
 import { localDb as db, forceSyncToRemote } from '../../services/db';
 import { createAuditLog } from '../../utils/auditLog';
 import { generateUUID } from '../../utils/helpers';
+import './BDRRMC.css';
 
 // SweetAlert mixin that renders ABOVE the portal modals (zIndex 10000).
 const BdrrmcSwal = Swal.mixin({ zIndex: 10001 });
@@ -233,13 +234,13 @@ export default function BDRRMCEvacuation() {
   const occupancyFull = Number(form.capacity) > 0 && Number(form.currentOccupants) >= Number(form.capacity);
 
   return (
-    <div className="screen active" style={{ paddingTop: 24, marginBottom: 24 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
+    <div className="screen active">
+      <div className="bdrrmc-section-header">
         <h2 style={{ margin: 0, fontSize: 18, fontWeight: 800, color: 'var(--text)' }}>Evacuation Centers</h2>
         <button className="btn btn-p" onClick={openAdd} aria-label="Add evacuation center">+ Add Evacuation Center</button>
       </div>
 
-      <div style={{ display: 'flex', gap: 6, alignItems: 'center', justifyContent: 'flex-end', marginBottom: 14 }}>
+      <div className="bdrrmc-filters" style={{ justifyContent: 'flex-end' }}>
         <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase' }}>Show</span>
         <div style={{ display: 'flex', gap: 2, padding: 2, background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 8 }}>
           {['All', 'Active', 'Archived'].map((t) => (
@@ -251,11 +252,12 @@ export default function BDRRMCEvacuation() {
       {loading ? (
         <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)' }}>Loading...</div>
       ) : visible.length === 0 ? (
-        <div style={{ textAlign: 'center', padding: 40, color: 'var(--muted)', background: 'var(--surface2)', border: '1px dashed var(--border)', borderRadius: 10 }}>
-          {filter === 'Archived' ? 'No archived centers.' : 'No evacuation centers found.'}
+        <div className="bdrrmc-empty">
+          <div className="bdrrmc-empty-icon">🏠</div>
+          <div>{filter === 'Archived' ? 'No archived centers.' : 'No evacuation centers found.'}</div>
         </div>
       ) : (
-        <div style={{ overflowX: 'auto', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 10 }}>
+        <div className="bdrrmc-table-wrap">
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
             <thead style={{ background: 'var(--surface2)' }}>
               <tr>
@@ -265,11 +267,30 @@ export default function BDRRMCEvacuation() {
               </tr>
             </thead>
             <tbody>
-              {visible.map((c) => (
+              {visible.map((c) => {
+                const cap = Math.max(0, Number(c.capacity) || 0);
+                const occ = Math.max(0, Number(c.currentOccupants) || 0);
+                const pct = cap > 0 ? Math.min(100, Math.round((occ / cap) * 100)) : 0;
+                const tone = pct <= 60 ? 'ok' : pct <= 85 ? 'warn' : 'full';
+                return (
                 <tr key={c._id} style={{ borderTop: '1px solid var(--border)', opacity: c.isArchived ? 0.6 : 1 }}>
                   <td style={{ padding: '10px 12px', color: 'var(--text)', fontWeight: 600 }}>{c.name}</td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{c.location || '—'}{c.purok ? ` (${c.purok})` : ''}</td>
-                  <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>{c.capacity ?? 0}</td>
+                  <td style={{ padding: '10px 12px', color: 'var(--muted)' }}>
+                    {c.capacity ?? 0}
+                    {cap > 0 && (
+                      <div
+                        className="bdrrmc-progress"
+                        role="progressbar"
+                        aria-valuenow={pct}
+                        aria-valuemin={0}
+                        aria-valuemax={100}
+                        aria-label={`Capacity usage at ${c.name}`}
+                      >
+                        <div className={`bdrrmc-progress-fill ${tone}`} style={{ width: `${pct}%` }} />
+                      </div>
+                    )}
+                  </td>
                   <td style={{ padding: '10px 12px', color: 'var(--muted)', whiteSpace: 'nowrap' }}>
                     <button className="btn btn-g btn-sm" style={{ padding: '2px 8px', marginRight: 6 }} onClick={() => adjustOccupancy(c, -1)} disabled={c.isArchived || (Number(c.currentOccupants) || 0) <= 0} aria-label={`Remove one occupant from ${c.name}`}>−</button>
                     <span style={{ fontWeight: 700, color: 'var(--text)' }}>{Number(c.currentOccupants) || 0}</span>
@@ -287,7 +308,8 @@ export default function BDRRMCEvacuation() {
                     )}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>

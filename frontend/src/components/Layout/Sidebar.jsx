@@ -7,8 +7,6 @@ const Sidebar = React.memo(function Sidebar({
   setSidebarOpen,
   isResidentsOpen,
   setIsResidentsOpen,
-  isAidOpen,
-  setIsAidOpen,
   screen,
   setScreen,
   setShowUserMenu,
@@ -191,70 +189,23 @@ const Sidebar = React.memo(function Sidebar({
                 </button>
     
                 {/* AID DISTRIBUTION */}
-                <div className="sb-sec">Aid Distribution</div>
-                <div className="sb-nav-group">
-                  <button 
-                    type="button" 
-                    className={`nav-btn toggle-parent ${['programs', 'aid-encode', 'aid-logs', 'add-beneficiary'].includes(screen) ? 'active-parent' : ''}`} 
-                    onClick={() => {
-                      if (!sidebarOpen) {
-                        setSidebarOpen(true);
-                        setIsAidOpen(true);
-                      } else {
-                        setIsAidOpen(!isAidOpen);
-                      }
-                    }} 
-                    aria-expanded={isAidOpen}
-                    title={!sidebarOpen ? "Aid Distribution" : ""}
-                    data-tooltip="Aid Distribution"
-                  >
-                    <span className="nav-ico">
-                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                        <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                        <path d="M3.27 6.96L12 12.01l8.73-5.05" />
-                        <path d="M12 22.08V12" />
-                      </svg>
-                    </span>
-                    <span className="nav-label" style={{ flex: 1, textAlign: 'left' }}>Aid Distribution</span>
-                    <span className="submenu-arrow" style={{ transform: isAidOpen ? 'rotate(90deg)' : 'rotate(0deg)', transition: 'transform 0.2s' }}>▶</span>
-                  </button>
-    
-                  {isAidOpen && sidebarOpen && (
-                    <div className="sb-submenu-zone" style={{ paddingLeft: '14px' }}>
-                      <button className={`nav-btn sub-btn${screen === 'programs' ? ' active' : ''}`} onClick={() => nav('programs')}>
-                        <span className="nav-ico">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
-                          </svg>
-                        </span>
-                        <span className="nav-label">Programs</span>
-                      </button>
-    
-                      <button className={`nav-btn sub-btn${screen === 'aid-encode' ? ' active' : ''}`} onClick={() => nav('aid-encode')}>
-                        <span className="nav-ico">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M12 5v14M5 12h14" />
-                          </svg>
-                        </span>
-                        <span className="nav-label">Relief Distribution</span>
-                      </button>
-    
-                      <button className={`nav-btn sub-btn${screen === 'aid-logs' ? ' active' : ''}`} onClick={() => nav('aid-logs')}>
-                        <span className="nav-ico">
-                          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                            <path d="M14 2v6h6" />
-                            <path d="M12 18v-6" />
-                            <path d="M9 15h6" />
-                          </svg>
-                        </span>
-                        <span className="nav-label">Distribution Logs</span>
-                      </button>
-    
-                      
-                    </div>
-                  )}
-                </div>
+                <div className="sb-sec">Welfare &amp; Assistance</div>
+                <button
+                  type="button"
+                  className={`nav-btn${screen === 'aid-distribution' ? ' active' : ''}`}
+                  onClick={() => nav('programs')}
+                  title={!sidebarOpen ? "Aid Distribution" : ""}
+                  data-tooltip="Aid Distribution"
+                >
+                  <span className="nav-ico">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+                      <path d="M3.27 6.96L12 12.01l8.73-5.05" />
+                      <path d="M12 22.08V12" />
+                    </svg>
+                  </span>
+                  <span className="nav-label">Aid Distribution</span>
+                </button>
     
                 {/* PEACE & ORDER / INCIDENTS */}
                 <div className="sb-sec">Peace & Order</div>
@@ -312,9 +263,12 @@ const Sidebar = React.memo(function Sidebar({
   type="button"
   className={`nav-btn${screen === 'bhs' ? ' active' : ''}`}
   onClick={() => nav('bhs')}
+  title={!sidebarOpen ? "Barangay Health Station" : ""}
+  data-tooltip="Barangay Health Station"
 >
-  <FaHeartbeat size={16} />
-  <span>Health Records & Inventory</span>
+  <span className="nav-ico"><FaHeartbeat size={16} /></span>
+  <span className="nav-label">Barangay Health Station</span>
+  <span className="nb nb-green">SYSTEM</span>
 </button>
 
                 {/* DISASTER RESPONSE */}
@@ -323,9 +277,12 @@ const Sidebar = React.memo(function Sidebar({
                   type="button"
                   className={`nav-btn${screen === 'bdrrmc' ? ' active' : ''}`}
                   onClick={() => nav('bdrrmc')}
+                  title={!sidebarOpen ? "BDRRMC & Relief" : ""}
+                  data-tooltip="BDRRMC & Relief"
                 >
-                  <FaExclamationTriangle size={16} />
-                  <span>BDRRMC & Relief</span>
+                  <span className="nav-ico"><FaExclamationTriangle size={16} /></span>
+                  <span className="nav-label">BDRRMC &amp; Relief</span>
+                  <span className="nb nb-green">SYSTEM</span>
                 </button>
 
                 {/* COMMUNITY */}
@@ -358,6 +315,23 @@ const Sidebar = React.memo(function Sidebar({
                   </span>
                   <span className="nav-label">Feedback</span>
                   {activeFeedbackCount > 0 && <span className="nb nb-red">{activeFeedbackCount}</span>}
+                </button>
+
+                <button
+                  className={`nav-btn${screen === 'events-manage' ? ' active' : ''}`}
+                  onClick={() => nav('events-manage')}
+                  title={!sidebarOpen ? "Events Management" : ""}
+                  data-tooltip="Events Management"
+                >
+                  <span className="nav-ico">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                      <line x1="16" y1="2" x2="16" y2="6" />
+                      <line x1="8" y1="2" x2="8" y2="6" />
+                      <line x1="3" y1="10" x2="21" y2="10" />
+                    </svg>
+                  </span>
+                  <span className="nav-label">Events Management</span>
                 </button>
     
                 
@@ -418,22 +392,6 @@ const Sidebar = React.memo(function Sidebar({
                   </>
                 )}
                  
-                 <button
-  className={`nav-btn${screen === 'events-manage' ? ' active' : ''}`}
-  onClick={() => nav('events-manage')}
-  title={!sidebarOpen ? "Events Management" : ""}
->
-  <span className="nav-ico">
-    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-      <line x1="16" y1="2" x2="16" y2="6" />
-      <line x1="8" y1="2" x2="8" y2="6" />
-      <line x1="3" y1="10" x2="21" y2="10" />
-    </svg>
-  </span>
-  <span className="nav-label">Events Management</span>
-</button>
-
                 {/* REPORTS */}
                 <div className="sb-sec">Reports</div>
                 <button 

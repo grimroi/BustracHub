@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useImperativeHandle, forwardRef, useRef } from 'react';
 import { calculateAge } from "../../utils/residentUtils";
 import { localDb } from '../../services/db';
+import { generateRbiId } from '../../utils/generateRbiId';
 
 const formLabelStyle = { color: 'var(--text)' };
 const formFieldStyle = { backgroundColor: 'var(--surface2)', color: 'var(--text)', border: '1px solid var(--border)' };
 
-const SectionHeading = ({ number, children }) => (
+const SectionHeading = ({ number, children, inset = false }) => (
   <div
     style={{
       margin: '0 0 12px',
-      paddingTop: '14px',
-      borderTop: '1px solid var(--border)',
+      paddingTop: inset ? 0 : '14px',
+      borderTop: inset ? 'none' : '1px solid var(--border)',
       fontSize: '12px',
       fontWeight: 800,
       letterSpacing: '0.06em',
@@ -39,7 +40,7 @@ export default forwardRef(function ResidentForm({
   households = [],
   householdAssignmentMode = 'existing',
   setHouseholdAssignmentMode,
-  householdForm,
+  householdForm = { head: '', address: '', purok: '', notes: '' },
   setHouseholdForm,
   canCreateHousehold = false,
   isSaving = false
@@ -93,19 +94,43 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
 
   const isEditMode = !!editingResidentId;
   const todayDateStr = new Date().toISOString().split('T')[0]; // Max date para sa birthdate
+  // Guard the Age display: an empty/invalid birthdate should read "Not set"
+  // rather than "0", while a real birthdate (including a legitimate age of 0)
+  // still shows its computed age.
+  const hasValidBirthdate = !!residentForm.birthdate && !Number.isNaN(new Date(residentForm.birthdate).getTime());
+
+  // Household availability: kapag walang existing households at pinapayagan ang
+  // user na gumawa, awtomatikong lumipat sa "Create New Household" mode para
+  // maisama ang household sa resident submission.
+  const noHouseholdsAvailable = effectiveHouseholds.length === 0;
+  const showHouseholdCreate = canCreateHousehold
+    && (householdAssignmentMode === 'create' || (noHouseholdsAvailable && !isEditMode));
+
+  useEffect(() => {
+    if (!setHouseholdAssignmentMode) return;
+    if (showHouseholdCreate && householdAssignmentMode !== 'create') {
+      setHouseholdAssignmentMode('create');
+    }
+  }, [showHouseholdCreate, householdAssignmentMode, setHouseholdAssignmentMode]);
 
   // Auto-generate RBI ID kapag NEW record (hindi edit mode) at wala pang laman
   useEffect(() => {
-    if (!isEditMode && !residentForm.rbiNo) {
-      const year = new Date().getFullYear();
-      const randomSuffix = Math.floor(100000 + Math.random() * 900000);
-      updateResidentField('rbiNo', `RBI-${year}-${randomSuffix}`);
-    }
+    if (isEditMode || residentForm.rbiNo) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const rbiId = await generateRbiId(localDb);
+        if (!cancelled) updateResidentField('rbiNo', rbiId);
+      } catch (err) {
+        console.warn('[ResidentForm] RBI ID generation failed:', err?.message || err);
+      }
+    })();
+    return () => { cancelled = true; };
   }, [isEditMode]);
 
   const updateHouseholdMode = (mode) => {
-    setHouseholdAssignmentMode(mode);
-    if (mode === 'create') setHouseholdForm({ head: '', address: '', purok: '' });
+    if (setHouseholdAssignmentMode) setHouseholdAssignmentMode(mode);
+    if (mode === 'create' && setHouseholdForm) setHouseholdForm({ head: '', address: '', purok: '', notes: '' });
   };
 
   return (
@@ -147,7 +172,7 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
         >
           <div style={{ display: 'grid', gridTemplateColumns: '220px 1fr', gap: '24px' }}>
             {/* ═══ LEFT SIDEBAR: PHOTO & BARANGAY STATUS ═══ */}
-            <div style={{ borderRight: '1px solid var(--border)', paddingRight: '20px' }}>
+            <div style={{ borderRight: '1px solid var(--border)', paddingRight: '20px', alignSelf: 'flex-start', position: 'sticky', top: 0 }}>
               {/* Photo Preview Box */}
               <div
                 style={{
@@ -237,19 +262,6 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
                     Remove Photo
                   </button>
                 )}
-              </div>
-
-              {/* Checkboxes */}
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', fontSize: '13px' }}>
-                <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', color: 'var(--text)' }}>
-                  <input
-                    type="checkbox"
-                    disabled={isSaving}
-                    checked={residentForm.isBarangayOfficial}
-                    onChange={(e) => updateResidentField('isBarangayOfficial', e.target.checked)}
-                  />
-                  Barangay Official
-                </label>
               </div>
             </div>
 
@@ -341,6 +353,33 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
                 </div>
               </div>
 
+              {/* Barangay Official role */}
+              <div className="fg" style={{ marginBottom: '16px' }}>
+                <label className="fl">BARANGAY OFFICIAL?</label>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                    cursor: isSaving ? 'not-allowed' : 'pointer',
+                    color: 'var(--text)',
+                    fontSize: '13px',
+                    background: 'var(--surface2)',
+                    border: '1px solid var(--border)',
+                    borderRadius: '8px',
+                    padding: '10px 12px',
+                  }}
+                >
+                  <input
+                    type="checkbox"
+                    disabled={isSaving}
+                    checked={residentForm.isBarangayOfficial}
+                    onChange={(e) => updateResidentField('isBarangayOfficial', e.target.checked)}
+                  />
+                  Mark this resident as a barangay official
+                </label>
+              </div>
+
               {/* Full Name Fields - AUTO-UPPERCASE APPLIED */}
               <SectionHeading number="B">Personal Information</SectionHeading>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr 120px 120px', gap: '10px', marginBottom: '16px' }}>
@@ -420,7 +459,13 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
                 </div>
                 <div className="fg">
                   <label className="fl">AGE</label>
-                  <input type="number" className="fc" readOnly value={residentForm.age} />
+                  <input
+                    type="number"
+                    className="fc"
+                    readOnly
+                    value={hasValidBirthdate ? residentForm.age : ''}
+                    placeholder="Not set"
+                  />
                 </div>
                 <div className="fg">
                   <label className="fl">BIRTH PLACE</label>
@@ -714,9 +759,11 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
                     <input
                       type="text"
                       className="fc"
-                      disabled={isSaving}
+                      disabled={isSaving || !residentForm.isRegisteredVoter}
                       value={residentForm.precinctNo}
                       onChange={(e) => updateResidentField('precinctNo', e.target.value)}
+                      placeholder={residentForm.isRegisteredVoter ? '' : 'Requires registered voter'}
+                      style={{ opacity: residentForm.isRegisteredVoter ? 1 : 0.55, cursor: residentForm.isRegisteredVoter ? 'text' : 'not-allowed' }}
                     />
                   </div>
                   <div className="fg">
@@ -724,9 +771,11 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
                     <input
                       type="text"
                       className="fc"
-                      disabled={isSaving}
+                      disabled={isSaving || residentForm.isVotingLocally}
                       value={residentForm.votingOtherPlace}
                       onChange={(e) => updateResidentField('votingOtherPlace', e.target.value)}
+                      placeholder={residentForm.isVotingLocally ? 'Not voting elsewhere' : ''}
+                      style={{ opacity: residentForm.isVotingLocally ? 0.55 : 1, cursor: residentForm.isVotingLocally ? 'not-allowed' : 'text' }}
                     />
                   </div>
                 </div>
@@ -777,7 +826,7 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
               </div>
 
               <div className="fg" style={{ marginBottom: '20px' }}>
-                <label className="fl">ADDRESS OUTSIDE IN THIS BARANGAY</label>
+                <label className="fl">Address Outside the Barangay</label>
                 <input
                   type="text"
                   className="fc"
@@ -789,14 +838,16 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
 
               {/* Household Assignment Section */}
               <section style={{ marginBottom: '20px', padding: '16px', background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: '8px' }}>
-                <h3 style={{ margin: '0 0 12px', fontSize: '14px', fontWeight: 800, color: 'var(--text)' }}>F. Household Information</h3>
-                {canCreateHousehold && (
+                {/* Section F lives in its own bordered box, so use the inset
+                    variant to avoid a redundant rule inside the box. */}
+                <SectionHeading number="F" inset>Household Information</SectionHeading>
+                {canCreateHousehold && !noHouseholdsAvailable && (
                   <div role="group" aria-label="Household assignment method" style={{ display: 'flex', gap: '8px', marginBottom: '14px' }}>
                     <button
                       type="button"
                       disabled={isSaving}
-                      className={`btn btn-sm ${householdAssignmentMode === 'existing' ? 'btn-p' : 'btn-g'}`}
-                      aria-pressed={householdAssignmentMode === 'existing'}
+                      className={`btn btn-sm ${!showHouseholdCreate ? 'btn-p' : 'btn-g'}`}
+                      aria-pressed={!showHouseholdCreate}
                       onClick={() => updateHouseholdMode('existing')}
                     >
                       Select Existing
@@ -804,8 +855,8 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
                     <button
                       type="button"
                       disabled={isSaving}
-                      className={`btn btn-sm ${householdAssignmentMode === 'create' ? 'btn-p' : 'btn-g'}`}
-                      aria-pressed={householdAssignmentMode === 'create'}
+                      className={`btn btn-sm ${showHouseholdCreate ? 'btn-p' : 'btn-g'}`}
+                      aria-pressed={showHouseholdCreate}
                       onClick={() => updateHouseholdMode('create')}
                     >
                       Create New Household
@@ -813,10 +864,26 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
                   </div>
                 )}
 
-                {householdAssignmentMode === 'create' && canCreateHousehold ? (
+                {noHouseholdsAvailable && canCreateHousehold && (
+                  <div
+                    style={{
+                      marginBottom: '14px',
+                      padding: '10px 12px',
+                      borderRadius: '6px',
+                      background: 'var(--surface2)',
+                      border: '1px solid var(--border)',
+                      fontSize: '12px',
+                      color: 'var(--muted)',
+                    }}
+                  >
+                    No existing households found. A new household will be created automatically.
+                  </div>
+                )}
+
+                {showHouseholdCreate ? (
                   <div>
                     <div className="fg">
-                      <label className="fl" htmlFor="resident-household-head">Head of Family *</label>
+                      <label className="fl" htmlFor="resident-household-head">Household Name / Head of Household *</label>
                       <input
                         id="resident-household-head"
                         className="fc"
@@ -839,21 +906,34 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
                         placeholder="House number, street, or zone"
                       />
                     </div>
-                    <div className="fg" style={{ marginTop: '12px' }}>
-                      <label className="fl" htmlFor="resident-household-purok">Purok *</label>
-                      <select
-                        id="resident-household-purok"
-                        className="fc"
-                        required
-                        disabled={isSaving}
-                        value={householdForm.purok}
-                        onChange={(e) => setHouseholdForm((current) => ({ ...current, purok: e.target.value }))}
-                      >
-                        <option value="">Select Purok</option>
-                        {[1, 2, 3, 4, 5, 6].map((purokNumber) => (
-                          <option key={purokNumber} value={`Purok ${purokNumber}`}>Purok {purokNumber}</option>
-                        ))}
-                      </select>
+                    <div className="fg2" style={{ marginTop: '12px' }}>
+                      <div className="fg">
+                        <label className="fl" htmlFor="resident-household-purok">Purok / Zone *</label>
+                        <select
+                          id="resident-household-purok"
+                          className="fc"
+                          required
+                          disabled={isSaving}
+                          value={householdForm.purok}
+                          onChange={(e) => setHouseholdForm((current) => ({ ...current, purok: e.target.value }))}
+                        >
+                          <option value="">Select Purok</option>
+                          {[1, 2, 3, 4, 5, 6].map((purokNumber) => (
+                            <option key={purokNumber} value={`Purok ${purokNumber}`}>Purok {purokNumber}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="fg">
+                        <label className="fl" htmlFor="resident-household-notes">Notes (Optional)</label>
+                        <input
+                          id="resident-household-notes"
+                          className="fc"
+                          disabled={isSaving}
+                          value={householdForm.notes || ''}
+                          onChange={(e) => setHouseholdForm((current) => ({ ...current, notes: e.target.value }))}
+                          placeholder="Optional remarks about this household"
+                        />
+                      </div>
                     </div>
                   </div>
                 ) : (
@@ -894,7 +974,7 @@ const effectiveHouseholds = households.length > 0 ? households : localHouseholds
 
                 {/* STATUS BOX - ISA LANG */}
                 <div style={{ marginTop: '12px', padding: '10px 12px', borderRadius: '6px', background: 'var(--surface)', border: '1px solid var(--border)', fontSize: '12px', color: 'var(--muted)' }}>
-                  {householdAssignmentMode === 'create' && canCreateHousehold ? (
+                  {showHouseholdCreate ? (
                     <>A new Household ID will be generated and linked to this resident when saved.</>
                   ) : residentForm.householdNo && residentForm.householdNo !== '—' ? (
                     <>Household <strong style={{ color: 'var(--text)' }}>{residentForm.householdNo}</strong> will be linked to this resident.</>

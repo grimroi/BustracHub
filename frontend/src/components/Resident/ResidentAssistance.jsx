@@ -1,5 +1,8 @@
 export default function ResidentAssistance({ myAssistance }) {
   const safeAssistance = Array.isArray(myAssistance) ? myAssistance : [];
+  const receivedCount = safeAssistance.filter((a) =>
+    (a.status || '').toLowerCase() === 'received'
+  ).length;
   const pendingCount = safeAssistance.filter((a) =>
     ['pending', 'scheduled'].includes((a.status || '').toLowerCase())
   ).length;
@@ -21,10 +24,10 @@ export default function ResidentAssistance({ myAssistance }) {
         {/* Total Received */}
         <div style={{ padding: '14px 10px', textAlign: 'center', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 12 }}>
           <div style={{ color: 'var(--text)', fontSize: 22, fontWeight: 800, lineHeight: 1 }}>
-            {safeAssistance.length}
+            {receivedCount}
           </div>
           <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--muted)', textTransform: 'uppercase', letterSpacing: '0.4px', marginTop: 6 }}>
-            Total Received
+            Received
           </div>
         </div>
 
@@ -71,25 +74,26 @@ export default function ResidentAssistance({ myAssistance }) {
                 <div key={item._id || item.refNumber} style={{
                   background: 'var(--surface2, rgba(255,255,255,0.02))', padding: 14, borderRadius: 10, border: '1px solid var(--border)',
                 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6 }}>
-                    <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--muted)', fontWeight: 700 }}>
-                      {item.refNumber || item._id}
-                    </span>
-                    <span style={{
-                      fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.4px',
-                      padding: '2px 8px', borderRadius: 6,
-                      color: isCompleted ? 'var(--green)' : 'var(--amber)',
-                      background: isCompleted ? 'var(--green-bg)' : 'var(--amber-bg)',
-                      border: `1px solid ${isCompleted ? 'var(--green-border)' : 'var(--amber-border)'}`,
-                    }}>
-                      {item.status || 'Pending'}
-                    </span>
-                  </div>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 6, gap: 8 }}>
+                      <span style={{ fontSize: 11, fontFamily: 'var(--mono)', color: 'var(--muted)', fontWeight: 700, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1 }}>
+                        {item.refNumber || item._id}
+                      </span>
+                      <span style={{
+                        fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.4px',
+                        padding: '2px 8px', borderRadius: 6,
+                        color: isCompleted ? 'var(--green)' : 'var(--amber)',
+                        background: isCompleted ? 'var(--green-bg)' : 'var(--amber-bg)',
+                        border: `1px solid ${isCompleted ? 'var(--green-border)' : 'var(--amber-border)'}`,
+                        flexShrink: 0, whiteSpace: 'nowrap'
+                      }}>
+                        {item.status || 'Pending'}
+                      </span>
+                    </div>
                   <div style={{ fontWeight: 700, fontSize: 14, color: 'var(--text)', marginBottom: 4 }}>
-                    {item.programName || item.program || item.aidType || 'Assistance Program'}
+                    {item.programName || item.program || item.programId || 'Assistance Program'}
                   </div>
                   <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 10, lineHeight: 1.4 }}>
-                    {item.description || item.details || item.notes || 'No additional details.'}
+                    {item.details || item.remarks || item.description || 'No additional details.'}
                   </div>
                   <div style={{
                     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 6, fontSize: 11,
@@ -98,8 +102,12 @@ export default function ResidentAssistance({ myAssistance }) {
                     <div>
                       Date:{" "}
                       <strong style={{ color: 'var(--text)', fontWeight: 600 }}>
-                        {item.dateDistributed || item.date || item.timestamp
-                          ? new Date(item.dateDistributed || item.date || item.timestamp).toLocaleDateString('en-US', {
+                        {item.date || item.dateGiven || item.distributedAt
+                          ? new Date(item.date || item.dateGiven || item.distributedAt).toLocaleDateString('en-US', {
+                              month: 'short', day: 'numeric', year: 'numeric',
+                            })
+                          : item.dateDistributed || item.timestamp
+                          ? new Date(item.dateDistributed || item.timestamp).toLocaleDateString('en-US', {
                               month: 'short', day: 'numeric', year: 'numeric',
                             })
                           : 'N/A'}
@@ -108,7 +116,10 @@ export default function ResidentAssistance({ myAssistance }) {
                     <div>
                       Amount/Item:{" "}
                       <strong style={{ color: 'var(--text)', fontWeight: 600 }}>
-                        {item.amount || item.item || item.quantity || 'N/A'}
+                        {item.itemName || item.aid || item.item
+                          ? item.itemName || item.aid || item.item
+                          : item.amount || item.quantity || 'N/A'}
+                        {item.itemName || item.aid || item.item ? (item.amount ? ` (${item.amount})` : item.quantity ? ` (${item.quantity})` : '') : ''}
                       </strong>
                     </div>
                   </div>

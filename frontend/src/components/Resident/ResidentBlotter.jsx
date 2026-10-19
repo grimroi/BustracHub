@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import Swal from 'sweetalert2';
-import { getBlotterStepProgress, formatLocationDisplay } from '../../utils/residentUtils';
+import { getBlotterStepProgress, formatLocationDisplay, formatDateOnly } from '../../utils/residentUtils';
 import { validateBlotterForm } from '../../utils/blotterSubmitGuard';
+import SyncBadge from '../SyncBadge';
 
 
 
@@ -36,6 +37,17 @@ export default function ResidentBlotter({
   });
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isFormOpen, setIsFormOpen] = useState(!myBlotters || myBlotters.length === 0);
+
+  // Defense-in-depth: the blotter list must only ever show incident records.
+  // Drop certificate documents (CERT-RES-*) even if a mixed dataset slips through.
+  // Archived blotter records are hidden from residents under the system
+  // soft-archive policy (a record is active while isArchived !== true).
+  const blotterRecords = (myBlotters || []).filter((item) => {
+    const ref = String(item?.refNumber || item?.trackingNo || item?.caseNo || item?._id || '').toUpperCase();
+    if (ref.startsWith('CERT')) return false;
+    if (item?.isArchived === true) return false;
+    return true;
+  });
 
   const updateForm = (field) => (e) => {
     setBlotterForm((p) => ({ ...p, [field]: e.target.value }));
@@ -335,11 +347,11 @@ export default function ResidentBlotter({
       }}>
         <span>My Submitted Reports</span>
         <span style={{ fontSize: 10, fontWeight: 700, padding: '2px 8px', borderRadius: 12, background: 'var(--surface)', border: '1px solid var(--border)', color: 'var(--text)' }}>
-          {myBlotters?.length || 0} Total
+          {blotterRecords.length} Total
         </span>
       </div>
 
-      {!myBlotters || myBlotters.length === 0 ? (
+      {blotterRecords.length === 0 ? (
           <div style={{ 
             textAlign: 'center', 
             padding: '48px 16px', 
@@ -357,7 +369,7 @@ export default function ResidentBlotter({
           </div>
         ) : (
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-          {myBlotters.map((item) => {
+          {blotterRecords.map((item) => {
             const blotterStep = getBlotterStepProgress(item.status);
             const currentUserName = String(loggedInUser?.fullName || '').toLowerCase().trim();
             const complainantName = String(item.complainant || item.complainantName || '').toLowerCase().trim();
@@ -367,7 +379,10 @@ export default function ResidentBlotter({
             const isMediation = item.status?.toLowerCase().includes('summon') || item.status?.toLowerCase().includes('mediation');
             const isInvestigation = item.status?.toLowerCase().includes('investigation');
             const displayRefNumber = item.trackingNo || item.caseNo || item.refNumber || item._id || 'N/A';
-            const displayTitle = item.subject || item.incidentType || item.title || 'Incident Complaint';
+            const displayTitle = item.subject || item.incidentType || item.title || 'Untitled Incident';
+            const displayStatus = item.status || 'Filed';
+            const incidentDateRaw = item.incidentDate || item.dateFiled;
+            const incidentDateDisplay = incidentDateRaw ? formatDateOnly(incidentDateRaw) : 'Date not recorded';
             const historyList = Array.isArray(item.history) ? item.history : [];
             const latestHistory = historyList.length > 0 ? historyList[historyList.length - 1] : null;
 
@@ -390,7 +405,7 @@ export default function ResidentBlotter({
                     background: isResolved ? 'rgba(16, 185, 129, 0.15)' : isMediation ? 'rgba(168, 85, 247, 0.15)' : isInvestigation ? 'rgba(59, 130, 246, 0.15)' : 'var(--surface2, rgba(255,255,255,0.05))',
                     border: `1px solid ${isResolved ? 'rgba(16, 185, 129, 0.3)' : isMediation ? 'rgba(168, 85, 247, 0.3)' : isInvestigation ? 'rgba(59, 130, 246, 0.3)' : 'var(--border)'}`,
                   }}>
-                    {item.status || 'Pending'}
+                    {displayStatus}
                   </span>
                 </div>
 
@@ -472,21 +487,9 @@ export default function ResidentBlotter({
                 }}>
                   <span>
                     Incident Date:{" "}
-                    <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{item.incidentDate || item.dateFiled || 'N/A'}</strong>
+                    <strong style={{ color: 'var(--text)', fontWeight: 600 }}>{incidentDateDisplay}</strong>
                   </span>
-                  <span style={{ 
-                    fontSize: 9, 
-                    fontWeight: 700, 
-                    padding: '2px 6px', 
-                    borderRadius: 4, 
-                    background: (item.synced || item.isSynced) ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)', 
-                    color: (item.synced || item.isSynced) ? '#10b981' : '#f59e0b', 
-                    border: `1px solid ${(item.synced || item.isSynced) ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
-                    textTransform: 'uppercase',
-                    letterSpacing: '0.5px'
-                  }}>
-                    {(item.synced || item.isSynced) ? '✓ Synced' : '⏳ Local Log'}
-                  </span>
+                  <SyncBadge doc={item} />
                 </div>
               </div>
             );

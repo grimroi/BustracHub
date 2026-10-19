@@ -1,18 +1,7 @@
-import { useMemo, useState } from 'react';
-import Swal from 'sweetalert2';
+import { useEffect, useMemo, useState } from 'react';
+import SyncBadge from '../SyncBadge';
 
-const showToast = (type, message) => {
-  if (typeof Swal !== 'undefined' && Swal.fire) {
-    Swal.fire({
-      icon: type === 'error' ? 'error' : type === 'success' ? 'success' : 'info',
-      toast: true,
-      position: 'top-end',
-      timer: 2500,
-      showConfirmButton: false,
-      title: message,
-    });
-  }
-};
+const PAGE_SIZE = 5;
 
 // Default Certificate Requirements List
 const DEFAULT_CERTIFICATE_REQUIREMENTS = {
@@ -53,9 +42,18 @@ export default function ResidentCertificates({
   filterTab,
   setFilterTab,
   handleCancelRequest,
-  onRefresh,
 }) {
-  const [refreshing, setRefreshing] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+  const [expandedIds, setExpandedIds] = useState([]);
+
+  const toggleExpanded = (id) => {
+    setExpandedIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  };
+
+  // Reset pagination whenever the active filter tab changes.
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [filterTab]);
 
   const selectedType = (
   certForm?.certType || 
@@ -88,29 +86,16 @@ const handleCertTypeChange = (e) => {
     });
   }, [myRequests, filterTab]);
 
+  const visibleRequests = useMemo(
+    () => filteredRequests.slice(0, visibleCount),
+    [filteredRequests, visibleCount]
+  );
+
   const handleSubmit = async (e) => {
     e.preventDefault();
     const success = await submitCert(e);
     if (success) {
       setShowCertForm(false);
-    }
-  };
-  
-    const handleRefreshRequests = async () => {
-    if (refreshing) return;
-    setRefreshing(true);
-    try {
-      // The parent owns myRequests state and keeps it live via the PouchDB
-      // changes feed, so ask it to reload rather than querying locally.
-      if (typeof onRefresh === 'function') {
-        await onRefresh();
-      }
-      showToast('success', 'Requests refreshed!');
-    } catch (err) {
-      console.error("Refresh failed", err);
-      showToast('error', 'Failed to refresh. Please check your connection.');
-    } finally {
-      setRefreshing(false);
     }
   };
 
@@ -125,12 +110,12 @@ const handleCertTypeChange = (e) => {
         <div className="page-sub">Request and track your barangay certificates</div>
       </div>
 
-      {/* Request & Refresh Buttons */}
+      {/* Request Certificate Button */}
       {!showCertForm && (
-        <div style={{ display: 'flex', gap: 8, marginBottom: 18, alignItems: 'center' }}>
+        <div style={{ marginBottom: 18 }}>
           <button
             className="btn btn-primary"
-            style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
+            style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8 }}
             onClick={() => setShowCertForm(true)}
           >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -138,21 +123,6 @@ const handleCertTypeChange = (e) => {
               <line x1="5" y1="12" x2="19" y2="12" />
             </svg>
             <span>Request a Certificate</span>
-          </button>
-
-          <button
-            type="button"
-            className="btn btn-g"
-            onClick={handleRefreshRequests}
-            disabled={refreshing}
-            aria-label="Refresh certificate status"
-            title="Refresh status"
-            style={{ flexShrink: 0, width: 44, height: 44, padding: 0, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ animation: refreshing ? 'spin 0.9s linear infinite' : 'none' }}>
-              <polyline points="23 4 23 10 17 10" />
-              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-            </svg>
           </button>
         </div>
       )}
@@ -276,7 +246,7 @@ const handleCertTypeChange = (e) => {
                 <line x1="12" y1="16" x2="12.01" y2="16" />
               </svg>
               <span>
-                <strong>Payment Notice:</strong> Ang processing fee (e.g., ₱50.00) ay **babayaran sa Barangay Hall** lamang kapag na-approve na ang iyong request. Huwag magpadala ng pera online.
+                <strong>Payment Notice:</strong> May processing fee ₱50.00 na babayaran sa Barangay Hall kapag na-approve na ang iyong request. Huwag magpadala ng pera online.
               </span>
             </div>
 
@@ -328,7 +298,8 @@ const handleCertTypeChange = (e) => {
 
       {/* Request Cards */}
       {filteredRequests.length ? (
-        filteredRequests.map((request) => {
+        <>
+        {visibleRequests.map((request) => {
           const stepCount = Number(request.step || 1);
           const statusLabel = request.status || 'Pending';
           const isIssued = statusLabel === 'Issued' || stepCount >= 5;
@@ -337,6 +308,7 @@ const handleCertTypeChange = (e) => {
           const submittedDate = request.timestamp
             ? new Date(request.timestamp).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
             : 'Recently added';
+          const isExpanded = expandedIds.includes(request._id);
 
           return (
             <div className="card" key={request._id} style={{ padding: 18, marginBottom: 14, borderRadius: 14, background: 'var(--surface)', border: '1px solid var(--border)' }}>
@@ -361,11 +333,8 @@ const handleCertTypeChange = (e) => {
               {/* Card Header */}
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 10, marginBottom: 10 }}>
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', marginBottom: 4, lineHeight: '1.3', whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text)', lineHeight: '1.3', whiteSpace: 'normal', wordBreak: 'break-word' }}>
                     {request.certType}
-                  </div>
-                  <div style={{ fontSize: 12, color: 'var(--muted)', fontStyle: request.certPurpose ? 'normal' : 'italic', lineHeight: '1.4', whiteSpace: 'normal', wordBreak: 'break-word' }}>
-                    {request.certPurpose || 'No purpose specification declaration'}
                   </div>
                 </div>
                 <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: 6, flexShrink: 0 }}>
@@ -400,7 +369,32 @@ const handleCertTypeChange = (e) => {
                 </div>
               </div>
 
-              <div style={{ marginTop: '16px', paddingTop: '16px', borderTop: '1px dashed var(--border)' }}>
+              {/* Track Status toggle — timeline stays collapsed by default */}
+              <button
+                type="button"
+                onClick={() => toggleExpanded(request._id)}
+                aria-expanded={isExpanded}
+                aria-controls={`cert-timeline-${request._id}`}
+                style={{
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6,
+                  width: '100%', padding: '8px 12px', borderRadius: 8,
+                  background: 'var(--surface2)', border: '1px solid var(--border)',
+                  color: 'var(--primary)', fontSize: 12, fontWeight: 700, cursor: 'pointer',
+                }}
+              >
+                {isExpanded ? 'Hide Tracking' : 'Track Status'}
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', transition: 'transform 0.2s ease' }}>
+                  <polyline points="6 9 12 15 18 9" />
+                </svg>
+              </button>
+
+              {isExpanded && (
+              <div id={`cert-timeline-${request._id}`} style={{ marginTop: '12px', paddingTop: '16px', borderTop: '1px dashed var(--border)' }}>
+              {request.certPurpose ? (
+                <div style={{ fontSize: 12, color: 'var(--muted)', marginBottom: 14, lineHeight: 1.4, whiteSpace: 'normal', wordBreak: 'break-word' }}>
+                  <strong style={{ color: 'var(--text)' }}>Purpose: </strong>{request.certPurpose}
+                </div>
+              ) : null}
               <div
                 style={{
                   fontSize: '11px',
@@ -540,9 +534,24 @@ const handleCertTypeChange = (e) => {
                 })}
               </div>
             </div>
+              )}
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 8 }}>
+                <SyncBadge doc={request} />
+              </div>
             </div>
           );
-        })
+        })}
+        {filteredRequests.length > visibleCount && (
+          <button
+            type="button"
+            className="btn btn-outline"
+            style={{ width: '100%', marginTop: 4, justifyContent: 'center' }}
+            onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+          >
+            Load More ({filteredRequests.length - visibleCount} remaining)
+          </button>
+        )}
+        </>
       ) : (
         /* Empty State */
         <div className="card" style={{ textAlign: 'center', padding: '36px 20px', border: '2px dashed var(--border)', background: 'transparent', borderRadius: 14 }}>

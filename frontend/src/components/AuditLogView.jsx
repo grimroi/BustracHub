@@ -104,11 +104,25 @@ export default function AuditLogView() {
 
   const getActionMeta = (action = '') => {
     const act = action.toUpperCase();
-    if (act.includes('CREATE')) return { bg: 'rgba(16, 185, 129, 0.15)', bClass: 'badge-success', badge: 'CREATE', icon: 'create' };
-    if (act.includes('UPDATE')) return { bg: 'rgba(59, 130, 246, 0.15)', bClass: 'badge-info', badge: 'UPDATE', icon: 'update' };
-    if (act.includes('LOGIN')) return { bg: 'rgba(139, 92, 246, 0.15)', bClass: 'badge-purple', badge: 'LOGIN', icon: 'login' };
-    if (act.includes('SUBMIT') || act.includes('RESOLVE') || act.includes('RELEASE')) return { bg: 'rgba(245, 158, 11, 0.15)', bClass: 'badge-warning', badge: 'ACTION', icon: 'action' };
-    return { bg: 'rgba(107, 114, 128, 0.15)', bClass: 'badge-secondary', badge: action, icon: 'default' };
+    if (act.includes('LOGIN')) return { bg: 'rgba(59, 130, 246, 0.15)', bClass: 'badge-info', badge: 'Online', icon: 'login' };
+    if (act.includes('CREATE')) return { bg: 'rgba(16, 185, 129, 0.15)', bClass: 'badge-success', badge: 'New', icon: 'create' };
+    if (act.includes('UPDATE')) return { bg: 'rgba(245, 158, 11, 0.15)', bClass: 'badge-warning', badge: 'Updated', icon: 'update' };
+    if (act.includes('RESOLVE')) return { bg: 'rgba(16, 185, 129, 0.15)', bClass: 'badge-success', badge: 'Resolved', icon: 'action' };
+    if (act.includes('DELETE') || act.includes('ARCHIVE')) return { bg: 'rgba(239, 68, 68, 0.15)', bClass: 'badge-danger', badge: 'Archived', icon: 'default' };
+    return { bg: 'rgba(107, 114, 128, 0.15)', bClass: 'badge-secondary', badge: action || 'ACTION', icon: 'default' };
+  };
+
+  const formatRecordId = (recordId = '') => {
+    const id = String(recordId || '');
+    if (!id) return '—';
+    if (id.includes('announcement_') || id.includes('_')) {
+      const parts = id.split('_');
+      const tail = parts[parts.length - 1];
+      if (/^\d+$/.test(tail) && tail.length > 6) return 'SYS-REF-' + tail.slice(-3).padStart(3, '0');
+      if (/^RES-|^BLT-|^PROG-|^CERT-|^EVAC-/.test(id)) return id;
+      return 'SYS-REF-001';
+    }
+    return id;
   };
 
   return (
@@ -195,7 +209,8 @@ export default function AuditLogView() {
         ) : (
           filteredAuditLogs.map((log) => {
             const meta = getActionMeta(log.action);
-            const userDisplay = log.user || (log.actor ? `${log.actor.username} (${log.actor.role})` : 'System');
+            const userRole = log.actorRole || log.role || log.userRole || (log.actorDetails && log.actorDetails.role) || (log.actor && log.actor.role) || 'System';
+            const userDisplay = `${log.user || (log.actor ? log.actor.username : 'System')} (${userRole})`;
             return (
               <div key={log._id} className="al-row">
                 <div className="al-ico" style={{ background: meta.bg }}>
@@ -205,7 +220,7 @@ export default function AuditLogView() {
                   <div className="al-a">
                     {log.action} {log.module ? ` — ${log.module}` : ''}
                     {log.recordId && (
-                      <> {' · '} <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', opacity: 0.9 }}>{log.recordId}</span> </>
+                      <> {' · '} <span style={{ fontFamily: 'var(--mono)', fontSize: '11px', opacity: 0.9 }}>{formatRecordId(log.recordId)}</span> </>
                     )}
                   </div>
                   <div className="al-d" style={{ wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: '1.4', marginTop: '4px', fontSize: '12px', color: 'var(--muted)' }}>

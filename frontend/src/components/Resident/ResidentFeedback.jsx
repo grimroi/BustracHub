@@ -1,6 +1,6 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Swal from 'sweetalert2';
-import { getFeedbackStep, formatResidentDate } from '../../utils/residentUtils';
+import { getFeedbackStep, formatDateOnly } from '../../utils/residentUtils';
 
 const showToast = (type, message) => {
   if (typeof Swal !== 'undefined' && Swal.fire) {
@@ -17,6 +17,8 @@ const showToast = (type, message) => {
 
 const feedbackSteps = ['Submitted', 'Under Review', 'Responded', 'Resolved'];
 
+const PAGE_SIZE = 5;
+
 export default function ResidentFeedback({
   myFeedbacks,
   submitFeedback,
@@ -27,6 +29,13 @@ export default function ResidentFeedback({
   const [feedbackMessage, setFeedbackMessage] = useState('');
   const [expandedFeedbackId, setExpandedFeedbackId] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
+
+  useEffect(() => {
+    setVisibleCount(PAGE_SIZE);
+  }, [myFeedbacks?.length]);
+
+  const visibleFeedbacks = myFeedbacks ? myFeedbacks.slice(0, visibleCount) : [];
 
   const toggleFeedback = (id) => {
     setExpandedFeedbackId((prev) => (prev === id ? null : id));
@@ -197,8 +206,9 @@ export default function ResidentFeedback({
           <div style={{ fontSize: 13, color: 'var(--muted)' }}>You have not submitted any feedback or concerns yet.</div>
         </div>
       ) : (
-        <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
-          {myFeedbacks.map((item, idx, arr) => {
+        <>
+          <div style={{ background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 14, overflow: 'hidden' }}>
+            {visibleFeedbacks.map((item, idx, arr) => {
             const docId = item._id || item.id;
             const isExpanded = expandedFeedbackId === docId;
             const fbStep = getFeedbackStep(item.status);
@@ -224,7 +234,7 @@ export default function ResidentFeedback({
                 </div>
                 <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--text)', marginBottom: 2 }}>{item.subject}</div>
                 <div style={{ fontSize: 11, color: 'var(--muted)', marginBottom: 10 }}>
-                  {item.feedbackType || item.type || 'General'} · {item.timestamp ? new Date(item.timestamp).toLocaleDateString() : 'Just now'}
+                  {item.feedbackType || item.type || 'General'} · {item.timestamp ? formatDateOnly(item.timestamp) : 'Just now'}
                 </div>
                 <button
                   type="button"
@@ -280,7 +290,7 @@ export default function ResidentFeedback({
                           Response from {item.handledBy || 'Barangay Staff'}
                         </div>
                         <div style={{ fontSize: 13, color: 'var(--text)', lineHeight: 1.5 }}>{item.response}</div>
-                        {item.dateResolved && <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6 }}>Resolved {item.dateResolved}</div>}
+                        {item.dateResolved && <div style={{ fontSize: 10, color: 'var(--muted)', marginTop: 6 }}>Resolved {formatDateOnly(item.dateResolved)}</div>}
                       </div>
                     )}
                   </div>
@@ -288,7 +298,18 @@ export default function ResidentFeedback({
               </div>
             );
           })}
-        </div>
+          </div>
+          {myFeedbacks.length > visibleCount && (
+            <button
+              type="button"
+              className="btn btn-outline"
+              style={{ width: '100%', marginTop: 10, justifyContent: 'center' }}
+              onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+            >
+              Load More ({myFeedbacks.length - visibleCount} remaining)
+            </button>
+          )}
+        </>
       )}
     </div>
   );

@@ -8,6 +8,7 @@ export const formatPurok = (purok) => {
 };
 
 export default function ResidentCombobox({
+  id,
   db,
   residents = [],
   value,
@@ -119,6 +120,7 @@ export default function ResidentCombobox({
   return (
     <div className="res-combo" ref={wrapRef} style={{ position: 'relative', width: '100%' }}>
       <input
+        id={id}
         type="text"
         className="fc"
         value={query}

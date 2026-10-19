@@ -126,7 +126,14 @@ const [isVerifying, setIsVerifying] = useState(false);
   }
 }, []);
 
-  useEffect(() => {
+// Initial load of the issued/released history. Running it on mount also clears
+// the `loading` flag, so the "Ready for Issuance" panel falls through to its
+// empty state when there is nothing approved instead of showing the loader.
+useEffect(() => {
+  loadIssuedCertificates();
+}, [loadIssuedCertificates]);
+
+useEffect(() => {
   if (!db || typeof db.allDocs !== 'function') return;
   let isMounted = true;
 
@@ -326,17 +333,25 @@ useEffect(() => {
     if (c?._id) uniqueMap.set(c._id, c);
   });
 
-  return Array.from(uniqueMap.values()).filter((c) => {
-    const step = Number(c.step);
-    const status = String(c.status || '').trim();
+  const sortTs = (c) => {
+    const raw = c.issuedAt || c.updatedAt || c.createdAt;
+    const t = raw ? new Date(raw).getTime() : 0;
+    return Number.isFinite(t) ? t : 0;
+  };
 
-    return (
-      step === 5 ||
-      step === 6 ||
-      status === 'Issued' ||
-      status === 'Released'
-    );
-  });
+  return Array.from(uniqueMap.values())
+    .filter((c) => {
+      const step = Number(c.step);
+      const status = String(c.status || '').trim();
+
+      return (
+        step === 5 ||
+        step === 6 ||
+        status === 'Issued' ||
+        status === 'Released'
+      );
+    })
+    .sort((a, b) => sortTs(b) - sortTs(a));
 }, [dbIssuedCertificates, issuedCertificates]);
 
   const [issuedSearchQuery, setIssuedSearchQuery] = useState('');
@@ -593,7 +608,7 @@ const [filterIssuedType] = useState('All');
     <div className="cert-print-screen" style={{ display: 'flex', flexDirection: 'column', gap: '20px', height: 'calc(100vh - 70px)' }}>
 
       {/* MAIN PANEL: Approved Certificates Queue */}
-      <div className="cert-section-card" style={{ flex: '1 1 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
+      <div className="cert-section-card" style={{ flex: filteredApprovedCertificates.length > 0 ? '1 1 0' : '0 0 auto', display: 'flex', flexDirection: 'column', overflow: 'hidden', minHeight: 0 }}>
           <div className="cert-section-header">
             <div className="cert-section-title" style={{ fontSize: '15px' }}>
               Ready for Issuance
@@ -624,7 +639,20 @@ const [filterIssuedType] = useState('All');
                 {loading && filteredApprovedCertificates.length === 0 ? (
                   <tr><td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)' }}>Loading approved certificates...</td></tr>
                 ) : filteredApprovedCertificates.length === 0 ? (
-                  <tr><td colSpan="3" style={{ padding: '20px', textAlign: 'center', color: 'var(--muted)' }}>No approved certificates waiting.</td></tr>
+                  <tr>
+                    <td colSpan="3" style={{ padding: 0 }}>
+                      <div className="cert-empty-state">
+                        <svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                          <polyline points="14 2 14 8 20 8" />
+                          <line x1="9" y1="13" x2="15" y2="13" />
+                          <line x1="9" y1="17" x2="13" y2="17" />
+                        </svg>
+                        <div className="cert-empty-state__title">No approved certificates waiting</div>
+                        <div className="cert-empty-state__hint">Approved requests will appear here, ready to issue and print.</div>
+                      </div>
+                    </td>
+                  </tr>
                 ) : (
                   filteredApprovedCertificates.map((cert) => {
                     const isSelected = String(selectedCertificate?._id) === String(cert._id);
@@ -643,8 +671,8 @@ const [filterIssuedType] = useState('All');
                           <div style={{ fontWeight: 600, fontSize: '13px' }}>{getApplicantName(cert)}</div>
                           <div style={{ fontSize: '11px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>{cert._id}</div>
                         </td>
-                        <td style={{ padding: '12px', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }} title={cert.certificateType}>
-                          {cert.certificateType || '—'}
+                        <td style={{ padding: '12px', fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '160px' }} title={cert.certificateType || 'Certificate (generic)'}>
+                          {cert.certificateType || 'Certificate (generic)'}
                         </td>
                         <td style={{ padding: '12px', textAlign: 'right' }}>
                           <button
@@ -672,7 +700,7 @@ const [filterIssuedType] = useState('All');
 <div 
   className="cert-section-card" 
   style={{ 
-    flex: '0 0 35%',
+    flex: '1 1 0',
     display: 'flex', 
     flexDirection: 'column', 
     overflow: 'hidden', 
@@ -850,9 +878,9 @@ const [filterIssuedType] = useState('All');
                     textOverflow: 'ellipsis', 
                     whiteSpace: 'nowrap',
                   }} 
-                  title={cert.certificateType || '—'}
+                  title={cert.certificateType || 'Certificate (generic)'}
                 >
-                  {cert.certificateType || '—'}
+                  {cert.certificateType || 'Certificate (generic)'}
                 </td>
 
                 {/* Status */}
@@ -1033,23 +1061,23 @@ const [filterIssuedType] = useState('All');
             </div>
 
             {/* ── Middle section: live document preview + issuance details ── */}
-            <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', padding: '20px 24px', display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start' }}>
+            <div className="cert-issuance-body">
 
               {/* Live certificate preview */}
-              <div style={{ flex: '1 1 520px', minWidth: 0 }}>
+              <div className="cert-document-preview">
                 <div className="fp-t accent" style={{ marginBottom: 12 }}>Document Preview</div>
-                <div ref={previewPaneRef} style={{ background: 'var(--surface2)', border: '1px solid var(--border)', borderRadius: 10, padding: 16, overflow: 'auto', maxHeight: '62vh' }}>
+                <div className="cert-document-preview__pane" ref={previewPaneRef}>
                   <div style={{ zoom: previewZoom }}>
                     {renderPreviewTemplate()}
                   </div>
                 </div>
-                <div style={{ fontSize: 11, color: 'var(--muted)', marginTop: 8, textAlign: 'center' }}>
+                <div className="cert-document-preview__caption">
                   Live preview — updates as you edit the details.
                 </div>
               </div>
 
               {/* Receipt & CTC details */}
-              <div style={{ flex: '1 1 340px', minWidth: 0, display: 'flex', flexDirection: 'column', gap: 16 }}>
+              <div className="cert-receipt-details">
                 <div className="fp cert-panel">
                   <div className="fp-t accent">🧾 Receipt Details</div>
                   <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>

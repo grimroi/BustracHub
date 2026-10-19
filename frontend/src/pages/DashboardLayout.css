@@ -9,6 +9,9 @@
   --text: #e8ecf4;
   --muted: #7b83a0;
   --hint: #4a5168;
+  --text-secondary: #9ca3af;
+  --track: rgba(255, 255, 255, 0.05);
+  --accent-border: rgba(79, 142, 247, 0.3);
   --accent: #4f8ef7;
   --accent2: #3a7ae8;
   --accent-bg: rgba(79, 142, 247, 0.1);
@@ -58,6 +61,9 @@ html.light .dashboard-shell-container {
   --text: #1f2937;
   --muted: #6b7280;
   --hint: #9ca3af;
+  --text-secondary: #64748b;
+  --track: rgba(0, 0, 0, 0.06);
+  --accent-border: rgba(59, 111, 217, 0.3);
   --accent: #3b6fd9;
   --accent2: #2563eb;
   --accent-bg: rgba(59, 111, 217, 0.08);
@@ -404,6 +410,8 @@ html[data-theme="light"] .dashboard-shell-container .sidebar {
 .dashboard-shell-container .sb-nav {
   flex: 1; padding: 12px 0;
   overflow-y: auto; overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border2) transparent;
 }
 .dashboard-shell-container .sb-nav::-webkit-scrollbar { width: 4px; }
 .dashboard-shell-container .sb-nav::-webkit-scrollbar-thumb {
@@ -835,6 +843,118 @@ html[data-theme="light"] .dashboard-shell-container .sidebar {
 .dashboard-shell-container tbody tr:hover { background: var(--accent-bg); }
 .dashboard-shell-container td {
   padding: 12px 16px; font-size: 12px; color: var(--text);
+}
+
+/* Manage Blotter records table: roomier rows and a bounded Actions column
+   so the View / Summon / Settled / Archive buttons wrap inside the card
+   instead of stretching the table past its right edge. */
+.dashboard-shell-container .blotter-table td {
+  padding: 8px 12px !important;
+  vertical-align: middle;
+  line-height: 1.35;
+}
+.dashboard-shell-container .blotter-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: var(--surface2);
+}
+.dashboard-shell-container .blotter-table th.blotter-actions-head,
+.dashboard-shell-container .blotter-table td.blotter-actions-cell {
+  width: auto;
+  min-width: max-content;
+  white-space: nowrap;
+  text-align: right;
+  vertical-align: middle;
+}
+.dashboard-shell-container .blotter-table .blotter-actions {
+  display: flex !important;
+  flex-direction: row !important;
+  flex-wrap: nowrap !important;
+  gap: 4px !important;
+  align-items: center !important;
+  justify-content: flex-end !important;
+}
+
+@media print {
+  @page { size: Legal; margin: 12mm; }
+
+  /* Force white background and prevent layout cuts */
+  html, body {
+    background: #ffffff !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    height: auto !important;
+    overflow: visible !important;
+  }
+
+  /* The classic "print only this" visibility hack */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* Only the report header and the table are visible */
+  .print-report-header,
+  .print-report-header *,
+  .blotter-table,
+  .blotter-table * {
+    visibility: visible !important;
+  }
+
+  .print-report-header {
+    display: block !important;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    color: #000 !important;
+    background: #fff !important;
+    font-size: 16px !important;
+    font-weight: 700 !important;
+    margin-bottom: 16px !important;
+  }
+
+  .blotter-table {
+    display: table !important;
+    position: absolute;
+    top: 60px;
+    left: 0;
+    width: 100% !important;
+    color: #000 !important;
+    background: #fff !important;
+    border-collapse: collapse !important;
+  }
+
+  .blotter-table thead { display: table-header-group !important; }
+  .blotter-table tbody { display: table-row-group !important; }
+  .blotter-table tr { display: table-row !important; page-break-inside: avoid; }
+  .blotter-table th,
+  .blotter-table td {
+    display: table-cell !important;
+    color: #000 !important;
+    border: 1px solid #000 !important;
+    padding: 6px 8px !important;
+    background: #fff !important;
+  }
+
+  /* Hide action buttons inside the table */
+  .blotter-actions,
+  .blotter-actions-cell,
+  .btn {
+    display: none !important;
+    visibility: hidden !important;
+  }
+}
+.dashboard-shell-container .blotter-table .blotter-actions .btn {
+  flex: 0 0 auto !important;
+  white-space: nowrap !important;
+  padding: 4px 8px !important;
+  font-size: 11px !important;
+  display: inline-flex !important;
+}
+.dashboard-shell-container .blotter-table .blotter-actions .btn {
+  flex: 0 0 auto;
+  white-space: nowrap;
 }
 
 /* ═══ 13. FORMS ═══════════════════════════════════════════════ */
@@ -3944,6 +4064,13 @@ html[data-theme="light"] .cert-modal-body .btn.btn-g:hover {
   margin-bottom: 16px;
 }
 
+/* Compact filter bar specifically on the Manage Blotter Records page */
+.dashboard-shell-container .blotter-manage-screen .filter-bar {
+  gap: 8px;
+  padding: 10px 14px;
+  margin-bottom: 12px;
+}
+
 /* ── Filter cluster (left side) ── */
 .filter-bar__filters {
   display: flex;
@@ -5439,4 +5566,8 @@ html[data-theme="light"] .swal2-popup .swal2-cancel {
   background: #f5f7fa !important;
   color: #1f2937 !important;
   border: 1px solid #d1d9e6 !important;
+}
+/* Keep SweetAlert dialogs above every modal in the portal. */
+.swal2-container {
+  z-index: 100000 !important;
 }
