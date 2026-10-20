@@ -9760,13 +9760,8 @@ useEffect(() => {
     }
   })();
 
-  // The device registry is an administrator-only view.
-  if (role === 'admin') {
-    loadRegisteredDevices().catch(() => {});
-  }
-
   return () => stopAutoBackup();
-}, [role, checkStaffAlerts, checkDeviceRisk, loadRegisteredDevices]);
+}, [role, checkStaffAlerts, checkDeviceRisk]);
 
 // Keep the "unsynced changes" banner visible again as soon as new work is
 // queued after the user dismissed it.
@@ -9851,6 +9846,15 @@ const loadRegisteredDevices = useCallback(async () => {
     setIsDbProcessing(false);
   }
 }, []);
+
+// The device registry is an administrator-only view. Kept in its own
+// effect after `loadRegisteredDevices` is declared, to avoid a
+// temporal-dead-zone reference on first render.
+useEffect(() => {
+  if (role === 'admin') {
+    loadRegisteredDevices().catch(() => {});
+  }
+}, [role, loadRegisteredDevices]);
 
 // ── MANDATORY END-OF-DAY SYNC CHECKPOINT ──
 // The device may not be closed for the day while records are still queued
