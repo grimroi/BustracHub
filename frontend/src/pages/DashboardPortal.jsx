@@ -9644,7 +9644,7 @@ useEffect(() => {
     setPendingCount(state.pending || 0);
     setIsOnline(state.isOnline !== false);
     if (state.lastSyncedAt) {
-      setLastSyncedAt(state.lastSyncedAt);
+      setLastSynced(state.lastSyncedAt);
     }
   });
 
