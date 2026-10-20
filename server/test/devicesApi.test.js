@@ -306,3 +306,134 @@ test('POST /api/devices/heartbeat for a resident account is 403', async () => {
   });
   assert.equal(res.status, 403);
 });
+
+// ── 4. Concurrent heartbeats (read-merge-write race) ───────────────────────
+// A device reports its state on application load, on reconnect and after every
+// replication completion, so two heartbeats for the same device can overlap.
+// Both read the registry document, both merge, both write — and the loser of
+// that race gets a 409 from CouchDB. The handler must recover by re-reading,
+// re-merging and retrying, not by failing the request.
+test('two concurrent heartbeats for the same device both succeed and leave one registry document', async () => {
+  const docs = {};
+
+  // The heartbeat carrying pendingChangeCount 1 always loses the race, so the
+  // outcome is deterministic regardless of which request arrives first.
+  let releaseFirstWrite = null;
+  const firstWriteDone = new Promise((resolve) => { releaseFirstWrite = resolve; });
+
+  const conflictError = () => {
+    const err = new Error('Document update conflict.');
+    err.statusCode = 409;
+    err.name = 'conflict';
+    err.reason = 'Document update conflict.';
+    return err;
+  };
+
+  const racingDb = {
+    get: async (id) => {
+      if (!docs[id]) {
+        const err = new Error('missing');
+        err.statusCode = 404;
+        err.name = 'not_found';
+        throw err;
+      }
+      return { ...docs[id] };
+    },
+    insert: async (doc) => {
+      // The pending=1 heartbeat waits until the pending=2 heartbeat has
+      // written, so the two genuinely contend for the same document.
+      if (doc.pendingChangeCount === 1) {
+        await firstWriteDone;
+      }
+
+      const current = docs[doc._id];
+      // CouchDB rejects a write whose _rev is not the current revision.
+      if (current && current._rev !== doc._rev) throw conflictError();
+
+      const generation = current ? Number(String(current._rev).split('-')[0]) + 1 : 1;
+      const rev = `${generation}-${Math.random().toString(36).slice(2, 8)}`;
+      docs[doc._id] = { ...doc, _rev: rev };
+
+      if (doc.pendingChangeCount === 2) releaseFirstWrite();
+
+      return { ok: true, id: doc._id, rev };
+    },
+    find: async () => ({ docs: Object.values(docs) }),
+  };
+
+  app.set('db', racingDb);
+  try {
+    const [winner, loser] = await Promise.all([
+      request('POST', '/api/devices/heartbeat', {
+        token: adminToken(),
+        body: { deviceId: 'dev_race', label: 'Tablet', pendingChangeCount: 2 },
+      }),
+      request('POST', '/api/devices/heartbeat', {
+        token: adminToken(),
+        body: { deviceId: 'dev_race', label: 'Tablet', pendingChangeCount: 1 },
+      }),
+    ]);
+
+    // Neither request may fail with 500 (or anything else).
+    assert.equal(winner.status, 200);
+    assert.equal(loser.status, 200);
+
+    const winnerJson = await winner.json();
+    const loserJson = await loser.json();
+    assert.equal(winnerJson.success, true);
+    assert.equal(loserJson.success, true);
+
+    // Exactly one registry document survives the race.
+    const registryDocs = Object.values(docs).filter((d) => d.type === 'device_registry');
+    assert.equal(registryDocs.length, 1);
+    assert.equal(registryDocs[0].deviceId, 'dev_race');
+
+    // The write applied LAST wins: the pending=1 heartbeat retried onto the
+    // fresh revision and overwrote the pending=2 value.
+    assert.equal(registryDocs[0].pendingChangeCount, 1);
+
+    // The response of the retried request reports the merged value.
+    assert.equal(loserJson.device.pendingChangeCount, 1);
+  } finally {
+    app.set('db', stubDb);
+  }
+});
+
+test('a genuine (non-409) database error returns 503 and is not retried', async () => {
+  let insertAttempts = 0;
+
+  const failingDb = {
+    get: async () => {
+      const err = new Error('missing');
+      err.statusCode = 404;
+      err.name = 'not_found';
+      throw err;
+    },
+    insert: async () => {
+      insertAttempts += 1;
+      const err = new Error('Database is unavailable.');
+      err.statusCode = 500;
+      throw err;
+    },
+    find: async () => ({ docs: [] }),
+  };
+
+  app.set('db', failingDb);
+  try {
+    const res = await request('POST', '/api/devices/heartbeat', {
+      token: adminToken(),
+      body: { deviceId: 'dev_fail', pendingChangeCount: 1 },
+    });
+
+    assert.equal(res.status, 503);
+    const json = await res.json();
+    assert.equal(json.success, false);
+    // The error is sanitised — no internal detail is echoed to the client.
+    assert.equal(json.error, 'The device registry could not be updated. Please retry.');
+
+    // A non-conflict failure must NOT be retried (no loop).
+    assert.equal(insertAttempts, 1);
+  } finally {
+    app.set('db', stubDb);
+  }
+});

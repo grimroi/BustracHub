@@ -10,6 +10,7 @@ const blotterRoutes = require('./routes/blotterRoutes');
 const { sendBlotterNotification } = require('./services/emailService');
 const { sendResidentSMS } = require('./services/smsService');
 const deviceRegistry = require('./utils/deviceRegistry');
+const { insertWithConflictRetry } = require('./utils/insertWithConflictRetry');
 
 const BCRYPT_PREFIX = '$2';
 const SHA256_HEX_LENGTH = 64;
@@ -1370,22 +1371,31 @@ app.post('/api/devices/heartbeat', authenticate, requireRole('admin', 'staff'), 
     };
 
     const docId = deviceRegistry.deviceRegistryDocId(deviceId);
-    let existing = null;
-    try {
-      existing = await db.get(docId);
-    } catch (err) {
-      // 404 simply means the device is registering for the first time.
-      const status = err?.statusCode || err?.status;
-      if (status !== 404 && status !== 'not_found') throw err;
-      existing = null;
+
+    // Bounded conflict-retry. Heartbeats for the same device legitimately
+    // overlap (application load, reconnect, and every replication
+    // completion), so two writers can read the same revision of the registry
+    // document and race on the write. The loser of that race receives a 409
+    // from CouchDB; re-read, re-merge onto the fresh revision and retry
+    // rather than failing the request.
+    const result = await insertWithConflictRetry({
+      db,
+      docId,
+      buildDoc: (existing) => deviceRegistry.applyHeartbeat(existing, heartbeat),
+    });
+
+    if (!result.ok) {
+      console.error(
+        '[bustrac-server] Device heartbeat failed:',
+        result.error?.message || result.error
+      );
+      return res.status(503).json({
+        success: false,
+        error: 'The device registry could not be updated. Please retry.',
+      });
     }
 
-    const doc = deviceRegistry.applyHeartbeat(existing, heartbeat);
-
-    const written = await db.insert(doc);
-    const saved = written?.ok
-      ? { ...doc, _rev: written.rev }
-      : await db.get(docId);
+    const saved = result.rev ? { ...result.doc, _rev: result.rev } : await db.get(docId);
 
     return res.json({
       success: true,
