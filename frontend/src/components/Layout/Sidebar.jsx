@@ -373,7 +373,22 @@ const Sidebar = React.memo(function Sidebar({
                       </span>
                       <span className="nav-label">Audit Log</span>
                     </button>
-    
+
+                    <button
+                      className={`nav-btn${screen === 'data-protection' ? ' active' : ''}`}
+                      onClick={() => nav('data-protection')}
+                      title={!sidebarOpen ? "Data Protection" : ""}
+                      data-tooltip="Data Protection"
+                    >
+                      <span className="nav-ico">
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                          <path d="M9 12h6" />
+                        </svg>
+                      </span>
+                      <span className="nav-label">Data Protection</span>
+                    </button>
+
                     <button 
                       className={`nav-btn${screen === 'users' ? ' active' : ''}`} 
                       onClick={() => nav('users')}

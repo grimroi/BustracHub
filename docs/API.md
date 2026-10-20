@@ -119,6 +119,88 @@ PouchDB probe. Returns `{ "ok": true, "db_name": "bustrachub_db" }` (plus a `HEA
 
 ---
 
+## Device registry
+
+Lets the server answer *"which devices still hold unsynced records?"*. A staff/admin device posts a heartbeat and the server keeps the last report per device in a `device_registry_<deviceId>` document. Because a device that is offline or lost cannot send a heartbeat, the last report still describes the state it was in when it went silent.
+
+### `POST /api/devices/heartbeat` — report this device's state
+
+**Access:** `admin`, `staff` (any other role → `403`; no token → `401`).
+
+Request body:
+
+| Field | Type | Required | Notes |
+| ----- | ---- | -------- | ----- |
+| `deviceId` | string | yes | stable per-device id generated on first load; sanitised server-side. Invalid/missing → `400` |
+| `label` | string | no | human-readable device name |
+| `pendingChangeCount` | number | no | unsynced local documents at the time of the report; normalised to a non-negative integer |
+| `lastSuccessfulSyncAt` | ISO string | no | timestamp of the last successful replication |
+
+`assignedUser` is taken from the **authenticated session**, never from the request body, so a device cannot be attributed to a different user.
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "device": {
+    "deviceId": "dev_abc123",
+    "label": "Chrome on Windows",
+    "assignedUser": "mgcortero",
+    "lastHeartbeatAt": "2026-10-20T12:00:00.000Z",
+    "pendingChangeCount": 4,
+    "lastSuccessfulSyncAt": "2026-10-20T11:00:00.000Z"
+  }
+}
+```
+
+A repeated heartbeat for the same `deviceId` updates the existing document (it does not create a second one).
+
+### `GET /api/devices` — the administrative device list
+
+**Access:** `admin` only. A `staff` token → `403`; no token → `401`.
+
+Query parameter: `staleHours` (optional) — overrides the staleness threshold for this request. Precedence: `?staleHours=` → `DEVICE_STALE_HOURS` environment variable → default `24`.
+
+Response `200`:
+
+```json
+{
+  "success": true,
+  "staleHours": 24,
+  "summary": {
+    "total": 3,
+    "online": 1,
+    "stale": 1,
+    "possiblyLost": 1,
+    "devicesHoldingUnsynced": 1
+  },
+  "devices": [
+    {
+      "deviceId": "dev_abc123",
+      "label": "Chrome on Windows",
+      "assignedUser": "mgcortero",
+      "lastHeartbeatAt": "2026-10-20T12:00:00.000Z",
+      "pendingChangeCount": 4,
+      "lastSuccessfulSyncAt": "2026-10-20T11:00:00.000Z",
+      "status": "possibly-lost",
+      "staleHours": 24,
+      "minutesSinceHeartbeat": 2880
+    }
+  ]
+}
+```
+
+`status` is one of:
+
+- `online` — a heartbeat was received inside the staleness window.
+- `stale` — no heartbeat inside the window and the last report had `pendingChangeCount = 0`.
+- `possibly-lost` — no heartbeat inside the window and the last report had `pendingChangeCount > 0` (the device went silent while holding unsynced records).
+
+The list is sorted with `possibly-lost` first, then `stale`, then `online`.
+
+---
+
 ## Cookie/header CORS notes
 
 - CORS allows explicit origins only (`http://localhost:5173`, `127.0.0.1:5173`, `localhost:3000`, and a configurable LAN IP), with `credentials: true`.

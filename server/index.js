@@ -9,6 +9,7 @@ const certificateRoutes = require('./routes/certificateRoutes');
 const blotterRoutes = require('./routes/blotterRoutes');
 const { sendBlotterNotification } = require('./services/emailService');
 const { sendResidentSMS } = require('./services/smsService');
+const deviceRegistry = require('./utils/deviceRegistry');
 
 const BCRYPT_PREFIX = '$2';
 const SHA256_HEX_LENGTH = 64;
@@ -46,9 +47,73 @@ const verifyPassword = async (password, storedHash) => {
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// ──────────────────────────────────────────────────────────────
+// SECURITY HEADERS
+// ──────────────────────────────────────────────────────────────
+// Applied first (before CORS, body parsers and every route) so the
+// headers are present on ALL responses — including 4xx/5xx errors and
+// CORS rejections. Deliberately dependency-free (no helmet) so the
+// existing, minimal dependency set is untouched.
+//
+// CSP design notes (BUSTRAC HUB):
+//   - This Express server only serves /api/* JSON and streams. The React
+//     SPA itself is served by Vite (dev) / a static host (prod), which set
+//     their own headers. A CSP here documents and constrains the API
+//     responses (which are never rendered as documents), so it is kept
+//     restrictive: no scripts, no frames, API origin only for connect.
+//   - default-src 'none' means an API JSON body can never be interpreted as
+//     an active document (defense-in-depth against MIME confusion).
+//   - frame-ancestors 'none' is the CSP equivalent of X-Frame-Options:DENY.
+//   - No 'unsafe-eval' / 'unsafe-inline' are used here.
+const API_CSP = [
+  "default-src 'none'",
+  "base-uri 'none'",
+  "form-action 'none'",
+  "frame-ancestors 'none'",
+  "object-src 'none'",
+  "img-src 'none'",
+  "style-src 'none'",
+  "script-src 'none'",
+  "connect-src 'self'",
+].join('; ');
+
+app.use((req, res, next) => {
+  // Anti-clickjacking (legacy header) + modern CSP equivalent.
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', API_CSP);
+  // Stop MIME-sniffing of API responses.
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  // Do not leak the full URL (may contain verification ids) cross-origin.
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  // Deny powerful browser features the MIS does not use.
+  res.setHeader('Permissions-Policy', 'geolocation=(self), camera=(self), microphone=()');
+  // Isolate browsing context (mitigates XS-Leaks / tab-nabbing).
+  res.setHeader('Cross-Origin-Opener-Policy', 'same-origin');
+  // NOTE: the SSE stream (/api/notifications) and sync proxy set their own
+  // streaming headers later; none of the headers above conflict with them.
+  next();
+});
+
+// ──────────────────────────────────────────────────────────────
+// JWT SECRET — fail closed on missing OR weak secrets.
+// A short/guessable secret lets anyone forge a session token (and thus a
+// role), so a minimum length is enforced. This NEVER prints the secret.
+// ──────────────────────────────────────────────────────────────
 const JWT_SECRET = process.env.JWT_SECRET;
+const MIN_JWT_SECRET_LENGTH = 32;
+const WEAK_JWT_SECRETS = new Set([
+  'secret', 'jwtsecret', 'changeme', 'password', 'test', 'dev',
+  'your_jwt_secret', 'supersecret', 'bustrachub', 'bustrac',
+]);
+
 if (!JWT_SECRET) {
-  console.error('❌ JWT_SECRET environment variable is not set.');
+  console.error('❌ JWT_SECRET environment variable is not set. Refusing to start.');
+  process.exit(1);
+}
+if (JWT_SECRET.length < MIN_JWT_SECRET_LENGTH || WEAK_JWT_SECRETS.has(JWT_SECRET.toLowerCase())) {
+  console.error(
+    `❌ JWT_SECRET is too weak: it must be at least ${MIN_JWT_SECRET_LENGTH} characters and not a common/default value. Refusing to start.`
+  );
   process.exit(1);
 }
 const JWT_EXPIRES_IN = '8h';
@@ -224,177 +289,20 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 // ──────────────────────────────────────────────────────────────
 // SYNC PROXY AUTHORIZATION
 // ──────────────────────────────────────────────────────────────
-
-// Document types a resident may legitimately create/update. Anything else
-// (blotter reports, announcements, issued certificates, users, settings,
-// other residents' data) requires an admin/staff session.
-const RESIDENT_WRITE_TYPES = new Set([
-  'certificate_request',
-  'certificate',
-  'feedback_report',
-  'feedback',
-  'blotter_record', // restricted to the resident's OWN docs (+ protected lifecycle fields below)
-  'event_registration', // restricted to the resident's OWN docs (+ protected lifecycle fields below)
-  'resident_profile',
-  'resident',
-  'profile',
-  'user', // restricted further below to the resident's own account
-]);
-
-// True when `doc` can be attributed to the authenticated resident.
-const docOwnedBy = (doc, user) => {
-  if (!doc || typeof doc !== 'object') return false;
-
-  const username = String(doc.username || '').toLowerCase();
-  const residentId = String(doc.residentId || '');
-  const userUsername = String(user.username || '').toLowerCase();
-  const userResidentId = String(user.residentId || '');
-
-  const sameUsername = Boolean(username) && username === userUsername && Boolean(userUsername);
-  const sameResidentId = Boolean(residentId) && userResidentId && residentId === userResidentId;
-
-  // A resident may only touch their own account document.
-  if (doc.type === 'user') {
-    const expectedId = `user_${userUsername}`;
-    return (doc._id === expectedId || sameUsername) && sameUsername;
-  }
-
-  if (!RESIDENT_WRITE_TYPES.has(doc.type)) return false;
-  return sameUsername || sameResidentId;
-};
-
-// Case-lifecycle fields a resident must NOT be able to change on their own
-// blotter through the offline sync path; only an admin/staff session may.
-const RESIDENT_PROTECTED_BLOTTER_FIELDS = [
-  'status',
-  'summonCount',
-  'nextHearingDate',
-  'summonDate',
-  'cfaIssued',
-  'cfaIssuedAt',
-  'lastSmsStatus',
-  'smsSent',
-  'smsSentAt',
-  'resolution',
-];
-
-// Event-registration lifecycle. A resident may only create a registration as
-// 'Pending' and cancel it ('Cancelled'); approval/rejection/attendance are
-// barangay decisions that only an admin/staff session may set.
-const RESIDENT_EVENT_ALLOWED_STATUS = new Set(['Pending', 'Cancelled']);
-
-// Fields on an event_registration that only admin/staff may set. A resident
-// must not be able to forge approval/attendance provenance.
-const RESIDENT_PROTECTED_EVENT_FIELDS = [
-  'approvedAt',
-  'approvedBy',
-  'rejectedAt',
-  'rejectedBy',
-  'attendedAt',
-  'attendedBy',
-];
-
-// For updates to an existing document, also confirm the CURRENT document
-// belongs to the resident (prevents overwriting another resident's record
-// whose id happens to be known).
-const verifyExistingDocOwnership = async (nanoDb, doc, user) => {
-  if (!doc || !doc._id) return true;
-  const existing = await nanoDb.get(doc._id).catch(() => null);
-
-  const isResident = String(user?.role || '').toLowerCase() === 'resident';
-  const docType = String(doc.type || doc.docType || '');
-
-  // Event registrations: a resident may create/cancel ONLY their own, may not
-  // forge the barangay approval lifecycle, and the referenced event must
-  // exist. Enforced for BOTH new and updated documents.
-  if (isResident && docType === 'event_registration') {
-    const existingStatus = existing ? String(existing.status ?? '') : '';
-    const newStatus = doc.status === undefined
-      ? (existing ? existingStatus : 'Pending')
-      : String(doc.status);
-    if (newStatus !== existingStatus && !RESIDENT_EVENT_ALLOWED_STATUS.has(newStatus)) {
-      console.warn(
-        `[SYNC DENY] Resident @${user?.username} tried to set event_registration status "${newStatus}" on ${doc._id}`
-      );
-      return false;
-    }
-    // Residents may not introduce/alter admin-only provenance fields. Absent
-    // fields are tolerated so a stale local doc can still be cancelled.
-    for (const field of RESIDENT_PROTECTED_EVENT_FIELDS) {
-      const next = doc[field];
-      if (next === undefined || next === null || next === '') continue;
-      const current = existing ? existing[field] : undefined;
-      if (JSON.stringify(next) !== JSON.stringify(current)) {
-        console.warn(
-          `[SYNC DENY] Resident @${user?.username} tried to change protected event field "${field}" on ${doc._id}`
-        );
-        return false;
-      }
-    }
-    if (!existing) {
-      const eventId = String(doc.eventId || '');
-      const eventDoc = eventId ? await nanoDb.get(eventId).catch(() => null) : null;
-      if (!eventDoc || String(eventDoc.type || '') !== 'barangay_event') {
-        console.warn(
-          `[SYNC DENY] Resident @${user?.username} registered for missing/unknown event "${eventId}" on ${doc._id}`
-        );
-        return false;
-      }
-    }
-  }
-
-  if (!existing) return true; // new document
-  if (!docOwnedBy(existing, user)) return false;
-
-  // Residents may file/edit their own blotter, but must not self-advance the
-  // case lifecycle (e.g. mark it 'Settled / Resolved' or fake a summons).
-  if (
-    String(user?.role || '').toLowerCase() === 'resident' &&
-    existing.type === 'blotter_record' &&
-    String(doc.type) === 'blotter_record'
-  ) {
-    for (const field of RESIDENT_PROTECTED_BLOTTER_FIELDS) {
-      if (JSON.stringify(doc[field]) !== JSON.stringify(existing[field])) {
-        console.warn(
-          `[SYNC DENY] Resident @${user?.username} tried to change protected blotter field "${field}" on ${doc._id}`
-        );
-        return false;
-      }
-    }
-  }
-
-  return true;
-};
+// The policy (RESIDENT_WRITE_TYPES, RESIDENT_ACCOUNT_DOC_TYPES) and the
+// enforcement helper (assessResidentWrite, which combines docOwnedBy and
+// verifyExistingDocOwnership) live in ./utils/syncAuthorization so they can
+// be unit-tested in isolation. RESIDENT_WRITE_TYPES deliberately excludes
+// 'user': residents must never write account/identity documents (which hold
+// role/passwordHash/status) through the sync proxy — their own profile is a
+// separate `resident`/`resident_profile` document.
+const { assessResidentWrite, assessStoredDocWrite, fetchExistingDoc } = require('./utils/syncAuthorization');
 
 // Read-only CouchDB endpoints that PouchDB sometimes calls with POST but that
 // never mutate documents. Residents are allowed to call these through sync.
 const RESIDENT_READONLY_ENDPOINTS = new Set([
   '_bulk_get', '_all_docs', '_find', '_explain', '_index',
 ]);
-
-// Human-readable reason a resident write was denied, for [SYNC 403] logs.
-// Returns only metadata (id/type/username/residentId) — never bodies, hashes
-// or tokens. Returns null when the document IS owned.
-const residentDenyReason = (doc, user) => {
-  if (!doc || typeof doc !== 'object') return 'invalid document';
-  const username = String(doc.username || '').toLowerCase();
-  const residentId = String(doc.residentId || '');
-  const userUsername = String(user.username || '').toLowerCase();
-  const userResidentId = String(user.residentId || '');
-
-  if (doc.type === 'user') {
-    const expectedId = `user_${userUsername}`;
-    if ((doc._id === expectedId || username === userUsername) && username === userUsername) return null;
-    return 'user document not owned';
-  }
-  if (!RESIDENT_WRITE_TYPES.has(doc.type)) return 'type not allowed';
-  if (username && username === userUsername) return null;
-  if (residentId && userResidentId && residentId === userResidentId) return null;
-  if (!username && !residentId) return 'missing owner fields';
-  if (username && username !== userUsername) return 'username mismatch';
-  if (residentId && residentId !== userResidentId) return 'residentId mismatch';
-  return 'not owned';
-};
 
 const logSync403 = (req, offenders) => {
   console.error('[SYNC 403] Resident write denied');
@@ -490,19 +398,23 @@ const authorizeResidentWrite = (req, res, next) => {
     if (docs.length === 0) return next();
 
     const nanoDb = req.app.get('db');
-    return Promise.all(docs.map((doc) => verifyExistingDocOwnership(nanoDb, doc, req.user)))
-      .then((owned) => {
+    // NOTE: assess ownership for EVERY document and reject the whole batch if
+    // ANY document is not owned/authorized (mixed authorized/unauthorized bulk
+    // batches are denied atomically — the proxy never forwards a partial push).
+    return Promise.all(
+      docs.map((doc) => assessResidentWrite(nanoDb, doc, req.user))
+    )
+      .then((results) => {
         const offenders = [];
-        for (let i = 0; i < docs.length; i++) {
-          const allowed = docOwnedBy(docs[i], req.user);
-          if (!allowed || !owned[i]) {
+        for (let i = 0; i < results.length; i++) {
+          if (!results[i].allowed) {
             offenders.push({
               _id: docs[i]?._id,
               type: docs[i]?.type,
               docType: docs[i]?.docType,
               username: docs[i]?.username,
               residentId: docs[i]?.residentId,
-              reason: allowed ? 'existing document not owned' : residentDenyReason(docs[i], req.user),
+              reason: results[i].reason,
             });
           }
         }
@@ -519,26 +431,58 @@ const authorizeResidentWrite = (req, res, next) => {
       .catch(() => res.status(500).json({ error: 'unavailable', reason: 'Ownership check failed.' }));
   }
 
-  // Single-document create/update (including POST to the DB root).
+  // Single-document create/update/delete under /db/:id.
   if (!head.startsWith('_')) {
+    const nanoDb = req.app.get('db');
+    const pathId = String(head);
+
+    // PouchDB's remove() issues `DELETE /db/:id?rev=...` with NO request body
+    // (the doc id lives only in the path). Authorize deletes by fetching the
+    // STORED document and checking ownership + type, then forwarding verbatim.
+    // FAIL CLOSED: only a genuine 404 means "absent"; any lookup failure
+    // (timeout, 5xx, 401/403) must deny the mutation, never be treated as a
+    // harmless delete of a missing id.
+    if (String(req.method || '').toUpperCase() === 'DELETE') {
+      return fetchExistingDoc(nanoDb, pathId)
+        .then(({ found, doc: existing }) => {
+          const verdict = found
+            ? assessStoredDocWrite(existing, req.user)
+            : { allowed: true, reason: null }; // deleting an absent id is a no-op
+          if (!verdict.allowed) {
+            logSync403(req, [{ _id: pathId, type: existing?.type, reason: verdict.reason }]);
+            return res.status(403).json({ error: 'forbidden', reason: 'Residents may only delete documents they own.' });
+          }
+          recordResidentAudit(req, [{ _id: pathId, type: existing?.type, _deleted: true }]);
+          return next();
+        })
+        .catch(() => res.status(500).json({ error: 'unavailable', reason: 'Ownership check failed.' }));
+    }
+
     let parsed;
     try {
       parsed = JSON.parse((req.rawBody || '').toString() || '{}');
     } catch (e) {
       return res.status(400).json({ error: 'bad_request', reason: 'Malformed document payload.' });
     }
-    const nanoDb = req.app.get('db');
-    return verifyExistingDocOwnership(nanoDb, parsed, req.user)
-      .then((owned) => {
-        const allowed = docOwnedBy(parsed, req.user);
-        if (!allowed || !owned) {
+    // The {id} route segment (PUT /db/:id) carries the document id in the same
+    // position as `head`. A resident must not be able to write under an id
+    // other than the doc's own id — reject an id/body mismatch outright
+    // (blocks e.g. PUT /db/someone_elses_id with a forged body).
+    const bodyId = String(parsed?._id || '');
+    if (bodyId && bodyId !== pathId) {
+      logSync403(req, [{ _id: pathId, type: parsed?.type, reason: 'path/_id mismatch' }]);
+      return res.status(403).json({ error: 'forbidden', reason: 'Document id does not match request path.' });
+    }
+    return assessResidentWrite(nanoDb, parsed, req.user)
+      .then(({ allowed, reason }) => {
+        if (!allowed) {
           logSync403(req, [{
             _id: parsed?._id,
             type: parsed?.type,
             docType: parsed?.docType,
             username: parsed?.username,
             residentId: parsed?.residentId,
-            reason: allowed ? 'existing document not owned' : residentDenyReason(parsed, req.user),
+            reason,
           }]);
           return res.status(403).json({
             error: 'forbidden',
@@ -779,33 +723,46 @@ async function initDB() {
     db = couch.use(DB_NAME);
     app.set('db', db);
 
-    const demoUsers = [
-      { _id: 'user_mgcortero', type: 'user', username: 'mgcortero', passwordHash: await hashPassword('password'), role: 'staff', path: '/staff' },
-      { _id: 'user_jmacabangon', type: 'user', username: 'jmacabangon', passwordHash: await hashPassword('password'), role: 'admin', path: '/admin' },
-      {
-        _id: 'user_juan_resident', type: 'user', username: 'juan2026', passwordHash: await hashPassword('password'), role: 'resident', path: '/',
-        fullName: 'Juan Dela Cruz', firstName: 'Juan', lastName: 'Dela Cruz', residentId: 'RES-0001',
-        purok: '3', age: 34, birthdate: '1990-03-12', gender: 'Male', civilStatus: 'Married',
-        contact: '09171234567', household: 'HH-0012 — Dela Cruz Family', voterStatus: 'Registered Voter'
-      },
-      {
-        _id: 'user_juanreyes', type: 'user', username: 'juanreyes', passwordHash: await hashPassword('password123'), role: 'resident', path: '/',
-        fullName: 'Juan Reyes', firstName: 'Juan', lastName: 'Reyes', residentId: 'RES-0002', purok: '1', contact: '09181234567'
-      }
-    ];
+    // ── Demo-user seeding ──────────────────────────────────────────────
+    // SECURITY: these accounts share the well-known password 'password'
+    // (and 'password123'). They MUST NOT exist in production, where an
+    // attacker could log in as admin/staff. Seeding is therefore limited to
+    // non-production environments and can be force-disabled with
+    // SEED_DEMO_USERS=false. Never enable this in a production deployment.
+    const isProduction = String(process.env.NODE_ENV || '').toLowerCase() === 'production';
+    const seedDemoUsers = process.env.SEED_DEMO_USERS !== 'false' && !isProduction;
 
-    for (const u of demoUsers) {
-      try {
-        await db.get(u._id);
-        console.log(`User existing: ${u.username}`);
-      } catch (err) {
-        if (err.statusCode === 404 || err.status === 404) {
-          await db.insert(u);
-          console.log(`Successfully injected account: ${u.username}`);
-        } else {
-          console.error(`Error checking user ${u.username}:`, err.message);
+    if (seedDemoUsers) {
+      const demoUsers = [
+        { _id: 'user_mgcortero', type: 'user', username: 'mgcortero', passwordHash: await hashPassword('password'), role: 'staff', path: '/staff' },
+        { _id: 'user_jmacabangon', type: 'user', username: 'jmacabangon', passwordHash: await hashPassword('password'), role: 'admin', path: '/admin' },
+        {
+          _id: 'user_juan_resident', type: 'user', username: 'juan2026', passwordHash: await hashPassword('password'), role: 'resident', path: '/',
+          fullName: 'Juan Dela Cruz', firstName: 'Juan', lastName: 'Dela Cruz', residentId: 'RES-0001',
+          purok: '3', age: 34, birthdate: '1990-03-12', gender: 'Male', civilStatus: 'Married',
+          contact: '09171234567', household: 'HH-0012 — Dela Cruz Family', voterStatus: 'Registered Voter'
+        },
+        {
+          _id: 'user_juanreyes', type: 'user', username: 'juanreyes', passwordHash: await hashPassword('password123'), role: 'resident', path: '/',
+          fullName: 'Juan Reyes', firstName: 'Juan', lastName: 'Reyes', residentId: 'RES-0002', purok: '1', contact: '09181234567'
+        }
+      ];
+
+      for (const u of demoUsers) {
+        try {
+          await db.get(u._id);
+          console.log(`User existing: ${u.username}`);
+        } catch (err) {
+          if (err.statusCode === 404 || err.status === 404) {
+            await db.insert(u);
+            console.log(`Successfully injected account: ${u.username}`);
+          } else {
+            console.error(`Error checking user ${u.username}:`, err.message);
+          }
         }
       }
+    } else {
+      console.log('Demo-user seeding disabled (production or SEED_DEMO_USERS=false).');
     }
 
     // CouchDB Mango Index
@@ -1144,6 +1101,114 @@ app.get('/api/stats/monthly-feedback', async (req, res) => {
   }
 });
 
+// ============================================================
+// DEVICE REGISTRY
+//
+// Lets the server answer "which devices still hold unsynced records?".
+// A device reports a heartbeat (with its current pending-change count) on
+// app load, on reconnect and after every replication cycle. The server keeps
+// the last report per device, so a device that went silent while holding
+// unsynced changes is flagged "possibly-lost".
+// ============================================================
+
+// POST /api/devices/heartbeat — a device reports its state.
+// Admin/staff only: the registry is an administrative inventory of the
+// barangay's shared staff devices.
+app.post('/api/devices/heartbeat', authenticate, requireRole('admin', 'staff'), async (req, res) => {
+  try {
+    const db = req.app.get('db');
+    if (!db) {
+      return res.status(500).json({ success: false, message: 'Database not initialized.' });
+    }
+
+    const deviceId = deviceRegistry.normalizeDeviceId(req.body?.deviceId);
+    if (!deviceId) {
+      return res.status(400).json({
+        success: false,
+        message: 'A valid deviceId is required.',
+      });
+    }
+
+    const heartbeat = {
+      deviceId,
+      label: req.body?.label,
+      // The assigned user comes from the authenticated session, never from
+      // the request body, so a device cannot be attributed to someone else.
+      assignedUser: req.user?.username || req.user?.email || 'unknown',
+      pendingChangeCount: req.body?.pendingChangeCount,
+      lastSuccessfulSyncAt: req.body?.lastSuccessfulSyncAt || null,
+      lastSnapshotAt: req.body?.lastSnapshotAt || null,
+    };
+
+    const docId = deviceRegistry.deviceRegistryDocId(deviceId);
+    let existing = null;
+    try {
+      existing = await db.get(docId);
+    } catch (err) {
+      // 404 simply means the device is registering for the first time.
+      const status = err?.statusCode || err?.status;
+      if (status !== 404 && status !== 'not_found') throw err;
+      existing = null;
+    }
+
+    const doc = deviceRegistry.applyHeartbeat(existing, heartbeat);
+
+    const written = await db.insert(doc);
+    const saved = written?.ok
+      ? { ...doc, _rev: written.rev }
+      : await db.get(docId);
+
+    return res.json({
+      success: true,
+      device: {
+        deviceId: saved.deviceId,
+        label: saved.label,
+        assignedUser: saved.assignedUser,
+        lastHeartbeatAt: saved.lastHeartbeatAt,
+        pendingChangeCount: saved.pendingChangeCount,
+        lastSuccessfulSyncAt: saved.lastSuccessfulSyncAt,
+        lastSnapshotAt: saved.lastSnapshotAt || null,
+      },
+    });
+  } catch (err) {
+    console.error('[bustrac-server] Device heartbeat failed:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// GET /api/devices — the administrative device list. Admin only.
+// ?staleHours=<n> overrides the default staleness threshold (24h).
+app.get('/api/devices', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const db = req.app.get('db');
+    if (!db) {
+      return res.status(500).json({ success: false, message: 'Database not initialized.' });
+    }
+
+    const staleHours = deviceRegistry.resolveStaleHours({
+      envValue: process.env.DEVICE_STALE_HOURS,
+      queryValue: req.query?.staleHours,
+    });
+
+    const result = await db
+      .find({ selector: { type: deviceRegistry.DEVICE_REGISTRY_TYPE } })
+      .catch(() => ({ docs: [] }));
+
+    const devices = deviceRegistry.buildDeviceList(result.docs || [], { staleHours });
+    const summary = deviceRegistry.summarizeDeviceList(devices);
+
+    return res.json({
+      success: true,
+      staleHours,
+      summary,
+      devices,
+    });
+  } catch (err) {
+    console.error('[bustrac-server] Device list failed:', err.message);
+    return res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Public Portal Endpoint
 app.get('/api/public', async (req, res) => {
   try {
@@ -1329,15 +1394,23 @@ function startBlotterSMSListener() {
 // ============================================================
 // Bootstrap: isang initDB() lang, tapos saka simulan ang listener
 // ============================================================
-initDB()
-  .then(() => {
-    startBlotterSMSListener();
-    app.listen(PORT, '0.0.0.0', () => {
-      console.log(` Server is listening live on http://0.0.0.0:${PORT}`);
-      console.log('[bustrac-server] backend patch loaded: sync-auth-cors-framing-2026-10-12');
+// Only bootstrap (connect to CouchDB + listen) when this file is the entry
+// point. Requiring the module in tests must NOT open a DB connection or bind
+// a port — the test suite injects its own `app.set('db', stub)` and listens on
+// an ephemeral port itself. Runtime behavior is unchanged.
+if (require.main === module) {
+  initDB()
+    .then(() => {
+      startBlotterSMSListener();
+      app.listen(PORT, '0.0.0.0', () => {
+        console.log(` Server is listening live on http://0.0.0.0:${PORT}`);
+        console.log('[bustrac-server] backend patch loaded: sync-auth-cors-framing-2026-10-12');
+      });
+    })
+    .catch((err) => {
+      console.error(' Failed to initialize DB. Server not started.', err);
+      process.exit(1);
     });
-  })
-  .catch((err) => {
-    console.error(' Failed to initialize DB. Server not started.', err);
-    process.exit(1);
-  });
+}
+
+module.exports = { app, JWT_SECRET, authenticate, requireRole, ALLOWED_DB, initDB };

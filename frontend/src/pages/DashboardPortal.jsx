@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useCallback, useRef, useMemo, startTransition } from 'react';
+import React, { useState, useEffect, useCallback, useRef, useMemo, startTransition } from 'react';
 import ResidentsScreen from '../components/screens/ResidentsScreen';
 import HealthStation from '../components/BHS/HealthStation';
 import BDRRMCModule from '../components/BDRRMC/BDRRMCModule';
@@ -24,6 +24,8 @@ import CertPrintScreen from './CertPrintScreen';
 import ResidentCombobox, { formatPurok } from '../components/ResidentCombobox';
 import AuditLogView from '../components/AuditLogView';
 import SyncStatusIndicator from '../components/SyncStatusIndicator';
+import OfflineSyncBanner from '../components/OfflineSyncBanner';
+import ConflictFieldMergeModal from '../components/ConflictFieldMergeModal';
 import BlotterForm from '../components/BlotterForm';
 import { SummonsPanel } from '../components/SummonsPanel';
 import { CaseStatusActions } from '../components/CaseStatusActions';
@@ -35,7 +37,53 @@ import { clearActiveSessionOnly } from '../utils/tokenStore';
 import { exportToExcel } from '../utils/excelExporter';
 import { calculateAge, isValidPHMobile } from '../utils/residentUtils';
 import "../styles/lightmode-fix.css";
-import { setupPouchDBSync, onSyncStatusChange } from '../services/db';
+import { setupPouchDBSync, onSyncStatusChange, getPendingSyncCount } from '../services/db';
+import {
+  startSyncManager,
+  onSyncManagerChange,
+  syncNow,
+} from '../services/syncManager';
+import {
+  resolveConflictByFieldMerge,
+  resolveConflictKeepSide,
+  resolveConflictKeepBoth,
+} from '../services/conflictResolver';
+import {
+  getPendingStaffAlerts,
+  markStaffAlertsRead,
+} from '../services/staffAlerts';
+import {
+  getBackupSettings,
+  saveBackupSettings,
+  handleAutoBackup,
+  scheduleAutoBackup,
+  stopAutoBackup,
+  chooseBackupDirectory,
+  getBackupDirectoryHandle,
+  supportsFileSystemAccess,
+  claimUnsyncedRecords,
+  downloadSnapshot,
+  exportLocalSnapshot,
+  buildSnapshotName,
+  getLastSnapshotAt,
+} from '../services/backupService';
+import {
+  runSyncCheckpoint,
+  buildSyncCheckpointAlertOptions,
+} from '../services/syncCheckpoint';
+import { isEncryptionSupported } from '../services/snapshotService';
+import {
+  detectDeviceLossRisk,
+  getDeviceId,
+  getDeviceLabel,
+  fetchRegisteredDevices,
+} from '../services/deviceRegistry';
+import {
+  computeConflictDiff,
+  conflictModuleLabel,
+  conflictDocTime,
+  formatConflictTime,
+} from '../utils/conflictMerge';
 import '../styles/Announcements.css';
 import '../styles/ConflictManagement.css';
 import  ResidentForm from '../components/Resident/ResidentForm';
@@ -134,6 +182,7 @@ const SCREEN_META = {
   announcements:        ['Announcements',              'Community Module'],
   feedback:             ['Feedback & Complaints',      'Community Module'],
   conflicts:            ['Conflict Resolution',        'Admin Only — CouchDB Sync Conflicts'],
+  'data-protection':    ['Data Protection',           'Admin Only — Backups, Devices & Recovery'],
   audit:                ['Audit Log',                  'Admin Only — Immutable Transaction History'],
   users:                ['Manage Users',               'Admin Only — User Accounts & Roles'],
   reports:              ['Generate Reports',           'Administration'],
@@ -312,148 +361,10 @@ const formatCertType = (type) => {
 // ─────────────────────────────────────────────
 // CONFLICT MANAGEMENT HELPERS
 // ─────────────────────────────────────────────
-// Fields that never make sense to show as "changed" in a conflict diff.
-const CONFLICT_IGNORED_FIELDS = new Set([
-  '_id', '_rev', '_conflicts', '_revisions', '_attachments', '_deleted',
-  '_conflictResolved', '_local_seq', 'history', 'synced', 'isSynced',
-  'updatedAt', 'createdAt', 'passwordHash', 'password', 'userPassword', 'tempPassword',
-]);
-
-const CONFLICT_FIELD_LABELS = {
-  firstName: 'First Name',
-  lastName: 'Last Name',
-  middleName: 'Middle Name',
-  name: 'Name',
-  fullName: 'Full Name',
-  purok: 'Purok',
-  purokZoneAddress: 'Purok',
-  addressZoneAddress: 'Address',
-  address: 'Address',
-  contact: 'Contact Number',
-  contactNumber: 'Contact Number',
-  contactNumber2: 'Alternate Contact',
-  status: 'Status',
-  civilStatus: 'Civil Status',
-  civilStatusOther: 'Civil Status (Other)',
-  sex: 'Sex',
-  gender: 'Gender',
-  birthdate: 'Birth Date',
-  birthDate: 'Birth Date',
-  age: 'Age',
-  citizenship: 'Citizenship',
-  religion: 'Religion',
-  occupation: 'Occupation',
-  residentType: 'Resident Type',
-  isArchived: 'Archived',
-  hasAccount: 'Has Account',
-  email: 'Email',
-  certType: 'Certificate Type',
-  certPurpose: 'Purpose',
-  residentName: 'Resident Name',
-};
-
-// Record type → human module label (used for the summary chip and filter).
-const CONFLICT_MODULE_LABELS = {
-  resident: 'Residents',
-  profile: 'Residents',
-  household: 'Households',
-  household_request: 'Households',
-  certificate_request: 'Certificates',
-  certificate: 'Certificates',
-  blotter: 'Blotter',
-  blotter_record: 'Blotter',
-  announcement: 'Announcements',
-  program: 'Programs',
-  equipment: 'Equipment',
-  medicine: 'Medicine',
-  inventory: 'Inventory',
-  user: 'Users',
-  account_request: 'Account Requests',
-  resident_account_request: 'Account Requests',
-  feedback: 'Feedback',
-  document: 'Documents',
-  document_request: 'Documents',
-};
-
-const prettifyConflictField = (field) => {
-  const key = String(field || '');
-  if (!key) return 'Field';
-  return key
-    .replace(/^_/, '')
-    .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
-    .replace(/[_-]+/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/\b\w/g, (c) => c.toUpperCase());
-};
-
-const conflictModuleLabel = (type) => {
-  const key = String(type || '').toLowerCase();
-  if (CONFLICT_MODULE_LABELS[key]) return CONFLICT_MODULE_LABELS[key];
-  if (!key) return 'Records';
-  return `${prettifyConflictField(key)}s`;
-};
-
-const conflictFieldLabel = (field) => {
-  const key = String(field || '');
-  if (!key || CONFLICT_IGNORED_FIELDS.has(key)) return null;
-  return CONFLICT_FIELD_LABELS[key] || prettifyConflictField(key);
-};
-
-const formatConflictValue = (value) => {
-  if (value === undefined || value === null) return '—';
-  if (value === '') return '(empty)';
-  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
-  if (Array.isArray(value)) {
-    return value.length === 0 ? '(none)' : value.map((v) => formatConflictValue(v)).join(', ');
-  }
-  if (typeof value === 'object') {
-    try { return JSON.stringify(value); } catch { return '[object]'; }
-  }
-  return String(value);
-};
-
-const normalizeConflictValue = (value) => {
-  if (value === undefined || value === null) return '';
-  if (typeof value === 'object') {
-    try { return JSON.stringify(value); } catch { return String(value); }
-  }
-  return String(value);
-};
-
-// Compare two revisions and return only the fields that actually differ.
-const computeConflictDiff = (docA, docB) => {
-  const a = docA || {};
-  const b = docB || {};
-  const keys = new Set([...Object.keys(a), ...Object.keys(b)]);
-  const diffs = [];
-  for (const key of keys) {
-    const label = conflictFieldLabel(key);
-    if (!label) continue;
-    if (normalizeConflictValue(a[key]) === normalizeConflictValue(b[key])) continue;
-    diffs.push({
-      field: key,
-      label,
-      valueA: formatConflictValue(a[key]),
-      valueB: formatConflictValue(b[key]),
-    });
-  }
-  return diffs;
-};
-
-const conflictDocTime = (doc) => {
-  const raw = doc && (doc.updatedAt || doc.createdAt);
-  if (!raw) return 0;
-  const t = new Date(raw).getTime();
-  return Number.isNaN(t) ? 0 : t;
-};
-
-const formatConflictTime = (value) => {
-  if (!value) return 'Unknown';
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return String(value);
-  return d.toLocaleString();
-};
+// The diff / merge helpers now live in utils/conflictMerge.js so the admin
+// screen, the conflict resolver service and the auto-resolver in services/db.js
+// all use exactly the same rules. They are re-exported here under their
+// original names so the rest of this file keeps working unchanged.
 
 // ─────────────────────────────────────────────
 // DYNAMIC NAME DICTIONARY
@@ -523,7 +434,7 @@ const ACTION_META = {
 // ─────────────────────────────────────────────
 // ADMIN-ONLY SCREEN GUARD
 // ─────────────────────────────────────────────
-const ADMIN_ONLY_SCREENS = ['conflicts', 'audit', 'users', 'officials'];
+const ADMIN_ONLY_SCREENS = ['conflicts', 'audit', 'users', 'officials', 'data-protection'];
 
 function getActionMeta(action = '') {
   const key = action.toUpperCase();
@@ -1363,6 +1274,23 @@ const initials = displayName
 });     
 const [pendingCount, setPendingCount] = useState(0);  
     const [syncDetail, setSyncDetail] = useState(null);
+    const [isOnline, setIsOnline] = useState(
+      typeof navigator !== 'undefined' ? navigator.onLine : true
+    );
+    const [isSyncingNow, setIsSyncingNow] = useState(false);
+    const [bannerDismissed, setBannerDismissed] = useState(false);
+    const [staffAlerts, setStaffAlerts] = useState([]);
+    const [deviceRisk, setDeviceRisk] = useState(null);
+    const [knownDevices, setKnownDevices] = useState([]);
+    const [registeredDevices, setRegisteredDevices] = useState([]);
+    const [registeredDevicesSummary, setRegisteredDevicesSummary] = useState({});
+    const [registeredDeviceStaleHours, setRegisteredDeviceStaleHours] = useState(24);
+    const [registeredDevicesError, setRegisteredDevicesError] = useState(null);
+    const [backupSettings, setBackupSettings] = useState(null);
+    const [snapshotPassphrase, setSnapshotPassphrase] = useState('');
+    const [encryptionSupported, setEncryptionSupported] = useState(false);
+    const [mergeTarget, setMergeTarget] = useState(null);
+    const [isMerging, setIsMerging] = useState(false);
     const [toasts, setToasts] = useState([]);
 
   const showToast = useCallback((message, type = 'success') => {
@@ -1422,11 +1350,13 @@ const requestNotificationPermission = useCallback(() => {
 
   useEffect(() => {
   const handleOnline = () => {
+  setIsOnline(true);
   setSyncState('syncing');
   setTimeout(() => setSyncState('synced'), 1500);
 };
 
   const handleOffline = () => {
+    setIsOnline(false);
     setSyncState('offline');
   };
 
@@ -6112,26 +6042,30 @@ useEffect(() => {
 }, [screen]);
 
 // Resolve Conflict: Keep Version A (Discard conflicting revision B)
+//
+// Routed through services/conflictResolver so the audit entry always carries
+// the strategy and the discarded fields, and so the staff member whose edit
+// was discarded is notified.
 const handleKeepVersionA = async (conflict) => {
   try {
-    // Attempt to remove the conflicting revision
-    await db.remove(conflict.docId, conflict.conflictRev);
-    showToast('✓ Conflict resolved. Retained Version A.', 'success');
-    
-    const diffSummary = Array.isArray(conflict.diff) && conflict.diff.length > 0
-  ? ` (${conflict.diff.map(d => d.label).join(', ')})`
-  : '';
-await logConflictResolution({
-  docId: conflict.docId,
-  module: conflict.moduleLabel || 'CONFLICTS',
-  strategy: 'keep-a',
-  winnerRev: conflict.winningRev,
-  loserRevs: [conflict.conflictRev],
-  mergedFields: conflict.changedFields || [],
-  residentName: conflict.residentName,
-  details: `Retained Version A for ${conflict.residentName}${diffSummary}`,
-});
-    
+    const result = await resolveConflictKeepSide({
+      docId: conflict.docId,
+      conflictRev: conflict.conflictRev,
+      side: 'A',
+      docA: conflict.docA,
+      docB: conflict.docB,
+      strategy: 'keep-a',
+      resolvedBy: 'admin',
+    });
+
+    if (result?.ok) {
+      showToast('✓ Conflict resolved. Retained Version A.', 'success');
+    } else if (result?.alreadyResolved) {
+      showToast('✓ Conflict was already resolved by background sync. Refreshing list...', 'success');
+    } else {
+      showToast(`Error resolving conflict: ${result?.error || 'Unknown error'}`, 'error');
+    }
+
     // Refresh UI
     if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
     if (typeof fetchResidents === 'function') fetchResidents();
@@ -6306,30 +6240,25 @@ const handleResolveAllKeepLatest = async () => {
     const winner = c.timeA > c.timeB ? 'A' : 'B';
 
     try {
-      if (winner === 'A') {
-        await db.remove(c.docId, c.conflictRev);
+      // Routed through the resolver so the audit entry and the "your edit was
+      // overwritten" alert are produced for every auto-resolved conflict.
+      const res = await resolveConflictKeepSide({
+        docId: c.docId,
+        conflictRev: c.conflictRev,
+        side: winner,
+        docA: c.docA,
+        docB: c.docB,
+        strategy: 'keep-latest',
+        resolvedBy: 'admin',
+      });
+
+      if (res?.ok) {
+        resolvedCount += 1;
+      } else if (res?.alreadyResolved) {
+        resolvedCount += 1;
       } else {
-        const docB = await db.get(c.docId, { rev: c.conflictRev });
-        const currentDoc = await db.get(c.docId);
-        await db.put({ ...docB, _id: c.docId, _rev: currentDoc._rev });
-        await db.remove(c.docId, c.conflictRev);
-      }
-
-      resolvedCount += 1;
-
-      try {
-        await logConflictResolution({
-          docId: c.docId,
-          module: c.moduleLabel || 'CONFLICTS',
-          strategy: 'keep-latest',
-          winnerRev: winner === 'A' ? c.winningRev : c.conflictRev,
-          loserRevs: winner === 'A' ? [c.conflictRev] : [c.winningRev],
-          mergedFields: c.changedFields || [],
-          residentName: c.residentName,
-          details: `Auto-resolved (keep-latest): kept version ${winner} for ${c.residentName}`,
-        });
-      } catch (auditErr) {
-        console.warn('Bulk keep-latest audit log failed:', auditErr);
+        console.warn(`⚠️ Failed to resolve ${c.docId}:`, res?.error);
+        errorCount += 1;
       }
     } catch (err) {
       // 404 = already deleted, 409 = already resolved by background sync
@@ -6380,25 +6309,21 @@ const handleResolveAllKeepServer = async () => {
 
   for (const c of conflictsList) {
     try {
-      const docB = await db.get(c.docId, { rev: c.conflictRev });
-      const currentDoc = await db.get(c.docId);
-      await db.put({ ...docB, _id: c.docId, _rev: currentDoc._rev });
-      await db.remove(c.docId, c.conflictRev);
-      resolvedCount += 1;
+      const res = await resolveConflictKeepSide({
+        docId: c.docId,
+        conflictRev: c.conflictRev,
+        side: 'B',
+        docA: c.docA,
+        docB: c.docB,
+        strategy: 'keep-server',
+        resolvedBy: 'admin',
+      });
 
-      try {
-        await logConflictResolution({
-          docId: c.docId,
-          module: c.moduleLabel || 'CONFLICTS',
-          strategy: 'keep-server',
-          winnerRev: c.conflictRev,
-          loserRevs: [c.winningRev],
-          mergedFields: c.changedFields || [],
-          residentName: c.residentName,
-          details: `Bulk resolution kept SERVER version for ${c.residentName}`,
-        });
-      } catch (auditErr) {
-        console.warn('Bulk keep-server audit log failed:', auditErr);
+      if (res?.ok || res?.alreadyResolved) {
+        resolvedCount += 1;
+      } else {
+        console.warn(`Failed to keep server for ${c.docId}:`, res?.error);
+        errorCount += 1;
       }
     } catch (err) {
       if (err.status === 404 || err.status === 409) {
@@ -6423,48 +6348,38 @@ const handleResolveAllKeepServer = async () => {
 };
 
 // Resolve Conflict: Keep Version B (Override current doc with revision B's data)
+//
+// Routed through services/conflictResolver: it re-reads the current winning
+// revision (so a background sync cannot cause a 409), writes Version B as the
+// winner, deletes the losing revision, records the audit entry and notifies
+// the staff member whose edit was discarded.
 const handleKeepVersionB = async (conflict) => {
   try {
-    // 1. Fetch the exact conflicting revision (Version B data)
-    const docB = await db.get(conflict.docId, { rev: conflict.conflictRev });
-    
-    // 2. CRITICAL FIX: Fetch the CURRENT winning document to get its absolute latest _rev.
-    // This prevents 409 errors if the background sync updated the document while we were looking at the UI.
-    const currentDoc = await db.get(conflict.docId);
-    
-    // 3. Create a new document with Version B's data, but using the CURRENT winning _rev
-    const newWinningDoc = {
-      ...docB,
-      _id: conflict.docId,
-      _rev: currentDoc._rev // Overwrite the current winner safely
-    };
-    
-    // 4. Save it to make Version B the new winner
-    await db.put(newWinningDoc);
-    
-    // 5. Clean up the old conflicting revision (mark it as deleted)
+    let docB = null;
     try {
-      await db.remove(conflict.docId, conflict.conflictRev);
-    } catch (removeErr) {
-      console.warn('Old conflict rev already resolved or removed by sync:', removeErr);
+      docB = await db.get(conflict.docId, { rev: conflict.conflictRev });
+    } catch {
+      docB = conflict.docB || null;
     }
-    
-    showToast('✓ Conflict resolved. Successfully kept Version B data.', 'success');
-    
-    const diffSummary = Array.isArray(conflict.diff) && conflict.diff.length > 0
-  ? ` (${conflict.diff.map(d => d.label).join(', ')})`
-  : '';
-await logConflictResolution({
-  docId: conflict.docId,
-  module: conflict.moduleLabel || 'CONFLICTS',
-  strategy: 'keep-b',
-  winnerRev: conflict.conflictRev,
-  loserRevs: [conflict.winningRev],
-  mergedFields: conflict.changedFields || [],
-  residentName: conflict.residentName,
-  details: `Retained Version B for ${conflict.residentName}${diffSummary}`,
-});
-    
+
+    const result = await resolveConflictKeepSide({
+      docId: conflict.docId,
+      conflictRev: conflict.conflictRev,
+      side: 'B',
+      docA: conflict.docA,
+      docB,
+      strategy: 'keep-b',
+      resolvedBy: 'admin',
+    });
+
+    if (result?.ok) {
+      showToast('✓ Conflict resolved. Successfully kept Version B data.', 'success');
+    } else if (result?.alreadyResolved) {
+      showToast('✓ Conflict was already resolved by background sync. Refreshing list...', 'success');
+    } else {
+      showToast(`Error resolving conflict: ${result?.error || 'Unknown error'}`, 'error');
+    }
+
     // Refresh UI
     if (typeof fetchDatabaseConflicts === 'function') fetchDatabaseConflicts();
     if (typeof fetchResidents === 'function') fetchResidents();
@@ -6483,37 +6398,19 @@ await logConflictResolution({
 
 const handleKeepBoth = async (conflict) => {
   try {
-    const newDocId = `${conflict.docId}_split_${Date.now()}`;
-    const duplicateDoc = {
-      ...conflict.docB,          
-      _id: newDocId
-    };
-    delete duplicateDoc._rev;
-    
-    await db.put(duplicateDoc);
-    await db.remove(conflict.docId, conflict.conflictRev);
-    showToast('✓ Conflict resolved. Saved Version B as a distinct record.', 'success');
-    
-await logConflictResolution({
-  docId: conflict.docId,
-  module: conflict.moduleLabel || 'CONFLICTS',
-  strategy: 'keep-both',
-  winnerRev: conflict.winningRev,
-  loserRevs: [],
-  mergedFields: conflict.changedFields || [],
-  residentName: conflict.residentName,
-  details: `Split conflict for ${conflict.residentName}; Version B (rev ${conflict.conflictRev}) preserved as distinct record (${newDocId})`,
-  meta: {
-    conflict: true,
-    strategy: 'keep-both',
-    winnerRev: conflict.winningRev,
-    loserRevs: [],
-    mergedFields: conflict.changedFields || [],
-    splitId: newDocId,
-    originalConflictRev: conflict.conflictRev,
-  },
-});
-    
+    const result = await resolveConflictKeepBoth({
+      docId: conflict.docId,
+      conflictRev: conflict.conflictRev,
+      docB: conflict.docB,
+      resolvedBy: 'admin',
+    });
+
+    if (result?.ok) {
+      showToast('✓ Conflict resolved. Saved Version B as a distinct record.', 'success');
+    } else {
+      showToast(`Error splitting conflict: ${result?.error || 'Unknown error'}`, 'error');
+    }
+
     fetchDatabaseConflicts();
   } catch (err) {
     console.error('Failed to split conflicting document:', err);
@@ -8844,17 +8741,12 @@ const handleExportBackup = async () => {
   setIsDbProcessing(true);
 
   try {
-    const allDocs = await db.allDocs({ include_docs: true });
-
-    const cleanRows = allDocs.rows.filter(
-      r => r.doc && !r.doc._id.startsWith('_')
-    );
-
-    const backupPayload = {
-      app: 'Bustrac Hub',
-      exportDate: new Date().toISOString(),
-      rows: cleanRows
-    };
+    // Wrapped by services/backupService so the manual export and the
+    // automated snapshots share one hardened artifact format: a schema
+    // header, a SHA-256 integrity checksum, the device id and a filename
+    // carrying the device id and an exact timestamp.
+    const backupPayload = await exportLocalSnapshot();
+    const cleanRows = backupPayload.rows;
 
     const blob = new Blob(
       [JSON.stringify(backupPayload, null, 2)],
@@ -8865,7 +8757,7 @@ const handleExportBackup = async () => {
     const a = document.createElement('a');
 
     a.href = url;
-    a.download = `bustrac_backup_${new Date().toISOString().split('T')[0]}.json`;
+    a.download = buildSnapshotName({ timestamp: backupPayload.exportDate });
 
     document.body.appendChild(a);
     a.click();
@@ -9683,14 +9575,15 @@ useEffect(() => {
 
 useEffect(() => {
   setupPouchDBSync();
+
   const unsubscribe = onSyncStatusChange(({ status, pending, detail }) => {
     setSyncState(status);
     setSyncDetail(detail ?? null);
-    
+
     if (pending !== undefined && pending !== 999) {
       setPendingCount(pending);
     }
-    
+
     if (status === 'synced' || status === 'success') {
       const now = new Date().toISOString();
       setLastSynced(now);
@@ -9701,9 +9594,376 @@ useEffect(() => {
       if (typeof computeDashboardStats === 'function') computeDashboardStats();
     }
   });
+
+  // The sync manager owns the resilient layer (live replication, exponential
+  // backoff, accurate pending counter, background sync, beforeunload guard).
+  // It re-emits the low-level status so the UI keeps working unchanged, and
+  // registers AFTER the handler above so its (accurate) pending count wins.
+  const manager = startSyncManager();
+
+  // Richer state from the sync manager: the accurate pending counter, the
+  // online flag and the backoff schedule.
+  const unsubscribeManager = onSyncManagerChange((state) => {
+    if (!state) return;
+    setSyncState(state.status === 'syncing' ? 'syncing' : state.status);
+    setSyncDetail(state.detail ?? null);
+    setPendingCount(state.pending || 0);
+    setIsOnline(state.isOnline !== false);
+    if (state.lastSyncedAt) {
+      setLastSyncedAt(state.lastSyncedAt);
+    }
+  });
+
   setSyncState(navigator.onLine ? 'synced' : 'offline');
-  return () => unsubscribe();
+  return () => {
+    unsubscribe();
+    unsubscribeManager();
+    manager.stop();
+  };
 }, [computeDashboardStats]);
+
+// ─────────────────────────────────────────────
+// DATA PROTECTION: staff alerts, device risk, automated backups
+// ─────────────────────────────────────────────
+
+// Show the staff member which of their edits were overwritten by a conflict
+// resolution (manual merge or automatic "keep latest").
+const checkStaffAlerts = useCallback(async () => {
+  try {
+    const raw = localStorage.getItem('bustrac_user');
+    const user = raw ? JSON.parse(raw) : null;
+    const username = String(user?.username || user?.email || '').trim().toLowerCase();
+    const fullName = String(user?.fullName || user?.name || '').trim();
+    if (!username && !fullName) return;
+
+    const identities = [username, fullName].filter(Boolean);
+    const pending = await getPendingStaffAlerts(identities);
+    if (!pending.length) {
+      setStaffAlerts([]);
+      return;
+    }
+    setStaffAlerts(pending);
+
+    const first = pending[0];
+    const extra = pending.length - 1;
+    const result = await Swal.fire({
+      title: 'Your edit was overwritten during sync',
+      html:
+        `<div style="text-align:left;font-size:13px;line-height:1.55">` +
+        `<p style="margin:0 0 8px"><strong>${first.message || `Your recent edit to ${first.recordName} was overwritten during server synchronization.`}</strong></p>` +
+        `<p style="margin:0 0 8px;color:#64748b">Please review the record to confirm the data is still correct.</p>` +
+        (first.fields?.length
+          ? `<p style="margin:0;color:#64748b">Affected fields: <code>${first.fields.join(', ')}</code></p>`
+          : '') +
+        (extra > 0 ? `<p style="margin:6px 0 0;color:#64748b">(+${extra} more affected record${extra === 1 ? '' : 's'})</p>` : '') +
+        `</div>`,
+      icon: 'warning',
+      showCancelButton: true,
+      confirmButtonText: 'Review now',
+      cancelButtonText: 'Dismiss',
+      allowOutsideClick: false,
+    });
+
+    await markStaffAlertsRead(pending.map((a) => a._id), identities);
+    setStaffAlerts([]);
+
+    if (result.isConfirmed) {
+      nav('conflicts');
+    }
+  } catch (err) {
+    console.warn('[staff-alert] Check failed:', err?.message || err);
+  }
+}, [nav]);
+
+// Detect a device that may have been lost with unsynced work.
+const checkDeviceRisk = useCallback(async () => {
+  try {
+    const risk = await detectDeviceLossRisk();
+    setDeviceRisk(risk);
+    setKnownDevices(risk.devices || []);
+
+    if (risk.risky && risk.reasons.length) {
+      const result = await Swal.fire({
+        title: 'Possible unsynced records on another device',
+        html:
+          `<div style="text-align:left;font-size:13px;line-height:1.55">` +
+          risk.reasons.map((r) => `<p style="margin:0 0 8px">• ${r}</p>`).join('') +
+          `<p style="margin:8px 0 0;color:#64748b">If a device was lost, restore its backup file below ` +
+          `(<strong>Claim Unsynced Records</strong>) to merge the missing documents into the central database.</p>` +
+          `</div>`,
+        icon: 'warning',
+        showCancelButton: true,
+        confirmButtonText: 'Got it',
+        cancelButtonText: 'Remind me later',
+      });
+      if (result.isConfirmed) {
+        setDeviceRisk({ ...risk, dismissed: true });
+      }
+    }
+  } catch (err) {
+    console.warn('[device] Risk check failed:', err?.message || err);
+  }
+}, []);
+
+useEffect(() => {
+  // Only staff/admin accounts have records that can be overwritten.
+  if (role !== 'admin' && role !== 'staff') return;
+
+  checkStaffAlerts().catch(() => {});
+  checkDeviceRisk().catch(() => {});
+
+  // Load the data-protection settings and start the periodic backup.
+  (async () => {
+    try {
+      setEncryptionSupported(isEncryptionSupported());
+      const settings = await getBackupSettings();
+      setBackupSettings(settings);
+      const dir = await getBackupDirectoryHandle();
+      if (dir) setBackupSettings((prev) => ({ ...(prev || {}), backupFolderConnected: true }));
+      await scheduleAutoBackup({ settings, runImmediately: false });
+    } catch (err) {
+      console.warn('[backup] Could not start the automatic backup:', err?.message || err);
+    }
+  })();
+
+  // The device registry is an administrator-only view.
+  if (role === 'admin') {
+    loadRegisteredDevices().catch(() => {});
+  }
+
+  return () => stopAutoBackup();
+}, [role, checkStaffAlerts, checkDeviceRisk, loadRegisteredDevices]);
+
+// Keep the "unsynced changes" banner visible again as soon as new work is
+// queued after the user dismissed it.
+useEffect(() => {
+  if (pendingCount > 0) setBannerDismissed(false);
+}, [pendingCount]);
+
+// ── SYNC NOW ──
+const handleSyncNow = useCallback(async () => {
+  setIsSyncingNow(true);
+  try {
+    const result = await syncNow();
+    if (result?.ok) {
+      showToast('All changes synced to the server.', 'success');
+    } else if (result?.error === 'offline') {
+      showToast('Still offline — the changes stay queued and will be pushed automatically.', 'warning');
+    } else {
+      showToast('Sync could not complete. It will retry automatically.', 'error');
+    }
+  } catch (err) {
+    showToast(`Sync failed: ${err?.message || 'Unknown error'}`, 'error');
+  } finally {
+    setIsSyncingNow(false);
+  }
+}, [showToast]);
+
+// ── FIELD LEVEL CONFLICT MERGE ──
+const handleOpenMerge = useCallback((conflict) => {
+  setMergeTarget(conflict);
+}, []);
+
+const handleApplyFieldMerge = useCallback(async (conflict, choices) => {
+  setIsMerging(true);
+  try {
+    const result = await resolveConflictByFieldMerge({
+      docId: conflict.docId,
+      docA: conflict.docA,
+      docB: conflict.docB,
+      conflictRev: conflict.conflictRev,
+      choices,
+      resolvedBy: 'admin',
+    });
+
+    if (result?.ok) {
+      showToast(
+        `Conflict merged — ${result.mergedFields?.length || 0} field(s) resolved without losing data.`,
+        'success'
+      );
+      setMergeTarget(null);
+      fetchDatabaseConflicts();
+      if (typeof fetchResidents === 'function') fetchResidents();
+    } else {
+      showToast(result?.error || 'Could not merge the conflict.', 'error');
+    }
+  } catch (err) {
+    showToast(`Merge failed: ${err?.message || 'Unknown error'}`, 'error');
+  } finally {
+    setIsMerging(false);
+  }
+}, [showToast]);
+
+// ── REGISTERED DEVICES (server-side device registry) ──
+const loadRegisteredDevices = useCallback(async () => {
+  setIsDbProcessing(true);
+  try {
+    const result = await fetchRegisteredDevices();
+    if (!result) {
+      setRegisteredDevices([]);
+      setRegisteredDevicesSummary({});
+      setRegisteredDevicesError(
+        'The device registry could not be loaded. It is available to administrators while the server is reachable.'
+      );
+      return;
+    }
+    setRegisteredDevices(result.devices || []);
+    setRegisteredDevicesSummary(result.summary || {});
+    setRegisteredDeviceStaleHours(result.staleHours || 24);
+    setRegisteredDevicesError(null);
+  } catch (err) {
+    setRegisteredDevicesError(`Could not load the device registry: ${err?.message || 'unknown error'}`);
+  } finally {
+    setIsDbProcessing(false);
+  }
+}, []);
+
+// ── MANDATORY END-OF-DAY SYNC CHECKPOINT ──
+// The device may not be closed for the day while records are still queued
+// locally. The confirmation is written to the audit trail.
+const handleCloseForTheDay = useCallback(async () => {
+  setIsDbProcessing(true);
+  try {
+    const result = await runSyncCheckpoint({
+      getPendingCount: () => getPendingSyncCount(),
+      syncNow: () => syncNow(),
+      deviceId: getDeviceId(),
+    });
+
+    if (result.ok) {
+      showToast(
+        result.pendingAtStart === 0
+          ? 'End-of-day checkpoint passed — nothing was pending. The confirmation was recorded.'
+          : `End-of-day checkpoint passed — ${result.syncedCount} change(s) replicated. The confirmation was recorded.`,
+        'success'
+      );
+      return;
+    }
+
+    // Blocked: present the non-dismissible warning and offer a sync.
+    const options = buildSyncCheckpointAlertOptions({
+      pendingCount: result.pendingAfter,
+      deviceId: getDeviceId(),
+    });
+    const action = await Swal.fire({
+      ...options,
+      showCancelButton: true,
+      cancelButtonText: 'Abort close for the day',
+    });
+
+    if (action.isConfirmed) {
+      // The operator chose to try again from the warning.
+      const retry = await runSyncCheckpoint({
+        getPendingCount: () => getPendingSyncCount(),
+        syncNow: () => syncNow(),
+        deviceId: getDeviceId(),
+      });
+      if (retry.ok) {
+        showToast('End-of-day checkpoint passed — the confirmation was recorded.', 'success');
+      } else {
+        showToast(
+          `Close for the day blocked — ${retry.pendingAfter} change(s) are still unsynced.`,
+          'error'
+        );
+      }
+    } else {
+      showToast(
+        `Close for the day blocked — ${result.pendingAfter} change(s) are still unsynced.`,
+        'error'
+      );
+    }
+  } catch (err) {
+    showToast(`End-of-day checkpoint failed: ${err?.message || 'Unknown error'}`, 'error');
+  } finally {
+    setIsDbProcessing(false);
+  }
+}, [showToast]);
+
+// ── BACKUP ACTIONS ──
+const handleRunBackupNow = useCallback(async () => {
+  setIsDbProcessing(true);
+  try {
+    const settings = await getBackupSettings();
+    const usePassphrase = settings?.encryptSnapshots ? snapshotPassphrase : null;
+    if (settings?.encryptSnapshots && !snapshotPassphrase) {
+      showToast('Enter the snapshot passphrase before taking an encrypted backup.', 'warning');
+      return;
+    }
+    const result = await handleAutoBackup({ passphrase: usePassphrase || undefined });
+    if (result?.ok) {
+      showToast(
+        `Backup saved (${result.docCount} documents) — ${result.mode === 'directory' ? 'saved to the backup folder' : 'downloaded'}` +
+        `${result.encrypted ? ', encrypted' : ''}.`,
+        'success'
+      );
+    } else {
+      showToast(`Backup failed: ${result?.error || 'unknown error'}`, 'error');
+    }
+    const refreshed = await getBackupSettings();
+    setBackupSettings(refreshed);
+  } catch (err) {
+    showToast(`Backup failed: ${err?.message || 'Unknown error'}`, 'error');
+  } finally {
+    setIsDbProcessing(false);
+  }
+}, [showToast, snapshotPassphrase]);
+
+const handleChooseBackupFolder = useCallback(async () => {
+  if (!supportsFileSystemAccess()) {
+    Swal.fire({
+      title: 'Not supported by this browser',
+      text: 'This browser does not support the File System Access API. Backups will be downloaded to the usual downloads folder instead.',
+      icon: 'info',
+    });
+    return;
+  }
+  try {
+    await chooseBackupDirectory();
+    setBackupSettings((prev) => ({ ...(prev || {}), backupFolderConnected: true }));
+    showToast('Backup folder connected. Automatic backups will be written there.', 'success');
+  } catch (err) {
+    if (err?.name === 'AbortError') return;
+    showToast(`Could not use that folder: ${err?.message || 'unknown error'}`, 'error');
+  }
+}, [showToast]);
+
+const handleSaveBackupSettings = useCallback(async (patch) => {
+  try {
+    const saved = await saveBackupSettings(patch);
+    setBackupSettings(saved);
+    await scheduleAutoBackup({ settings: saved });
+    showToast('Data protection settings saved.', 'success');
+  } catch (err) {
+    showToast(`Could not save the settings: ${err?.message || 'Unknown error'}`, 'error');
+  }
+}, [showToast]);
+
+// ── CLAIM UNSYNCED RECORDS FROM A LOST DEVICE ──
+const handleClaimUnsynced = useCallback(async (file) => {
+  if (!file) return;
+  setIsDbProcessing(true);
+  try {
+    const result = await claimUnsyncedRecords(file);
+    if (!result?.ok) {
+      showToast(`Could not import that file: ${result?.error || 'invalid file'}.`, 'error');
+      return;
+    }
+    showToast(
+      `Recovered ${result.inserted.length} record(s). ${result.skipped.length} kept the newer local copy, ` +
+      `${result.conflicts.length} need conflict review.`,
+      'success'
+    );
+    if (typeof forceSyncToRemote === 'function') {
+      await forceSyncToRemote();
+    }
+    fetchDatabaseConflicts();
+    if (typeof fetchResidents === 'function') fetchResidents();
+  } catch (err) {
+    showToast(`Recovery failed: ${err?.message || 'Unknown error'}`, 'error');
+  } finally {
+    setIsDbProcessing(false);
+  }
+}, [showToast]);
 
 useEffect(() => {
   if (role === 'admin' && db) {
@@ -10008,6 +10268,8 @@ const handleGenerateCredentials = async (resident) => {
             syncDetail={syncDetail}
             logout={logout}
             forceSync={forceSyncToRemote}
+            onSyncNow={handleSyncNow}
+            isSyncing={isSyncingNow}
             notifUnread={notifUnread}
             notifItems={notifItems}
             notifPanelOpen={notifPanelOpen}
@@ -10016,6 +10278,18 @@ const handleGenerateCredentials = async (resident) => {
           />
 
           <div className="content">
+            {/* ════════════════════════════════════════
+                PERSISTENT WARNING: unsynced offline changes
+                ════════════════════════════════════════ */}
+            {pendingCount > 0 && !bannerDismissed && (
+              <OfflineSyncBanner
+                pendingCount={pendingCount}
+                isOnline={isOnline}
+                isSyncing={isSyncingNow}
+                onSyncNow={handleSyncNow}
+                onDismiss={() => setBannerDismissed(true)}
+              />
+            )}
             {/* ════════════════════════════════════════
                 SCREEN: DASHBOARD
                 ════════════════════════════════════════ */}
@@ -15391,17 +15665,45 @@ const handleGenerateCredentials = async (resident) => {
                                       <div>
                                         <strong style={{ color: 'var(--accent)', display: 'block', marginBottom: '4px' }}>Version A (Local/Winning)</strong>
                                         <span style={{ color: 'var(--text)' }}>Purok: {item.docA?.purok || 'N/A'}</span>
+                                        <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginTop: '2px' }}>
+                                          {item.timeA ? formatConflictTime(item.timeA) : 'Unknown time'}
+                                        </span>
                                       </div>
                                       <div>
                                         <strong style={{ color: 'var(--amber)', display: 'block', marginBottom: '4px' }}>Version B (Conflicting)</strong>
                                         <span style={{ color: 'var(--text)' }}>Purok: {item.docB?.purok || 'N/A'}</span>
+                                        <span style={{ color: 'var(--muted)', display: 'block', fontSize: '11px', marginTop: '2px' }}>
+                                          {item.timeB ? formatConflictTime(item.timeB) : 'Unknown time'}
+                                        </span>
                                       </div>
                                     </div>
 
+                                    {/* Field-level diff preview */}
+                                    {Array.isArray(item.diff) && item.diff.length > 0 && (
+                                      <div style={{ marginTop: '10px', fontSize: '12px', color: 'var(--muted)' }}>
+                                        <strong style={{ color: 'var(--text)' }}>{item.diff.length} field(s) differ:</strong>{' '}
+                                        {item.diff.map((d) => d.label).join(', ')}
+                                      </div>
+                                    )}
+
                                     {/* Actions */}
-                                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end' }}>
-                                      <button className="btn btn-p btn-sm" onClick={() => typeof handleKeepVersionA === 'function' && handleKeepVersionA(item)}>Keep Version A</button>
+                                    <div style={{ display: 'flex', gap: '8px', marginTop: '12px', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+                                      <button
+                                        className="btn btn-p btn-sm"
+                                        onClick={() => handleOpenMerge(item)}
+                                        title="Choose which version to keep for each field — nothing is thrown away"
+                                      >
+                                        Merge Fields…
+                                      </button>
+                                      <button className="btn btn-g btn-sm" onClick={() => typeof handleKeepVersionA === 'function' && handleKeepVersionA(item)}>Keep Version A</button>
                                       <button className="btn btn-g btn-sm" onClick={() => typeof handleKeepVersionB === 'function' && handleKeepVersionB(item)}>Keep Version B</button>
+                                      <button
+                                        className="btn btn-g btn-sm"
+                                        onClick={() => typeof handleKeepBoth === 'function' && handleKeepBoth(item)}
+                                        title="Save Version B as a separate record so nothing is lost"
+                                      >
+                                        Keep Both
+                                      </button>
                                     </div>
                                   </div>
                                 ))}
@@ -15437,6 +15739,401 @@ const handleGenerateCredentials = async (resident) => {
                   </div>
                 )}
 
+
+            {/* ════════════════════════════════════════
+                SCREEN: DATA PROTECTION (Admin only)
+                Automated backups, device awareness and recovery
+                ════════════════════════════════════════ */}
+                {role === 'admin' && screen === 'data-protection' && (
+                  <div className="screen active certificate-lifecycle-screen" style={{ padding: '24px', maxWidth: '1000px', margin: '0 auto' }}>
+                    <div style={{ marginBottom: '16px' }}>
+                      <h3 style={{ margin: 0, fontSize: '18px', fontWeight: 800, color: 'var(--text)' }}>Data Protection</h3>
+                      <p style={{ margin: '4px 0 0', fontSize: '13px', color: 'var(--muted)' }}>
+                        Automated backups, device awareness and recovery of records from a lost device.
+                      </p>
+                    </div>
+
+                    {/* Overwritten-edit alerts and device-loss warnings */}
+                    {(staffAlerts.length > 0 || (deviceRisk?.risky && !deviceRisk?.dismissed)) && (
+                      <div className="card" style={{ padding: '14px', marginBottom: '16px', border: '1px solid rgba(245,158,11,0.5)', background: 'rgba(245,158,11,0.08)' }}>
+                        {staffAlerts.length > 0 && (
+                          <div style={{ marginBottom: deviceRisk?.risky ? '10px' : 0 }}>
+                            <strong style={{ fontSize: '13px' }}>Your overwritten edits ({staffAlerts.length})</strong>
+                            {staffAlerts.map((alert) => (
+                              <div key={alert._id} style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>
+                                • {alert.message || `Your edit to ${alert.recordName} was overwritten during synchronization.`}
+                                {Array.isArray(alert.fields) && alert.fields.length > 0
+                                  ? ` (fields: ${alert.fields.join(', ')})`
+                                  : ''}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                        {deviceRisk?.risky && !deviceRisk?.dismissed && (
+                          <div>
+                            <strong style={{ fontSize: '13px' }}>Possible unsynced records on another device</strong>
+                            {(deviceRisk.reasons || []).map((reason, index) => (
+                              <div key={index} style={{ fontSize: '12px', color: 'var(--muted)', marginTop: '4px' }}>• {reason}</div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    <div className="card" style={{ padding: '16px' }}>
+                {/* ── DATA PROTECTION: BACKUPS, DEVICES & RECOVERY ── */}
+                <details open>                  <summary style={{ cursor: 'pointer', fontSize: '14px', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '10px', listStyle: 'none' }}>
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                        <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                      </svg>
+                      Data Protection — Backups, Devices &amp; Recovery
+                      <span style={{
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        padding: '2px 10px',
+                        borderRadius: '20px',
+                        border: '1px solid var(--border)',
+                        color: backupSettings?.autoBackupEnabled ? 'var(--green)' : 'var(--muted)',
+                      }}>
+                        {backupSettings?.autoBackupEnabled ? 'Auto-backup on' : 'Auto-backup off'}
+                      </span>
+                    </summary>
+
+                    {/* END-OF-DAY SYNC CHECKPOINT */}
+                    <div style={{ marginTop: '16px', padding: '14px', border: '1px solid var(--border)', borderRadius: '10px' }}>
+                      <h5 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 800 }}>Close for the day</h5>
+                      <p style={{ margin: '0 0 10px', fontSize: '11.5px', color: 'var(--muted)' }}>
+                        Verifies that every local change has been replicated before the device is shut down, and
+                        records the confirmation in the audit log. Records that are still queued exist only on this
+                        device and would be lost if it were damaged, formatted or stolen.
+                      </p>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                        <button
+                          type="button"
+                          className="btn btn-p btn-sm"
+                          onClick={handleCloseForTheDay}
+                          disabled={isDbProcessing}
+                        >
+                          {isDbProcessing ? 'Checking…' : 'Close for the day'}
+                        </button>
+                        <span style={{ fontSize: '11.5px', color: (pendingCount || 0) > 0 ? 'var(--red)' : 'var(--muted)' }}>
+                          {pendingCount > 0
+                            ? `${pendingCount} change(s) currently unsynced — the close will be blocked until they replicate.`
+                            : 'All local changes are currently replicated.'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div style={{ marginTop: '16px', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+
+                      {/* AUTOMATED BACKUPS */}
+                      <div>
+                        <h5 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 800 }}>Automated local backups</h5>
+                        <p style={{ margin: '0 0 12px', fontSize: '11.5px', color: 'var(--muted)' }}>
+                          A full JSON snapshot of this device is written on a schedule so nothing is lost if the
+                          device is stolen, formatted or damaged.
+                        </p>
+
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!backupSettings?.autoBackupEnabled}
+                              onChange={(e) => handleSaveBackupSettings({ autoBackupEnabled: e.target.checked })}
+                            />
+                            Enable automatic backups
+                          </label>
+
+                          <div>
+                            <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>
+                              Backup every (hours)
+                            </label>
+                            <input
+                              type="number"
+                              min="1"
+                              max="168"
+                              className="fc"
+                              value={backupSettings?.autoBackupIntervalHours ?? 12}
+                              onChange={(e) => setBackupSettings((prev) => ({ ...(prev || {}), autoBackupIntervalHours: Number(e.target.value) || 12 }))}
+                              onBlur={() => handleSaveBackupSettings({ autoBackupIntervalHours: backupSettings?.autoBackupIntervalHours ?? 12 })}
+                            />
+                          </div>
+                        </div>
+
+                            <div style={{ display: 'flex', gap: '10px', marginTop: '14px', flexWrap: 'wrap' }}>
+                              <button type="button" className="btn btn-p" onClick={handleRunBackupNow} disabled={isDbProcessing}>
+                                {isDbProcessing ? 'Working…' : 'Back Up Now'}
+                              </button>
+                              {supportsFileSystemAccess() && (
+                                <button type="button" className="btn btn-g" onClick={handleChooseBackupFolder}>
+                                  {backupSettings?.backupFolderConnected ? 'Change Backup Folder' : 'Choose Backup Folder'}
+                                </button>
+                              )}
+                              <button
+                                type="button"
+                                className="btn btn-g"
+                                onClick={async () => {
+                                  const snapshot = await exportLocalSnapshot();
+                                  downloadSnapshot(snapshot, buildSnapshotName({ timestamp: snapshot.exportDate }));
+                                  showToast('Snapshot downloaded (with integrity checksum).', 'success');
+                                }}
+                              >
+                                Download Snapshot
+                              </button>
+                            </div>
+
+                            {/* Optional passphrase encryption (WebCrypto AES-256-GCM) */}
+                            <div style={{ marginTop: '14px', padding: '12px', border: '1px solid var(--border)', borderRadius: '8px' }}>
+                              <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '12.5px', fontWeight: 700, marginBottom: '8px' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={!!backupSettings?.encryptSnapshots}
+                                  disabled={!encryptionSupported}
+                                  onChange={(e) => handleSaveBackupSettings({ encryptSnapshots: e.target.checked })}
+                                />
+                                Encrypt snapshots with a passphrase (AES-256-GCM)
+                              </label>
+                              {!encryptionSupported && (
+                                <p style={{ margin: '0 0 8px', fontSize: '11.5px', color: 'var(--amber)' }}>
+                                  Encryption needs a secure context (https, or http://localhost). On a plain-HTTP LAN
+                                  address the browser does not expose WebCrypto, so snapshots are written unencrypted —
+                                  the integrity checksum still applies.
+                                </p>
+                              )}
+                              {backupSettings?.encryptSnapshots && (
+                                <input
+                                  type="password"
+                                  className="fc"
+                                  placeholder="Snapshot passphrase"
+                                  value={snapshotPassphrase}
+                                  onChange={(e) => setSnapshotPassphrase(e.target.value)}
+                                  autoComplete="new-password"
+                                />
+                              )}
+                            </div>
+
+
+                        <p style={{ margin: '10px 0 0', fontSize: '11.5px', color: 'var(--muted)' }}>
+                          {backupSettings?.lastAutoBackupAt
+                            ? `Last automatic backup: ${new Date(backupSettings.lastAutoBackupAt).toLocaleString()} — ${backupSettings.lastAutoBackupDocCount || 0} documents (${backupSettings.lastAutoBackupPath || 'n/a'})`
+                            : 'No automatic backup has run on this device yet.'}
+                          {backupSettings?.backupFolderConnected
+                            ? ' Backups are written to the connected folder.'
+                            : ' This browser cannot choose a folder automatically — backups are downloaded instead.'}
+                        </p>
+                      </div>
+
+                      {/* CLOUD BACKUP */}
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                        <h5 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 800 }}>Off-site (cloud) backup</h5>
+                        <p style={{ margin: '0 0 12px', fontSize: '11.5px', color: 'var(--muted)' }}>
+                          Optional. Uploads the same snapshot to an S3-compatible endpoint or Google Drive when an
+                          API key is configured.
+                        </p>
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                          <label style={{ display: 'flex', alignItems: 'center', gap: '10px', fontSize: '13px', fontWeight: 600, cursor: 'pointer' }}>
+                            <input
+                              type="checkbox"
+                              checked={!!backupSettings?.cloudUploadEnabled}
+                              onChange={(e) => handleSaveBackupSettings({ cloudUploadEnabled: e.target.checked })}
+                            />
+                            Upload snapshots to the cloud
+                          </label>
+                          <input
+                            type="url"
+                            className="fc"
+                            placeholder="https://bucket.example.com/backups"
+                            value={backupSettings?.cloudUploadUrl || ''}
+                            onChange={(e) => setBackupSettings((prev) => ({ ...(prev || {}), cloudUploadUrl: e.target.value }))}
+                            onBlur={() => handleSaveBackupSettings({ cloudUploadUrl: backupSettings?.cloudUploadUrl || '' })}
+                          />
+                          <input
+                            type="password"
+                            className="fc"
+                            placeholder="API key"
+                            value={backupSettings?.cloudUploadApiKey || ''}
+                            onChange={(e) => setBackupSettings((prev) => ({ ...(prev || {}), cloudUploadApiKey: e.target.value }))}
+                            onBlur={() => handleSaveBackupSettings({ cloudUploadApiKey: backupSettings?.cloudUploadApiKey || '' })}
+                          />
+                          <select
+                            className="fc"
+                            value={backupSettings?.cloudUploadProvider || 's3'}
+                            onChange={(e) => handleSaveBackupSettings({ cloudUploadProvider: e.target.value })}
+                          >
+                            <option value="s3">S3-compatible</option>
+                            <option value="google-drive">Google Drive</option>
+                          </select>
+                        </div>
+                      </div>
+
+                      {/* REGISTERED DEVICES (server-side device registry) */}
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                          <div>
+                            <h5 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 800 }}>Registered devices</h5>
+                            <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--muted)' }}>
+                              Devices that still hold unsynced records are flagged below. A device that stops reporting
+                              while it has queued changes may have been lost before it could sync.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-g btn-sm"
+                            onClick={loadRegisteredDevices}
+                            disabled={isDbProcessing}
+                          >
+                            {isDbProcessing ? 'Refreshing…' : 'Refresh'}
+                          </button>
+                        </div>
+
+                        {registeredDevicesError && (
+                          <p style={{ margin: '10px 0 0', fontSize: '12px', color: 'var(--red)' }}>
+                            {registeredDevicesError}
+                          </p>
+                        )}
+
+                        {registeredDevices.length === 0 ? (
+                          <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '10px 0 0' }}>
+                            {registeredDevicesError
+                              ? 'The device registry could not be loaded.'
+                              : 'No devices have registered yet. Devices appear here after their first heartbeat.'}
+                          </p>
+                        ) : (
+                          <>
+                            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap', margin: '10px 0' }}>
+                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 9px', borderRadius: '999px', border: '1px solid var(--border)' }}>
+                                {registeredDevicesSummary.total || 0} registered
+                              </span>
+                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 9px', borderRadius: '999px', border: '1px solid var(--green)', color: 'var(--green)' }}>
+                                {registeredDevicesSummary.online || 0} online
+                              </span>
+                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 9px', borderRadius: '999px', border: '1px solid var(--amber)', color: 'var(--amber)' }}>
+                                {registeredDevicesSummary.stale || 0} stale
+                              </span>
+                              <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 9px', borderRadius: '999px', border: '1px solid var(--red)', color: 'var(--red)' }}>
+                                {registeredDevicesSummary.possiblyLost || 0} possibly lost
+                              </span>
+                              {registeredDevicesSummary.devicesHoldingUnsynced > 0 && (
+                                <span style={{ fontSize: '11px', fontWeight: 700, padding: '3px 9px', borderRadius: '999px', border: '1px solid var(--red)', color: 'var(--red)' }}>
+                                  {registeredDevicesSummary.devicesHoldingUnsynced} holding unsynced records
+                                </span>
+                              )}
+                            </div>
+
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                              {registeredDevices.map((device) => {
+                                const badge = {
+                                  online: { label: 'Online', color: 'var(--green)' },
+                                  stale: { label: 'Stale', color: 'var(--amber)' },
+                                  'possibly-lost': { label: 'Possibly lost', color: 'var(--red)' },
+                                }[device.status] || { label: device.status, color: 'var(--muted)' };
+
+                                return (
+                                  <div
+                                    key={device.deviceId}
+                                    style={{
+                                      display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px',
+                                      padding: '8px 10px', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px',
+                                    }}
+                                  >
+                                    <div>
+                                      <strong>{device.label}</strong>
+                                      {device.deviceId === getDeviceId() && (
+                                        <span style={{ marginLeft: '8px', fontSize: '10px', color: 'var(--green)' }}>(this device)</span>
+                                      )}
+                                      <div style={{ fontSize: '10.5px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                                        {device.deviceId} · assigned to {device.assignedUser}
+                                      </div>
+                                      <div style={{ fontSize: '10.5px', color: 'var(--muted)' }}>
+                                        Last heartbeat: {device.lastHeartbeatAt ? new Date(device.lastHeartbeatAt).toLocaleString() : 'never'}
+                                        {device.lastSuccessfulSyncAt
+                                          ? ` · last successful sync: ${new Date(device.lastSuccessfulSyncAt).toLocaleString()}`
+                                          : ''}
+                                      </div>
+                                    </div>
+                                    <div style={{ textAlign: 'right', display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'flex-end' }}>
+                                      <span
+                                        style={{
+                                          fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px',
+                                          border: `1px solid ${badge.color}`, color: badge.color,
+                                        }}
+                                      >
+                                        {badge.label}
+                                      </span>
+                                      <span style={{ fontWeight: 700, color: (device.pendingChangeCount || 0) > 0 ? 'var(--red)' : 'var(--muted)' }}>
+                                        {device.pendingChangeCount || 0} unsynced
+                                      </span>
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </>
+                        )}
+
+                        <p style={{ margin: '10px 0 0', fontSize: '10.5px', color: 'var(--muted)' }}>
+                          A device is flagged <strong>stale</strong> when it has not reported for longer than{' '}
+                          {registeredDeviceStaleHours || 24} hours, and <strong>possibly lost</strong> when it was
+                          silent while still holding unsynced changes.
+                        </p>
+                      </div>
+
+                      {/* LOCAL DEVICE VIEW (replicated device_status documents) */}
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                        <h5 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 800 }}>Known devices (offline view)</h5>
+                        <p style={{ margin: '0 0 12px', fontSize: '11.5px', color: 'var(--muted)' }}>
+                          This device: <strong>{getDeviceLabel()}</strong> ({getDeviceId()}). These entries come from
+                          replicated documents, so they remain visible when the server is unreachable.
+                        </p>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {knownDevices.length === 0 ? (
+                            <p style={{ fontSize: '12px', color: 'var(--muted)', margin: 0 }}>No other devices reported yet.</p>
+                          ) : (
+                            knownDevices.map((device) => (
+                              <div
+                                key={device.deviceId}
+                                style={{
+                                  display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px',
+                                  padding: '8px 10px', border: '1px solid var(--border)', borderRadius: '8px', fontSize: '12px',
+                                }}
+                              >
+                                <div>
+                                  <strong>{device.label}</strong>
+                                  {device.isCurrent && <span style={{ marginLeft: '8px', fontSize: '10px', color: 'var(--green)' }}>(this device)</span>}
+                                  <div style={{ fontSize: '10.5px', color: 'var(--muted)', fontFamily: 'var(--mono)' }}>
+                                    Last seen: {device.lastSeenAt ? new Date(device.lastSeenAt).toLocaleString() : 'unknown'}
+                                  </div>
+                                </div>
+                                <span style={{ fontWeight: 700, color: (device.pendingCount || 0) > 0 ? 'var(--red)' : 'var(--muted)' }}>
+                                  {device.pendingCount || 0} unsynced
+                                </span>
+                              </div>
+                            ))
+                          )}
+                        </div>
+                      </div>
+
+                      {/* RECOVERY */}
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                        <h5 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 800 }}>Claim unsynced records</h5>
+                        <p style={{ margin: '0 0 12px', fontSize: '11.5px', color: 'var(--muted)' }}>
+                          Import a backup file taken from a lost device. Documents that do not exist here are added;
+                          documents that exist are only replaced when the backup copy is newer.
+                        </p>
+                        <input
+                          type="file"
+                          accept="application/json,.json"
+                          onChange={(e) => {
+                            const file = e.target.files?.[0];
+                            if (file) handleClaimUnsynced(file);
+                            e.target.value = '';
+                          }}
+                        />
+                      </div>
+                    </div>
+                  </details>
+                    </div>
+                  </div>
+                )}
             {/* ════════════════════════════════════════
                 SCREEN: AUDIT LOG (Admin only)
                 ════════════════════════════════════════ */}
@@ -17252,6 +17949,20 @@ className="modal-card"
                     </div>
                   ))}
                 </div>
+
+                {/* ════════════════════════════════════════
+                    FIELD-LEVEL CONFLICT MERGE MODAL
+                    ════════════════════════════════════════ */}
+                <ConflictFieldMergeModal
+                  open={!!mergeTarget}
+                  conflict={mergeTarget}
+                  isApplying={isMerging}
+                  onClose={() => setMergeTarget(null)}
+                  onApply={handleApplyFieldMerge}
+                  onKeepVersionA={handleKeepVersionA}
+                  onKeepVersionB={handleKeepVersionB}
+                />
+
                 {/* Credentials Display Modal */}
 {credentialsModal?.show && (
   <div 

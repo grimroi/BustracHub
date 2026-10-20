@@ -10,7 +10,7 @@
     "cleanup-legacy": "node scripts/cleanup-legacy.js",
     "diagnose": "node scripts/diagnose-remaining.js",
     "seed": "node seed.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "node --test \"test/**/*.test.js\""
   },
   "keywords": [],
   "author": "",

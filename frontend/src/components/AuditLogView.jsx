@@ -226,12 +226,15 @@ export default function AuditLogView() {
                   <div className="al-d" style={{ wordBreak: 'break-word', whiteSpace: 'normal', lineHeight: '1.4', marginTop: '4px', fontSize: '12px', color: 'var(--muted)' }}>
                     User: {userDisplay} {log.details ? ` · ${log.details}` : ''}
                   </div>
-                  {log.meta && log.meta.conflict && (
+                  {log.meta && (log.meta.conflict || log.meta.strategy) && (
                     <div style={{ fontSize: '11px', color: 'var(--muted)', marginTop: '2px', fontFamily: 'var(--mono)' }}>
                       strategy: {log.meta.strategy || 'n/a'}
                       {log.meta.winnerRev ? ` · winner: ${log.meta.winnerRev}` : ''}
                       {Array.isArray(log.meta.loserRevs) && log.meta.loserRevs.length
                         ? ` · discarded: ${log.meta.loserRevs.join(', ')}`
+                        : ''}
+                      {Array.isArray(log.meta.mergedFields) && log.meta.mergedFields.length
+                        ? ` · merged fields: ${log.meta.mergedFields.join(', ')}`
                         : ''}
                     </div>
                   )}

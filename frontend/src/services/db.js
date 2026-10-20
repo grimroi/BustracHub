@@ -2,6 +2,9 @@ import PouchDB from 'pouchdb-browser';
 import PouchDBFind from 'pouchdb-find';
 import { resolveApiBaseUrl } from '../utils/apiBase';
 import { getToken, clearToken } from '../utils/tokenStore';
+// Dependency-free helper (no imports of its own) so using it here cannot
+// create a circular import.
+import { buildMergedDocument, computeConflictDiff } from '../utils/conflictMerge';
 
 PouchDB.plugin(PouchDBFind);
 
@@ -125,6 +128,104 @@ const recordSyncedDoc = (id, rev) => {
   if (syncedRevs[id] === rev) return false;
   syncedRevs[id] = rev;
   return true;
+};
+
+// Counts the documents that are still waiting to be pushed to the server.
+//
+// A document counts as pending while its CURRENT local revision differs from
+// the last revision confirmed as pushed (see `syncedRevs` above). The check is
+// a purely local metadata read, so it works while offline and never causes a
+// network round trip.
+//
+// The replication filter is applied so `_local/` / `_design/` documents and
+// documents the current role may not replicate are never counted.
+//
+// Performance: scanning every document WITH its body is expensive on a large
+// database, so the set of replicable ids is computed once and then kept up to
+// date incrementally (see `noteReplicableDoc`). The recurring scan therefore
+// only reads document ids and revisions.
+let replicableIds = null;
+let replicableIdsStale = false;
+let replicableIdsRefreshTimer = null;
+
+const isReplicableDoc = (doc, filter) => {
+  if (!doc || !doc._id) return false;
+  const id = String(doc._id);
+  if (id.startsWith('_local/') || id.startsWith('_design/')) return false;
+  if (doc._deleted) return false;
+  try {
+    return filter(doc) !== false;
+  } catch {
+    return false;
+  }
+};
+
+/** Recomputes the set of document ids that the current role may replicate. */
+export const refreshReplicableIds = async () => {
+  const filter = makeReplicationFilter();
+  const res = await localDb.allDocs({ include_docs: true });
+  const set = new Set();
+  for (const row of res.rows) {
+    if (isReplicableDoc(row.doc, filter)) set.add(row.doc._id);
+  }
+  replicableIds = set;
+  replicableIdsStale = false;
+  return set;
+};
+
+const scheduleReplicableRefresh = () => {
+  if (replicableIdsRefreshTimer) return;
+  replicableIdsRefreshTimer = setTimeout(() => {
+    replicableIdsRefreshTimer = null;
+    refreshReplicableIds().catch(() => {});
+  }, 1000);
+};
+
+/**
+ * Keeps the replicable-id set in sync after a local change.
+ * @param {object} doc the changed document
+ */
+export const noteReplicableDoc = (doc) => {
+  if (!doc || !doc._id) return;
+  if (!replicableIds) {
+    // The set has not been built yet — flag it so the next count computation
+    // rebuilds it and picks this document up.
+    replicableIdsStale = true;
+    scheduleReplicableRefresh();
+    return;
+  }
+  const id = String(doc._id);
+  if (id.startsWith('_local/') || id.startsWith('_design/')) {
+    replicableIds.delete(doc._id);
+    return;
+  }
+  if (doc._deleted) {
+    replicableIds.delete(doc._id);
+    return;
+  }
+  const filter = makeReplicationFilter();
+  if (isReplicableDoc(doc, filter)) replicableIds.add(doc._id);
+  else replicableIds.delete(doc._id);
+};
+
+export const getPendingSyncCount = async () => {
+  try {
+    if (!replicableIds || replicableIdsStale) {
+      await refreshReplicableIds();
+    }
+    const res = await localDb.allDocs();
+    let pending = 0;
+    for (const row of res.rows) {
+      if (!replicableIds.has(row.id)) continue;
+      const rev = row.value?.rev;
+      if (!rev) continue;
+      if (syncedRevs[row.id] !== rev) pending += 1;
+    }
+    return pending;
+  } catch (err) {
+    log('warn', 'Pending sync count failed:', err?.message || err);
+    return 0;
+  }
 };
 
 export const onSyncStatusChange = (cb) => {
@@ -731,6 +832,7 @@ export const forceSyncToRemote = async () => {
 };
 
 export const resolveDbConflicts = async () => {
+  const autoResolved = [];
   try {
     const result = await localDb.allDocs({ include_docs: true, conflicts: true });
     for (const row of result.rows) {
@@ -748,22 +850,56 @@ export const resolveDbConflicts = async () => {
             const loserDoc = await localDb.get(row.id, { rev: conflictRev });
             const winnerTime = new Date(currentWinner.updatedAt || currentWinner.createdAt || 0).getTime();
             const loserTime = new Date(loserDoc.updatedAt || loserDoc.createdAt || 0).getTime();
-            const combinedHistory = [...(currentWinner.history || []), ...(loserDoc.history || [])];
-            const uniqueHistory = Array.from(
-              new Map(combinedHistory.map(h => [h.timestamp || JSON.stringify(h), h])).values()
-            ).sort((a, b) => new Date(a.timestamp || 0) - new Date(b.timestamp || 0));
-            
-            let mergedDoc;
-            if (loserTime > winnerTime) {
-              mergedDoc = { ...currentWinner, ...loserDoc, status: loserDoc.status || currentWinner.status, history: uniqueHistory, updatedAt: new Date(loserTime).toISOString(), synced: true, isSynced: true };
-            } else {
-              mergedDoc = { ...loserDoc, ...currentWinner, status: currentWinner.status || loserDoc.status, history: uniqueHistory, updatedAt: new Date(winnerTime).toISOString(), synced: true, isSynced: true };
-            }
+
+            // Field-level "keep latest": for every field that differs, the
+            // value from the NEWER revision wins, but a field that only
+            // exists in one revision is ALWAYS kept. The previous behaviour
+            // copied one whole document over the other, which silently threw
+            // away the other staff member's valid edits.
+            const diff = computeConflictDiff(currentWinner, loserDoc);
+            const newerIsLoser = loserTime > winnerTime;
+            const choices = {};
+            diff.forEach((entry) => {
+              const chosen = newerIsLoser ? 'B' : 'A';
+              // A field that only exists on one side has no real conflict:
+              // keep the value that exists, regardless of the timestamps.
+              if (entry.presentA !== entry.presentB) {
+                choices[entry.field] = entry.presentB ? 'B' : 'A';
+                return;
+              }
+              choices[entry.field] = chosen;
+            });
+
+            const { doc: mergedDocBase, mergedFields } = buildMergedDocument(
+              currentWinner,
+              loserDoc,
+              choices,
+              { base: currentWinner }
+            );
+
+            const mergedDoc = {
+              ...mergedDocBase,
+              status: currentWinner.status || loserDoc.status,
+              updatedAt: new Date(newerIsLoser ? loserTime : winnerTime).toISOString(),
+              synced: true,
+              isSynced: true,
+            };
             mergedDoc._id = currentWinner._id;
             mergedDoc._rev = currentWinner._rev;
             const putRes = await localDb.put(mergedDoc);
             currentWinner._rev = putRes.rev;
             await localDb.remove(loserDoc._id, conflictRev);
+
+            autoResolved.push({
+              docId: row.id,
+              docA: currentWinner,
+              docB: loserDoc,
+              strategy: 'field-merge',
+              winnerSide: newerIsLoser ? 'B' : 'A',
+              mergedFields,
+              fieldChoices: choices,
+              autoResolved: true,
+            });
           } catch (conflictErr) {
             console.warn(`Conflict resolution skip for ${row.id}:`, conflictErr.message);
           }
@@ -772,6 +908,19 @@ export const resolveDbConflicts = async () => {
     }
   } catch (err) {
     console.error('Failed during conflict resolution:', err);
+  }
+
+  // Notify the UI layer so the staff member whose edit was merged away can be
+  // told about it. Dispatched as an event (instead of importing the alert
+  // service) to keep this low-level module free of circular imports.
+  if (autoResolved.length && typeof window !== 'undefined' && typeof window.dispatchEvent === 'function') {
+    try {
+      window.dispatchEvent(
+        new CustomEvent('bustrac:conflict-auto-resolved', { detail: { conflicts: autoResolved } })
+      );
+    } catch {
+      /* event dispatch must never break sync */
+    }
   }
 };
 

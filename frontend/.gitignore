@@ -25,7 +25,6 @@ desktop.ini
 
 # Testing & Coverage
 coverage/
-__tests__/
 *.log
 
 # Generated Files

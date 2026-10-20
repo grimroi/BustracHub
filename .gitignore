@@ -8,3 +8,7 @@ dist/
 frontend/dev-dist/
 .vite/
 .aider*
+docs/thesis-images/*.session
+docs/thesis-images/*.session.*
+docs/thesis-images/*.lck
+docs/thesis-images/*.lobs

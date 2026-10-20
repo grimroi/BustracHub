@@ -92,7 +92,46 @@ The proxy at `/api/sync/:dbId/*` exposes the full CouchDB HTTP surface to PouchD
 - `certificate_request` — resident certificate requests.
 - `feedback_report` / `feedback` — resident feedback.
 - `audit_log` — audit trail (server-generated for sync writes; client-generated for in-app admin actions).
+- `device_registry_<deviceId>` — server-side registry entry for one staff/admin device (`type: 'device_registry'`). Written **by the server** when the device posts a heartbeat to `POST /api/devices/heartbeat`. Fields: `deviceId`, `label`, `assignedUser` (taken from the authenticated session, never from the request body), `lastHeartbeatAt`, `pendingChangeCount`, `lastSuccessfulSyncAt`, `lastSnapshotAt` (when the device last produced a local snapshot), `status`, `createdAt`, `updatedAt`.
+- `device_status_<deviceId>` — client-written, replicated copy of the same heartbeat state (`type: 'device_status'`). It is an offline convenience copy: it stays visible to other staff devices when the server is unreachable. The **server-side `device_registry` is the authoritative source** for the administrative device list.
 - `offline_auth`, helper docs — operational/diagnostic.
+
+### Device registry and the "possibly lost" status
+
+A staff/admin device reports a heartbeat (device id, label, current pending-change count, last successful sync time) to the server on application load, when connectivity returns, and after every replication cycle. The server keeps the last report per device, which means it can answer the question *"which devices still hold unsynced records?"*.
+
+Because a device that is offline — or lost — cannot send a heartbeat, the **last** report the server received still describes the state that device was in when it went silent. The server derives a status from that (policy in `server/utils/deviceRegistry.js`):
+
+| Status | Condition | Meaning |
+| ------ | --------- | ------- |
+| `online` | heartbeat received within the staleness window | the device is reporting normally |
+| `stale` | no heartbeat within the window, and the last report had `pendingChangeCount = 0` | the device is silent, but it had nothing queued |
+| `possibly-lost` | no heartbeat within the window, and the last report had `pendingChangeCount > 0` | the device went silent **while holding unsynced records** — the device-loss scenario |
+
+The staleness window defaults to 24 hours and is configurable per request (`?staleHours=`) or per deployment (`DEVICE_STALE_HOURS`).
+
+**Scope limit:** only `admin` and `staff` devices are registered (`POST /api/devices/heartbeat` is restricted to those roles), and only `admin` may read the list (`GET /api/devices`). Resident devices are not registered; see `docs/REMOTE_WIPE_FEASIBILITY.md` and the Chapter 5 recommendations for the follow-up.
+
+### Mandatory end-of-day sync checkpoint
+
+The replication queue is the one place where a record exists on exactly one device. The checkpoint (`frontend/src/services/syncCheckpoint.js`) turns that into an explicit procedure:
+
+1. The **Close for the day** control (admin portal → Data Protection) measures the queue with `getPendingSyncCount()`.
+2. If the queue is **not** empty, a **non-dismissible** warning is raised (`buildSyncCheckpointAlertOptions()`: no cancel button, no outside-click dismissal, no Escape dismissal) that states the pending count and offers a **Sync Now** action.
+3. A replication cycle is attempted. The checkpoint passes **only** when the queue is empty afterwards.
+4. On success an `audit_log` entry with action **`END_OF_DAY_SYNC_CONFIRMED`** is written, carrying `deviceId`, `actor`, `pendingAtStart`, `syncedCount` and `timestamp` (both in the structured `meta` payload and in the human-readable `details`).
+5. On a blocked close **no** audit entry is written, and the queued records are left untouched — the checkpoint never discards data.
+
+The policy is implemented in a service module rather than in the page component so that it is unit-testable and can be reused by any future surface.
+
+### Local snapshots and export hardening
+
+The device database can be exported as a JSON snapshot. The artifact carries a schema header (`schema: 'bustrac.snapshot'`, `schemaVersion`), the originating `deviceId`, an **SHA-256 integrity checksum** over the payload, and a file name that carries the device id and a UTC timestamp (`bustrac_snapshot_<deviceId>_<YYYYMMDD-HHMMSS>.json`). A scheduled snapshot runs on a configurable interval (default: daily) and records its time in the `device_registry` document as `lastSnapshotAt`. Snapshots can optionally be encrypted with a passphrase (AES-256-GCM, PBKDF2-SHA-256) where the browser exposes WebCrypto. Full description, format and restore procedure: [`docs/SNAPSHOTS_AND_EXPORT.md`](SNAPSHOTS_AND_EXPORT.md).
+
+### Related assessments
+
+- [`docs/ENCRYPTION_AT_REST_ASSESSMENT.md`](ENCRYPTION_AT_REST_ASSESSMENT.md) — what is protected at rest today (passwords are bcrypt-hashed; the local database, the outbox and the session token are **not** encrypted), the feasibility of encrypting the local PouchDB store, and the trade-offs.
+- [`docs/REMOTE_WIPE_FEASIBILITY.md`](REMOTE_WIPE_FEASIBILITY.md) — why a browser-hosted client cannot be meaningfully remotely wiped, and why server-side session revocation is the correct response to a lost or stolen device.
 
 ## Failure handling
 

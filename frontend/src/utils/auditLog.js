@@ -6,6 +6,7 @@ export async function createAuditLog({
   module,
   recordId = null,
   details = '',
+  meta = null,
 }) {
   try {
     const rawUser = localStorage.getItem('bustrac_user');
@@ -44,6 +45,9 @@ export async function createAuditLog({
       details,
       immutable: true,
       createdAt: timestamp,
+      // Optional structured payload (conflict strategy, merged fields, ...).
+      // Kept out of `details` so the audit table can render it separately.
+      ...(meta && typeof meta === 'object' ? { meta } : {}),
     };
 
     await localDb.put(doc);
@@ -91,15 +95,59 @@ export async function getAuditLogs() {
   }
 }
 
+// Conflict resolution audit entry.
+//
+// The strategy is now recorded explicitly (field-merge / keep-a / keep-b /
+// keep-latest / keep-both) together with the list of fields that were merged
+// and the per-field decisions, so the audit trail answers "what was lost and
+// who decided to lose it".
 export async function logConflictResolution({
   recordId,
-  strategy, // e.g., 'keep_local', 'keep_server', 'manual_merge'
+  docId,            // legacy alias accepted for backward compatibility
+  strategy,         // e.g., 'field-merge', 'keep-a', 'keep-b', 'keep-latest'
   details = '',
+  module = 'SYNC_ENGINE',
+  winnerRev = null,
+  loserRevs = [],
+  mergedFields = [],
+  fieldChoices = null,
+  residentName = '',
+  resolvedBy = '',
+  meta = null,
 }) {
+  const fields = Array.isArray(mergedFields) ? mergedFields : [];
+  const strategyLabel = strategy || 'unspecified';
+
+  const fieldSummary = fields.length
+    ? ` Merged fields: ${fields.join(', ')}.`
+    : ' No differing fields were merged.';
+
+  const choiceSummary = fieldChoices && typeof fieldChoices === 'object'
+    ? ` Field decisions: ${Object.entries(fieldChoices)
+        .map(([field, side]) => `${field}=Version ${side}`)
+        .join(', ')}.`
+    : '';
+
   return createAuditLog({
     action: 'RESOLVE_CONFLICT',
-    module: 'SYNC_ENGINE',
-    recordId,
-    details: `Conflict resolved using strategy: ${strategy}. ${details}`,
+    module: module || 'SYNC_ENGINE',
+    recordId: recordId || docId || null,
+    details:
+      `Conflict resolved using strategy: ${strategyLabel}.` +
+      (residentName ? ` Record: ${residentName}.` : '') +
+      fieldSummary +
+      choiceSummary +
+      (details ? ` ${details}` : ''),
+    meta: {
+      strategy: strategyLabel,
+      recordId: recordId || docId || null,
+      residentName,
+      winnerRev,
+      loserRevs: Array.isArray(loserRevs) ? loserRevs : [],
+      mergedFields: fields,
+      ...(fieldChoices ? { fieldChoices } : {}),
+      ...(resolvedBy ? { resolvedBy } : {}),
+      ...(meta && typeof meta === 'object' ? meta : {}),
+    },
   });
 }

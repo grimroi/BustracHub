@@ -14,6 +14,8 @@ const Topbar = React.memo(function Topbar({
   syncDetail,
   logout,
   forceSync,
+  onSyncNow,
+  isSyncing = false,
   notifUnread = 0,
   notifItems = [],
   notifPanelOpen = false,
@@ -39,6 +41,8 @@ const Topbar = React.memo(function Topbar({
           lastSynced={lastSynced}
           detail={syncDetail}
           onRetry={forceSync}
+          onSyncNow={onSyncNow}
+          isSyncing={isSyncing}
         />
         <div style={{ position: 'relative' }}>
           <button
