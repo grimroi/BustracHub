@@ -235,6 +235,7 @@ const isDirty = useMemo(() => {
                 <option value="Admin">Admin</option>
                 <option value="Staff">Staff</option>
                 <option value="Resident">Resident</option>
+                <option value="VAWC_Officer">VAWC Officer (RA 9262)</option>
               </select>
             </div>
 

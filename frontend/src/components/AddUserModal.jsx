@@ -233,6 +233,7 @@ export default function AddUserModal({ isOpen, onClose, onSave, db, currentUser 
                 <option value="Staff">Staff / Secretary</option>
                 <option value="Admin">Admin</option>
                 <option value="Resident">Resident</option>
+                <option value="VAWC_Officer">VAWC Officer (RA 9262)</option>
               </select>
             </div>
           </div>

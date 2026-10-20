@@ -35,7 +35,7 @@
 
 - `POST /api/login` verifies the password (bcrypt, with legacy SHA‑256 upgrade path) and issues a random opaque `sessionToken` stored in an in-memory `SESSIONS` map (TTL 8h). The token payload includes `username`, `role`, `residentId`, `purok`, `contact`, etc.
 - `GET /api/me` returns the current session user so the frontend rehydrates after a refresh.
-- Middleware: `authenticate` (Bearer token → 401), `requireRole('admin','staff')` for privileged REST endpoints, `authorizeSyncAccess` for the sync proxy.
+- Middleware: `authenticate` (Bearer token → 401), `requireRole('admin','staff')` for privileged REST endpoints, `authorizeSyncAccess` for the sync proxy. `vawc_officer` is a specialised **staff** role: `requireRole` treats it as satisfying any allow-list that grants `'staff'`, and `authorizeSyncAccess` treats it as privileged (full read + write). Its only extra capability is reading **unmasked** VAWC records (see below).
 
 ### Sync proxy with authorization
 
@@ -47,7 +47,17 @@ The proxy at `/api/sync/:dbId/*` exposes the full CouchDB HTTP surface to PouchD
   - `blotter_record` writes are additionally guarded by `RESIDENT_PROTECTED_BLOTTER_FIELDS` inside `verifyExistingDocOwnership` — a resident cannot change case-lifecycle fields shipped by staff/admin (`status`, `summonCount`, `nextHearingDate`, `cfaIssued*`, `resolution`, …). This both fixes the previous 403 (residents may now file their own blotter) and keeps the case lifecycle authoritative.
   - `_bulk_docs` (the write path PouchDB replication actually uses) is fully covered, including tombstones for owned docs.
 - **Admin/Staff:** unrestricted through the proxy.
+- **VAWC officer (`vawc_officer`):** inherits every staff permission and is one of only two roles (`admin`, `vawc_officer`) permitted to read **unmasked** VAWC records.
 - Every resident sync write is annotated **server-side** into an `audit_log` document (`recordResidentAudit`, action `RESIDENT_SYNC_WRITE`). This is important because resident clients keep their own audit entries as `_local/` docs that never replicate — the server-side entry is what admins actually see.
+
+### VAWC confidentiality (RA 9262 §44 / DPA 2012)
+
+A blotter document is VAWC-sensitive when `vawcFlag === true`. Client-side masking alone is **not** a security boundary (a user can call the proxy with curl), so the same redaction is enforced **server-side** in the sync proxy.
+
+- **Policy (single source, two copies):** `server/utils/vawcAccess.js` and `frontend/src/utils/vawcAccess.js` hold the identical policy — `VAWC_SENSITIVE_FIELDS` (`narrative`, `complainantName`, `complainantAddress`, `respondentName`, `respondentAddress`, `contactNumber`) are replaced with `VAWC_REDACTION_MARKER` (`[REDACTED — VAWC]`) for viewers who are **neither** `admin` **nor** `vawc_officer`. `_id`, `type`, `status`, `caseNumber`, `createdAt` stay visible so the case can still be tracked.
+- **Server read redaction (`proxyCouch`):** JSON read responses are buffered and rewritten for non-authorized viewers (single-doc GET, `_all_docs`, `_bulk_get`, `_changes`). `Content-Length` is recomputed after rewriting. Writes and error responses stream through untouched.
+- **Server unmask audit:** when an `admin`/`vawc_officer` is served a read that carries VAWC docs, the proxy writes a `VAWC_UNMASK_ACCESS` `audit_log` entry (`source: 'server-sync-proxy'`), fire-and-forget.
+- **Client render/export boundaries (`frontend/src/pages/DashboardPortal.jsx`):** the blotter masterlist renders from `displayBlotters` (masked), and the blotter detail screen, the Excel export (`handleExportBlotterToExcel`), and the certificate print modal all apply `maskVawcRecords(...)` before any field reaches the DOM or a file. Authorized exports of unmasked VAWC rows are audited (`VAWC_UNMASK_ACCESS`, `via: 'EXPORT'`).
 
 ### Listener
 
@@ -84,11 +94,13 @@ The proxy at `/api/sync/:dbId/*` exposes the full CouchDB HTTP surface to PouchD
 4. **PII‑safe SSE** — the public event stream carries no case/name/schedule data.
 5. **Server-side audit** for resident sync writes; server audit docs only replicate to admin/staff.
 6. **Filtered replication** keeps resident clients from pulling unrelated or privileged data.
+7. **VAWC confidentiality enforced server-side** — the sync proxy redacts VAWC-sensitive fields for anyone who is not `admin`/`vawc_officer` (RA 9262 §44), and logs a `VAWC_UNMASK_ACCESS` audit entry whenever an authorized viewer receives unmasked VAWC data.
+8. **Response security headers** — both the Vite dev server (`server.headers`) and the preview/production server (`preview.headers`, plus the backend) send `Content-Security-Policy`, `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer` and `Permissions-Policy` on every path (ZAP rules 10038/10020/10021 satisfied).
 
 ## Document model (CouchDB `bustrachub_db`)
 
 - `user_<username>` — account record (role, `passwordHash`, profile fields, `residentId`).
-- `blotter_report` / `blotter_record` — blotter cases (staff/admin file `blotter_report`; residents file their own `blotter_record`; both are read by the dashboard).
+- `blotter_report` / `blotter_record` — blotter cases (staff/admin file `blotter_report`; residents file their own `blotter_record`; both are read by the dashboard). A record with `vawcFlag === true` is a VAWC case and is subject to server-side read redaction (see *VAWC confidentiality* above).
 - `certificate_request` — resident certificate requests.
 - `feedback_report` / `feedback` — resident feedback.
 - `audit_log` — audit trail (server-generated for sync writes; client-generated for in-app admin actions).

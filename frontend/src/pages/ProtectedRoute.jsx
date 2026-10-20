@@ -40,7 +40,9 @@ export default function ProtectedRoute({ children, allowedRoles }) {
   if (allowedRoles && !allowedRoles.includes(role)) {
     console.warn(`Access Denied. Role '${role}' not in [${allowedRoles.join(', ')}]`);
     if (role === 'admin') return <Navigate to="/admin" replace />;
-    if (role === 'staff' || role === 'secretary') return <Navigate to="/staff" replace />;
+    if (role === 'staff' || role === 'secretary' || role === 'vawc_officer') {
+      return <Navigate to="/staff" replace />;
+    }
     return <Navigate to="/" replace />;
   }
 

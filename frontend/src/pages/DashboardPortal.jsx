@@ -33,6 +33,7 @@ import { HearingScheduler } from '../components/HearingScheduler';
 import BlotterCertificatePrintModal from '../components/BlotterCertificatePrintModal';
 import { localDb as db, forceSyncToRemote } from '../services/db';
 import { createAuditLog, logConflictResolution } from '../utils/auditLog';
+import { maskVawcRecords, canUnmaskVawc } from '../utils/vawcAccess';
 import { clearActiveSessionOnly } from '../utils/tokenStore';
 import { exportToExcel } from '../utils/excelExporter';
 import { calculateAge, isValidPHMobile } from '../utils/residentUtils';
@@ -4933,13 +4934,29 @@ const filteredBlotters = sortedBlotters.filter((b) => {
   );
 });
 
+// VAWC confidentiality (RA 9262 §44 / DPA 2012) — RENDER BOUNDARY.
+// Filtering above runs on the raw records (so an authorized officer can still
+// search by name); this DISPLAY-ONLY derivation redacts VAWC-sensitive fields
+// for every viewer who is neither admin nor vawc_officer. All blotter lists in
+// this portal render from `displayBlotters`, so the PII can never reach the
+// DOM for an unauthorized user.
+const vawcViewer = { ...currentUser, role: currentUser.role || role };
+const displayBlotters = maskVawcRecords(filteredBlotters, vawcViewer);
+
 const handleExportBlotterToExcel = () => {
   if (filteredBlotters.length === 0) {
     showToast('Walang data na pwedeng i-export.', 'error');
     return;
   }
-  
-  const exportData = filteredBlotters.map(b => ({
+
+  // VAWC confidentiality (RA 9262 §44 / DPA 2012): redact sensitive fields on
+  // VAWC-flagged rows BEFORE mapping them into the export. A non-authorized
+  // exporter (staff/resident) can never write raw VAWC PII into the file.
+  const viewer = { ...currentUser, role: currentUser.role || role };
+  const exportRows = maskVawcRecords(filteredBlotters, viewer);
+  const canUnmask = canUnmaskVawc(viewer);
+
+  const exportData = exportRows.map(b => ({
     'Case No': b.id || b.trackingNo || b.refNumber || b._id,
     'Complainant': b.complainant || b.complainantName || 'N/A',
     'Respondent': b.respondent || b.respondentName || 'N/A',
@@ -4962,6 +4979,23 @@ const handleExportBlotterToExcel = () => {
       recordId: fileName,
       details: `Admin exported Blotter Masterlist to Excel (${exportData.length} records).`
     });
+    // An authorized viewer exporting VAWC rows that were NOT redacted is an
+    // unmask event and must be audited.
+    if (canUnmask) {
+      const vawcIds = exportRows
+        .filter((b) => b && b.vawcFlag === true)
+        .map((b) => b._id || b.caseNumber)
+        .filter(Boolean);
+      if (vawcIds.length > 0) {
+        createAuditLog({
+          action: 'VAWC_UNMASK_ACCESS',
+          module: 'BLOTTER',
+          recordId: fileName,
+          details: `@${viewer.username || 'unknown'} exported ${vawcIds.length} unmasked VAWC record(s): ${vawcIds.join(', ')}`,
+          meta: { vawcIds, via: 'EXPORT' },
+        });
+      }
+    }
   }
 
   exportToExcel(exportData, fileName, 'BlotterLog');
@@ -14168,7 +14202,7 @@ const handleGenerateCredentials = async (resident) => {
                                 </td>
                               </tr>
                             ) : (
-                            filteredBlotters.map((b) => {
+                            displayBlotters.map((b) => {
                               let currentSummon = Number(b.summonCount || 0);
 
                               if (currentSummon === 0 && b.status) {
@@ -14369,7 +14403,13 @@ const handleGenerateCredentials = async (resident) => {
                 SCREEN: BLOTTER DETAIL (DYNAMIC LOGIC ROUTE)
                 ════════════════════════════════════════ */}
                 {screen === 'blotter-detail' && (() => {
-  const currentCase = selectedBlotter || complaint || staffCase || {};
+  // VAWC confidentiality — RENDER BOUNDARY for the detail screen. Redact
+  // VAWC-sensitive fields for any viewer who is neither admin nor vawc_officer
+  // before any value is read into `complainantDisplayName`, `caseNarrative`, etc.
+  const currentCase = maskVawcRecords(
+    [selectedBlotter || complaint || staffCase || {}],
+    vawcViewer
+  )[0];
   
   const getPartyName = (partyData, fallbackName) => {
     if (typeof partyData === 'object' && partyData !== null) {
@@ -17633,21 +17673,27 @@ className="modal-card"
           setIsPrintModalOpen(false);
           if (screen !== 'blotter-detail') setSelectedBlotter(null);
         }}
-        blotterData={selectedBlotter ? {
-          ...selectedBlotter,
-          caseNum: selectedBlotter.caseNum || selectedBlotter.trackingNo || selectedBlotter.id || selectedBlotter._id || 'N/A',
-          complainantName: selectedBlotter.complainantName || selectedBlotter.complainant || 'N/A',
-          respondentName: selectedBlotter.respondentName || selectedBlotter.respondent || 'N/A',
-          dateFiled: selectedBlotter.dateFiled || selectedBlotter.date || 'N/A',
-          timeFiled: selectedBlotter.timeFiled || selectedBlotter.incidentTime || selectedBlotter.time || 'N/A',
-          incidentType: selectedBlotter.incidentType || selectedBlotter.type || 'N/A',
-          narrative: selectedBlotter.narrative || selectedBlotter.details || 'No narrative provided.',
-          location: selectedBlotter.location || selectedBlotter.purok || 'Barangay Bustrac',
-          status: selectedBlotter.status || 'Pending',
+        blotterData={selectedBlotter ? (() => {
+          // VAWC confidentiality — RENDER BOUNDARY for the certificate print.
+          // Derive every printed field from the masked record so an
+          // unauthorized user can never print raw VAWC PII.
+          const sb = maskVawcRecords([selectedBlotter], vawcViewer)[0];
+          return {
+          ...sb,
+          caseNum: sb.caseNum || sb.trackingNo || sb.id || sb._id || 'N/A',
+          complainantName: sb.complainantName || sb.complainant || 'N/A',
+          respondentName: sb.respondentName || sb.respondent || 'N/A',
+          dateFiled: sb.dateFiled || sb.date || 'N/A',
+          timeFiled: sb.timeFiled || sb.incidentTime || sb.time || 'N/A',
+          incidentType: sb.incidentType || sb.type || 'N/A',
+          narrative: sb.narrative || sb.details || 'No narrative provided.',
+          location: sb.location || sb.purok || 'Barangay Bustrac',
+          status: sb.status || 'Pending',
           captainName: systemSettings?.punongBarangay || settingsForm?.punongBarangay || 'HON. ANNABELLE E. RULL',
           secretaryName: systemSettings?.luponSecretary || settingsForm?.luponSecretary || 'MRS. MELY M. PRESADO',
           publicDomain: systemSettings?.publicDomain || settingsForm?.publicDomain || ''
-        } : null}
+          };
+        })() : null}
       />
       
       {/* ═══ BARANGAY CLEARANCE PRINT MODAL PORTAL ═══ */}

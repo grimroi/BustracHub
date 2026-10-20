@@ -423,7 +423,7 @@ const makeReplicationFilter = () => {
     }
 
     const role = user.role;
-    const privileged = role === 'admin' || role === 'staff';
+    const privileged = role === 'admin' || role === 'staff' || role === 'vawc_officer';
     const isResident = role === 'resident' && !privileged;
 
     if (isAuditDoc(doc)) return privileged;

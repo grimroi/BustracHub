@@ -185,7 +185,7 @@ export default function LogIn() {
       }).catch(console.warn);
 
       if (userRole === 'admin') navigate('/admin');
-      else if (userRole === 'staff') navigate('/staff');
+      else if (userRole === 'staff' || userRole === 'vawc_officer') navigate('/staff');
       else if (userRole === 'resident') navigate('/resident');
       else navigate('/');
     };
@@ -328,7 +328,7 @@ export default function LogIn() {
           }
 
           if (userRole === 'admin') navigate('/admin');
-          else if (userRole === 'staff') navigate('/staff');
+          else if (userRole === 'staff' || userRole === 'vawc_officer') navigate('/staff');
           else if (userRole === 'resident') {
             const destination = location.state?.redirectTo || '/resident';
             navigate(destination, { state: { activeTab: location.state?.activeTab } });

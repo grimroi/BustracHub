@@ -253,7 +253,12 @@ const authenticate = (req, res, next) => {
 
 const requireRole = (...allowedRoles) => (req, res, next) => {
   const role = String(req.user?.role || '').toLowerCase();
-  if (!allowedRoles.includes(role)) {
+  // `vawc_officer` inherits every `staff` permission (it is a specialised
+  // staff role), so it satisfies any allow-list that grants `staff`. It gains
+  // no other implicit permissions.
+  const satisfies = allowedRoles.includes(role) ||
+    (role === 'vawc_officer' && allowedRoles.includes('staff'));
+  if (!satisfies) {
     return res.status(403).json({ success: false, message: 'Insufficient permissions.' });
   }
   next();
@@ -297,6 +302,11 @@ const WRITE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 // role/passwordHash/status) through the sync proxy — their own profile is a
 // separate `resident`/`resident_profile` document.
 const { assessResidentWrite, assessStoredDocWrite, fetchExistingDoc } = require('./utils/syncAuthorization');
+const {
+  maskVawcRecord,
+  canUnmaskVawc,
+  isVawcRecord,
+} = require('./utils/vawcAccess');
 
 // Read-only CouchDB endpoints that PouchDB sometimes calls with POST but that
 // never mutate documents. Residents are allowed to call these through sync.
@@ -503,7 +513,11 @@ const authorizeResidentWrite = (req, res, next) => {
 const authorizeSyncAccess = (req, res, next) => {
   const role = String(req.user?.role || '').toLowerCase();
 
-  if (role === 'admin' || role === 'staff') {
+  // admin, staff and vawc_officer are privileged: full read + write within
+  // the app DB. vawc_officer inherits every staff permission; its ONLY extra
+  // capability is reading UNMASKED VAWC records (enforced in the read
+  // redaction step of proxyCouch, not here).
+  if (role === 'admin' || role === 'staff' || role === 'vawc_officer') {
     return next();
   }
 
@@ -530,6 +544,126 @@ const HOP_BY_HOP = new Set([
 
 // Headers that are always overridden by the proxy implementation.
 const OVERRIDE_HEADERS = new Set(['host', 'content-length']);
+
+// ──────────────────────────────────────────────────────────────
+// VAWC READ REDACTION (server-enforced confidentiality)
+// ──────────────────────────────────────────────────────────────
+// RA 9262 §44 / DPA 2012: a viewer who is neither `admin` nor `vawc_officer`
+// must not be able to pull an UNMASKED VAWC blotter document through the sync
+// proxy (the client-side mask is not a security boundary — curl bypasses it).
+//
+// This rewrites the JSON BODY of read responses that carry document content.
+// It is a no-op for:
+//   - authorized viewers (admin / vawc_officer) — they see unmasked docs,
+//   - responses with no VAWC document,
+//   - non-JSON / error responses.
+// When at least one VAWC document is actually served unmasked to an
+// authorized officer/admin, a VAWC_UNMASK_ACCESS audit entry is recorded.
+const maskJsonForViewer = (req, json, viewer) => {
+  if (!json || typeof json !== 'object') return { changed: false, json };
+  if (canUnmaskVawc(viewer)) return { changed: false, json };
+
+  let changed = false;
+  const apply = (doc) => {
+    if (!isVawcRecord(doc)) return doc;
+    changed = true;
+    return maskVawcRecord(doc, viewer);
+  };
+
+  // 1. Single-document GET: GET /db/:id  → the doc itself (has _id + vawcFlag)
+  if (isVawcRecord(json)) {
+    return { changed: true, json: maskVawcRecord(json, viewer) };
+  }
+
+  // 2. GET /db/_all_docs  → { rows: [{ doc: {...} }] }
+  if (Array.isArray(json.rows)) {
+    json.rows = json.rows.map((row) =>
+      row && row.doc ? { ...row, doc: apply(row.doc) } : row
+    );
+  }
+
+  // 3. POST /db/_bulk_get → { results: [{ docs: [{ ok: {...} }] }] }
+  if (Array.isArray(json.results)) {
+    json.results = json.results.map((result) => {
+      if (!result || !Array.isArray(result.docs)) return result;
+      return {
+        ...result,
+        docs: result.docs.map((entry) =>
+          entry && entry.ok ? { ...entry, ok: apply(entry.ok) } : entry
+        ),
+      };
+    });
+  }
+
+  // 4. GET /db/_changes?include_docs=true → { results: [{ doc: {...} }] }
+  if (Array.isArray(json.results)) {
+    json.results = json.results.map((row) =>
+      row && row.doc ? { ...row, doc: apply(row.doc) } : row
+    );
+  }
+
+  return { changed, json };
+};
+
+// Record a server-side VAWC_UNMASK_ACCESS audit entry when an authorized
+// officer/admin is served an unmasked VAWC document. Fire-and-forget.
+// `req` is used to resolve the app-scoped DB (`req.app.get('db')`) so the
+// audit path works under the injected stub DB in the test harness; the
+// module-level `db` (set by initDB) is the production fallback.
+const recordVawcUnmaskAudit = (req, viewer, docs) => {
+  try {
+    const targetDb = (req && req.app && req.app.get('db')) || db;
+    if (!targetDb || !Array.isArray(docs) || docs.length === 0) return;
+    const now = new Date().toISOString();
+    const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
+    targetDb.insert({
+      _id: auditId,
+      type: 'audit_log',
+      docType: 'audit_log',
+      action: 'VAWC_UNMASK_ACCESS',
+      module: 'BLOTTER',
+      recordId: docs[0]?._id || null,
+      actor: {
+        username: viewer?.username,
+        role: viewer?.role || 'unknown',
+        residentId: viewer?.residentId || null,
+      },
+      details: `@${viewer?.username || 'unknown'} viewed ${docs.length} unmasked VAWC record(s): ${docs
+        .map((d) => d?._id || d?.caseNumber || 'unknown')
+        .join(', ')}`,
+      affected: docs.map((d) => ({ id: d?._id, caseNumber: d?.caseNumber, type: d?.type })),
+      timestamp: now,
+      createdAt: now,
+      immutable: true,
+      source: 'server-sync-proxy',
+    }).catch((err) => {
+      if (err && err.statusCode !== 409) {
+        console.warn('[AUDIT] Failed to record VAWC unmask audit:', err.message || err);
+      }
+    });
+  } catch (err) {
+    console.warn('[AUDIT] VAWC unmask audit skipped:', err?.message || err);
+  }
+};
+
+// Collect the VAWC docs present in a parsed read body (for the unmask audit).
+const collectVawcDocs = (json) => {
+  const found = [];
+  if (!json || typeof json !== 'object') return found;
+  if (isVawcRecord(json)) found.push(json);
+  if (Array.isArray(json.rows)) {
+    for (const row of json.rows) if (row && isVawcRecord(row.doc)) found.push(row.doc);
+  }
+  if (Array.isArray(json.results)) {
+    for (const row of json.results) {
+      if (row && isVawcRecord(row.doc)) found.push(row.doc);
+      if (row && Array.isArray(row.docs)) {
+        for (const entry of row.docs) if (entry && isVawcRecord(entry.ok)) found.push(entry.ok);
+      }
+    }
+  }
+  return found;
+};
 
 const proxyCouch = (req, res) => {
   // 1. Database allowlist
@@ -647,6 +781,71 @@ const proxyCouch = (req, res) => {
       // would OVERWRITE our explicit origin and break credentialed requests.
       if (lowerKey.startsWith('access-control-')) continue;
       res.setHeader(key, value);
+    }
+
+    // ── VAWC READ REDACTION ──────────────────────────────────────────
+    // Buffer JSON read responses so an unauthorized viewer cannot receive an
+    // unmasked VAWC document. Only read paths that can carry document content
+    // are considered; writes/errors stream through untouched.
+    const isReadRequest = req.method === 'GET' || req.method === 'HEAD';
+    const contentType = String(proxyRes.headers['content-type'] || '');
+    const wantsMask = isReadRequest || RESIDENT_READONLY_ENDPOINTS.has(subPath.split('?')[0].split('/')[0]);
+    if (
+      wantsMask &&
+      proxyRes.statusCode >= 200 &&
+      proxyRes.statusCode < 300 &&
+      contentType.includes('application/json') &&
+      !canUnmaskVawc(req.user)
+    ) {
+      const chunks = [];
+      proxyRes.on('data', (c) => chunks.push(c));
+      proxyRes.on('end', () => {
+        let parsed;
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch {
+          // Not parseable JSON → forward the original bytes verbatim.
+          if (!res.writableEnded) res.end(Buffer.concat(chunks));
+          return;
+        }
+        const { changed, json } = maskJsonForViewer(req, parsed, req.user);
+        if (!changed) {
+          if (!res.writableEnded) res.end(Buffer.concat(chunks));
+          return;
+        }
+        const out = Buffer.from(JSON.stringify(json), 'utf8');
+        // Content-Length was copied from upstream and no longer matches the
+        // rewritten body — recompute it (or the client hangs/over-reads).
+        res.setHeader('Content-Length', String(out.length));
+        if (!res.writableEnded) res.end(out);
+      });
+      return; // handled by the buffering branch above
+    }
+
+    // Authorized (admin/vawc_officer) viewer: if this read carried VAWC docs,
+    // record the unmask access. Best-effort and non-blocking.
+    if (
+      wantsMask &&
+      canUnmaskVawc(req.user) &&
+      proxyRes.statusCode >= 200 &&
+      proxyRes.statusCode < 300 &&
+      contentType.includes('application/json')
+    ) {
+      const chunks = [];
+      proxyRes.on('data', (c) => chunks.push(c));
+      proxyRes.on('end', () => {
+        let parsed;
+        try {
+          parsed = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+        } catch {
+          if (!res.writableEnded) res.end(Buffer.concat(chunks));
+          return;
+        }
+        const vawcDocs = collectVawcDocs(parsed);
+        if (vawcDocs.length > 0) recordVawcUnmaskAudit(req, req.user, vawcDocs);
+        if (!res.writableEnded) res.end(Buffer.concat(chunks));
+      });
+      return;
     }
 
     // Stream response back to client

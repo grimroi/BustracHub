@@ -31,7 +31,7 @@ export async function createAuditLog({
     // are restricted to their own data). A resident-generated audit entry is
     // therefore kept as a _local/ doc so PouchDB never replicates it — this
     // avoids a 403 that would otherwise fail the ENTIRE _bulk_docs batch.
-    const isPrivileged = actor.role === 'admin' || actor.role === 'staff';
+    const isPrivileged = actor.role === 'admin' || actor.role === 'staff' || actor.role === 'vawc_officer';
     const auditId = `audit_${Date.now()}_${Math.random().toString(36).slice(2, 11)}`;
 
     const doc = {
