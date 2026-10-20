@@ -140,6 +140,32 @@ The policy is implemented in a service module rather than in the page component 
 
 The device database can be exported as a JSON snapshot. The artifact carries a schema header (`schema: 'bustrac.snapshot'`, `schemaVersion`), the originating `deviceId`, an **SHA-256 integrity checksum** over the payload, and a file name that carries the device id and a UTC timestamp (`bustrac_snapshot_<deviceId>_<YYYYMMDD-HHMMSS>.json`). A scheduled snapshot runs on a configurable interval (default: daily) and records its time in the `device_registry` document as `lastSnapshotAt`. Snapshots can optionally be encrypted with a passphrase (AES-256-GCM, PBKDF2-SHA-256) where the browser exposes WebCrypto. Full description, format and restore procedure: [`docs/SNAPSHOTS_AND_EXPORT.md`](SNAPSHOTS_AND_EXPORT.md).
 
+### Disaster Readiness (read-only status display)
+
+The **Disaster Readiness** card (admin portal → Data Protection) answers one operational question before a calamity: *is this device prepared to keep working when the network, the power or the typhoon takes it offline?*
+
+It is a **status display and checklist only**. It reads state that already exists and reports it; it does not touch synchronisation, replication, PouchDB, authentication or any offline-first behaviour, and it never writes to the database.
+
+The policy lives in `frontend/src/services/disasterReadiness.js`:
+
+- `assessDisasterReadiness({ checks })` is **pure** — it takes already-collected values and returns `{ ready, score, checks, recommendation }`.
+- `collectDisasterReadinessChecks()` gathers those values from the browser, with every dependency injectable so the whole thing is unit-testable without a browser.
+- `getBatteryStatus()` reads the Battery Status API and never throws; an unavailable API resolves cleanly to `supported: false`.
+
+Seven checks are evaluated. The three **critical** checks (`offline_auth_cached`, `service_worker_active`, `local_db_healthy`) carry 25 points each; the remaining four carry 5 points each. The total (95) is normalised to 100 for the score. `ready` is true **only** when every critical check passes — a low battery or a stale sync lowers the score and is named in the recommendation without blocking deployment.
+
+| Check | Critical | Meaning |
+| ----- | -------- | ------- |
+| `offline_auth_cached` | yes | `bustrac_offline_auth` holds a cached credential, so the device can authenticate with no server |
+| `service_worker_active` | yes | `navigator.serviceWorker.controller` is set, so the app shell opens offline |
+| `local_db_healthy` | yes | `db.info()` on the local PouchDB succeeds |
+| `recent_sync` | no | the last successful sync was within 24 hours |
+| `no_pending_changes` | no | `getPendingSyncCount()` is 0 — no record lives only on this device |
+| `storage_available` | no | at least 50 MB of device storage is free |
+| `battery_ok` | no | battery is at or above 20 %, or the device does not report its battery |
+
+Full description, the honest limitation and the practical pre-disaster checklist: [`docs/DISASTER_READINESS.md`](DISASTER_READINESS.md).
+
 ### Related assessments
 
 - [`docs/ENCRYPTION_AT_REST_ASSESSMENT.md`](ENCRYPTION_AT_REST_ASSESSMENT.md) — what is protected at rest today (passwords are bcrypt-hashed; the local database, the outbox and the session token are **not** encrypted), the feasibility of encrypting the local PouchDB store, and the trade-offs.

@@ -74,6 +74,11 @@ import {
 } from '../services/syncCheckpoint';
 import { isEncryptionSupported } from '../services/snapshotService';
 import {
+  assessDisasterReadiness,
+  collectDisasterReadinessChecks,
+  getBatteryStatus,
+} from '../services/disasterReadiness';
+import {
   detectDeviceLossRisk,
   getDeviceId,
   getDeviceLabel,
@@ -1290,6 +1295,9 @@ const [pendingCount, setPendingCount] = useState(0);
     const [registeredDevicesError, setRegisteredDevicesError] = useState(null);
     const [couchHealth, setCouchHealth] = useState(null);
     const [couchHealthLoading, setCouchHealthLoading] = useState(false);
+    const [disasterReadiness, setDisasterReadiness] = useState(null);
+    const [disasterReadinessLoading, setDisasterReadinessLoading] = useState(false);
+    const [batteryStatus, setBatteryStatus] = useState({ level: null, charging: null, supported: false });
     const [backupSettings, setBackupSettings] = useState(null);
     const [snapshotPassphrase, setSnapshotPassphrase] = useState('');
     const [encryptionSupported, setEncryptionSupported] = useState(false);
@@ -9885,6 +9893,36 @@ useEffect(() => {
   }
 }, [role, screen, loadCouchHealth]);
 
+// ── DISASTER READINESS (read-only status display) ──
+// Shows whether this device is prepared to keep working when the network or
+// the power fails. It READS state only: no sync, replication, PouchDB or
+// offline-first behaviour is touched.
+const loadDisasterReadiness = useCallback(async () => {
+  setDisasterReadinessLoading(true);
+  try {
+    const battery = await getBatteryStatus();
+    setBatteryStatus(battery);
+
+    const checks = await collectDisasterReadinessChecks({
+      db,
+      getPendingCount: () => getPendingSyncCount(),
+    });
+
+    setDisasterReadiness(assessDisasterReadiness({ checks }));
+  } catch (err) {
+    console.warn('[disaster-readiness] Assessment failed:', err?.message || err);
+    setDisasterReadiness(null);
+  } finally {
+    setDisasterReadinessLoading(false);
+  }
+}, []);
+
+useEffect(() => {
+  if (role === 'admin' && screen === 'data-protection') {
+    loadDisasterReadiness().catch(() => {});
+  }
+}, [role, screen, loadDisasterReadiness]);
+
 // ── MANDATORY END-OF-DAY SYNC CHECKPOINT ──
 // locally. The confirmation is written to the audit trail.
 const handleCloseForTheDay = useCallback(async () => {
@@ -16035,6 +16073,92 @@ const handleGenerateCredentials = async (resident) => {
                             <option value="google-drive">Google Drive</option>
                           </select>
                         </div>
+                      </div>
+
+                      {/* DISASTER READINESS (read-only status display) */}
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                          <div>
+                            <h5 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 800 }}>Disaster Readiness</h5>
+                            <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--muted)' }}>
+                              Is this device prepared to keep working without a network or a power supply?
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-g btn-sm"
+                            onClick={loadDisasterReadiness}
+                            disabled={disasterReadinessLoading}
+                          >
+                            {disasterReadinessLoading ? 'Checking…' : 'Refresh'}
+                          </button>
+                        </div>
+
+                        {disasterReadinessLoading && !disasterReadiness ? (
+                          <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '10px 0 0' }}>Checking…</p>
+                        ) : disasterReadiness ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', margin: '10px 0 0', fontSize: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <span
+                                style={{
+                                  fontSize: '11px', fontWeight: 800, padding: '3px 10px', borderRadius: '999px',
+                                  border: `1px solid ${disasterReadiness.ready ? 'var(--green)' : 'var(--amber)'}`,
+                                  color: disasterReadiness.ready ? 'var(--green)' : 'var(--amber)',
+                                }}
+                              >
+                                {disasterReadiness.ready ? 'READY' : 'NEEDS ATTENTION'}
+                              </span>
+                              <span style={{ color: 'var(--muted)' }}>Readiness score:</span>
+                              <span style={{ fontFamily: 'var(--mono)', fontWeight: 700 }}>{disasterReadiness.score}/100</span>
+                            </div>
+
+                            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: '5px' }}>
+                              {disasterReadiness.checks.map((check) => (
+                                <li key={check.id} style={{ display: 'flex', alignItems: 'flex-start', gap: '8px' }}>
+                                  <span
+                                    aria-hidden="true"
+                                    style={{
+                                      fontSize: '12px', fontWeight: 800, lineHeight: '1.4',
+                                      color: check.passed ? 'var(--green)' : 'var(--amber)',
+                                    }}
+                                  >
+                                    {check.passed ? '✔' : '⚠'}
+                                  </span>
+                                  <span style={{ flex: 1 }}>
+                                    <span style={{ fontWeight: 700 }}>
+                                      {check.label}
+                                      {check.critical && (
+                                        <span style={{ marginLeft: '6px', fontSize: '9.5px', fontWeight: 800, color: 'var(--muted)' }}>
+                                          CRITICAL
+                                        </span>
+                                      )}
+                                    </span>
+                                    <span style={{ display: 'block', color: 'var(--muted)' }}>{check.detail}</span>
+                                  </span>
+                                </li>
+                              ))}
+                            </ul>
+
+                            <div style={{ color: 'var(--muted)' }}>
+                              {batteryStatus?.supported && batteryStatus?.level !== null
+                                ? `Battery: ${batteryStatus.level}%${batteryStatus.charging ? ' (charging)' : ' (not charging)'}`
+                                : 'Battery status unavailable'}
+                            </div>
+
+                            <div
+                              style={{
+                                fontWeight: 700,
+                                color: disasterReadiness.ready ? 'var(--green)' : 'var(--amber)',
+                              }}
+                            >
+                              {disasterReadiness.recommendation}
+                            </div>
+                          </div>
+                        ) : (
+                          <p style={{ fontSize: '12px', color: 'var(--amber)', margin: '10px 0 0' }}>
+                            The readiness assessment could not be completed on this device.
+                          </p>
+                        )}
                       </div>
 
                       {/* COUCHDB CONNECTION (server-side health/classification) */}
