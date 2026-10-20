@@ -78,6 +78,7 @@ import {
   getDeviceId,
   getDeviceLabel,
   fetchRegisteredDevices,
+  fetchCouchHealth,
 } from '../services/deviceRegistry';
 import {
   computeConflictDiff,
@@ -1287,6 +1288,8 @@ const [pendingCount, setPendingCount] = useState(0);
     const [registeredDevicesSummary, setRegisteredDevicesSummary] = useState({});
     const [registeredDeviceStaleHours, setRegisteredDeviceStaleHours] = useState(24);
     const [registeredDevicesError, setRegisteredDevicesError] = useState(null);
+    const [couchHealth, setCouchHealth] = useState(null);
+    const [couchHealthLoading, setCouchHealthLoading] = useState(false);
     const [backupSettings, setBackupSettings] = useState(null);
     const [snapshotPassphrase, setSnapshotPassphrase] = useState('');
     const [encryptionSupported, setEncryptionSupported] = useState(false);
@@ -9856,8 +9859,33 @@ useEffect(() => {
   }
 }, [role, loadRegisteredDevices]);
 
+// ── COUCHDB CONNECTION HEALTH ──
+// The server classifies the configured CouchDB endpoint (LOCAL / REMOTE and
+// HTTP / HTTPS) and reports round-trip latency. Administrator-only, and kept
+// in its own effect AFTER the declaration below so there is no
+// temporal-dead-zone reference on first render.
+const loadCouchHealth = useCallback(async () => {
+  setCouchHealthLoading(true);
+  try {
+    const result = await fetchCouchHealth();
+    setCouchHealth(result);
+  } catch (err) {
+    setCouchHealth({ ok: false, endpoint: null, latencyMs: null, version: null, error: err?.message || 'Request failed' });
+  } finally {
+    setCouchHealthLoading(false);
+  }
+}, []);
+
+// The health probe runs when the Data Protection screen is opened rather than
+// only at mount: the request is issued while the app is otherwise idle, which
+// avoids it queueing behind the replication's start-up traffic.
+useEffect(() => {
+  if (role === 'admin' && screen === 'data-protection') {
+    loadCouchHealth().catch(() => {});
+  }
+}, [role, screen, loadCouchHealth]);
+
 // ── MANDATORY END-OF-DAY SYNC CHECKPOINT ──
-// The device may not be closed for the day while records are still queued
 // locally. The confirmation is written to the audit trail.
 const handleCloseForTheDay = useCallback(async () => {
   setIsDbProcessing(true);
@@ -16007,6 +16035,65 @@ const handleGenerateCredentials = async (resident) => {
                             <option value="google-drive">Google Drive</option>
                           </select>
                         </div>
+                      </div>
+
+                      {/* COUCHDB CONNECTION (server-side health/classification) */}
+                      <div style={{ borderTop: '1px solid var(--border)', paddingTop: '16px' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+                          <div>
+                            <h5 style={{ margin: '0 0 4px', fontSize: '13px', fontWeight: 800 }}>CouchDB Connection</h5>
+                            <p style={{ margin: 0, fontSize: '11.5px', color: 'var(--muted)' }}>
+                              Health and classification of the central database the server replicates to.
+                            </p>
+                          </div>
+                          <button
+                            type="button"
+                            className="btn btn-g btn-sm"
+                            onClick={loadCouchHealth}
+                            disabled={couchHealthLoading}
+                          >
+                            {couchHealthLoading ? 'Checking…' : 'Refresh'}
+                          </button>
+                        </div>
+
+                        {couchHealthLoading ? (
+                          <p style={{ fontSize: '12px', color: 'var(--muted)', margin: '10px 0 0' }}>Checking…</p>
+                        ) : couchHealth?.ok ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', margin: '10px 0 0', fontSize: '12px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+                              <span style={{ color: 'var(--muted)' }}>Host:</span>
+                              <span style={{ fontFamily: 'var(--mono)', fontWeight: 700 }}>{couchHealth.endpoint?.host || 'unknown'}</span>
+                              <span
+                                style={{
+                                  fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px',
+                                  border: `1px solid ${couchHealth.endpoint?.isRemote ? 'var(--amber)' : 'var(--green)'}`,
+                                  color: couchHealth.endpoint?.isRemote ? 'var(--amber)' : 'var(--green)',
+                                }}
+                              >
+                                {couchHealth.endpoint?.isRemote ? 'REMOTE' : 'LOCAL'}
+                              </span>
+                              <span
+                                style={{
+                                  fontSize: '10px', fontWeight: 800, padding: '2px 8px', borderRadius: '999px',
+                                  border: `1px solid ${couchHealth.endpoint?.isSecure ? 'var(--green)' : 'var(--red)'}`,
+                                  color: couchHealth.endpoint?.isSecure ? 'var(--green)' : 'var(--red)',
+                                }}
+                              >
+                                {couchHealth.endpoint?.isSecure ? 'HTTPS' : 'HTTP'}
+                              </span>
+                            </div>
+                            <div style={{ color: 'var(--muted)' }}>
+                              Latency: <span style={{ fontFamily: 'var(--mono)', color: 'var(--text)' }}>{couchHealth.latencyMs} ms</span>
+                            </div>
+                            <div style={{ color: 'var(--muted)' }}>
+                              Version: <span style={{ fontFamily: 'var(--mono)', color: 'var(--text)' }}>{couchHealth.version || 'unknown'}</span>
+                            </div>
+                          </div>
+                        ) : (
+                          <p style={{ fontSize: '12px', color: 'var(--red)', margin: '10px 0 0' }}>
+                            {couchHealth?.error || 'Not reachable'}
+                          </p>
+                        )}
                       </div>
 
                       {/* REGISTERED DEVICES (server-side device registry) */}

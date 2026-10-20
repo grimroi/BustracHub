@@ -285,6 +285,37 @@ export const fetchRegisteredDevices = async ({ staleHours } = {}) => {
   }
 };
 
+/**
+ * Fetch the server's CouchDB connection health (admin only).
+ * Never throws: resolves to a normalized object so the UI can always render.
+ * @returns {Promise<{ok:boolean, endpoint:{host:string,protocol:string,isRemote:boolean,isSecure:boolean}|null, latencyMs:number|null, version:string|null, error:string|null}>}
+ */
+export const fetchCouchHealth = async () => {
+  try {
+    const res = await apiFetch('health/couchdb');
+    const json = await res.json().catch(() => ({}));
+    if (!res.ok || !json?.ok) {
+      return {
+        ok: false,
+        endpoint: json?.endpoint || null,
+        latencyMs: null,
+        version: null,
+        error: json?.error || 'CouchDB is not reachable',
+      };
+    }
+    return {
+      ok: true,
+      endpoint: json.endpoint || null,
+      latencyMs: typeof json.latencyMs === 'number' ? json.latencyMs : null,
+      version: json.version || null,
+      error: null,
+    };
+  } catch (err) {
+    // 403 (non-admin) and network failures both land here.
+    return { ok: false, endpoint: null, latencyMs: null, version: null, error: err?.message || 'Request failed' };
+  }
+};
+
 /** This device's last recorded heartbeat (or null). */
 export const getLocalHeartbeat = async () => {
   try {

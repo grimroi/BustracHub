@@ -215,6 +215,36 @@ const DB_NAME = 'bustrachub_db';
 let db;
 
 // ──────────────────────────────────────────────────────────────
+// CLOUD-READINESS: classify the configured CouchDB endpoint.
+// Purely descriptive (no network I/O), so it is safe to call at boot and
+// from tests. Local hosts are those that never leave the machine; anything
+// else is REMOTE, and REMOTE + HTTP is flagged as insecure.
+// ──────────────────────────────────────────────────────────────
+const LOCAL_COUCH_HOSTS = new Set(['localhost', '127.0.0.1', '::1']);
+const classifyCouchEndpoint = (rawUrl) => {
+  const url = new URL(rawUrl);
+  const host = url.hostname;
+  const protocol = String(url.protocol).replace(':', ''); // 'http' | 'https' | ...
+  const isRemote = !LOCAL_COUCH_HOSTS.has(host);
+  const isSecure = protocol === 'https';
+  return { host, protocol, isRemote, isSecure };
+};
+
+// Log exactly one classification line at boot (never in tests, which import
+// this module without running the bootstrap block).
+const logCouchEndpoint = (rawUrl) => {
+  const { host, isRemote, isSecure } = classifyCouchEndpoint(rawUrl);
+  if (!isRemote) {
+    console.log(`[couchdb] endpoint: ${host} (LOCAL)`);
+    return;
+  }
+  console.log(`[couchdb] endpoint: ${host} (REMOTE, ${isSecure ? 'HTTPS' : 'HTTP'})`);
+  if (!isSecure) {
+    console.log('[couchdb] WARNING: remote endpoint without TLS — not acceptable for production.');
+  }
+};
+
+// ──────────────────────────────────────────────────────────────
 // AUTH MIDDLEWARE — Bearer JWT issued by /api/login
 // Token is a stateless HS256-signed JWT bound to a role. It does NOT
 // carry CouchDB credentials. CouchDB admin credentials stay in
@@ -1408,6 +1438,80 @@ app.get('/api/devices', authenticate, requireRole('admin'), async (req, res) => 
   }
 });
 
+// ──────────────────────────────────────────────────────────────
+// CLOUD-READINESS: GET /api/health/couchdb — admin-only connection health.
+// Pings the configured CouchDB root (the "welcome" endpoint) with a hard
+// 5-second timeout and reports the outcome. Credentials from COUCHDB_URL are
+// used for the request only and are NEVER echoed in the response.
+// ──────────────────────────────────────────────────────────────
+const COUCH_HEALTH_TIMEOUT_MS = 5000;
+
+// Resolves with the CouchDB welcome object, or throws on refusal/timeout.
+const pingCouchWelcome = () => new Promise((resolve, reject) => {
+  const options = {
+    hostname: COUCH_HOST,
+    port: COUCH_PORT,
+    path: '/',
+    method: 'GET',
+    agent: false,
+  };
+  if (couchUrl.username) {
+    options.auth = `${decodeURIComponent(couchUrl.username)}:${decodeURIComponent(couchUrl.password || '')}`;
+  }
+
+  const req = COUCH_PROTOCOL.request(options, (resp) => {
+    const chunks = [];
+    resp.on('data', (c) => chunks.push(c));
+    resp.on('end', () => {
+      if (resp.statusCode < 200 || resp.statusCode >= 300) {
+        const err = new Error(`CouchDB responded with HTTP ${resp.statusCode}`);
+        err.statusCode = resp.statusCode;
+        return reject(err);
+      }
+      try {
+        resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
+      } catch {
+        // Reachable but the body was not JSON — still a successful ping.
+        resolve({});
+      }
+    });
+  });
+
+  req.setTimeout(COUCH_HEALTH_TIMEOUT_MS, () => {
+    const err = new Error('Timed out after 5000ms');
+    err.code = 'ETIMEDOUT';
+    req.destroy(err);
+  });
+  req.on('error', reject);
+  req.end();
+});
+
+app.get('/api/health/couchdb', authenticate, requireRole('admin'), async (req, res) => {
+  const endpoint = classifyCouchEndpoint(COUCHDB_URL);
+  const startedAt = Date.now();
+  try {
+    const welcome = await pingCouchWelcome();
+    const latencyMs = Date.now() - startedAt;
+    return res.json({
+      ok: true,
+      endpoint,
+      latencyMs,
+      version: welcome && welcome.version ? String(welcome.version) : null,
+    });
+  } catch (err) {
+    // Sanitized: never include the upstream URL/credentials in the message.
+    const sanitized = err && err.code === 'ETIMEDOUT'
+      ? 'Timed out after 5000ms'
+      : 'CouchDB is not reachable';
+    return res.status(503).json({
+      ok: false,
+      endpoint,
+      error: sanitized,
+      latencyMs: null,
+    });
+  }
+});
+
 // Public Portal Endpoint
 app.get('/api/public', async (req, res) => {
   try {
@@ -1598,6 +1702,7 @@ function startBlotterSMSListener() {
 // a port — the test suite injects its own `app.set('db', stub)` and listens on
 // an ephemeral port itself. Runtime behavior is unchanged.
 if (require.main === module) {
+  logCouchEndpoint(COUCHDB_URL);
   initDB()
     .then(() => {
       startBlotterSMSListener();
@@ -1612,4 +1717,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { app, JWT_SECRET, authenticate, requireRole, ALLOWED_DB, initDB };
+module.exports = { app, JWT_SECRET, authenticate, requireRole, ALLOWED_DB, initDB, classifyCouchEndpoint };
