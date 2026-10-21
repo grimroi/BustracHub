@@ -14,6 +14,8 @@ const assert = require('node:assert/strict');
 const {
   RESIDENT_WRITE_TYPES,
   RESIDENT_ACCOUNT_DOC_TYPES,
+  RESIDENT_PROTECTED_CERTIFICATE_FIELDS,
+  RESIDENT_CERTIFICATE_DOC_TYPES,
   docOwnedBy,
   verifyExistingDocOwnership,
   residentDenyReason,
@@ -545,4 +547,154 @@ test('admin ownership bypass is not the module’s concern (docOwnedBy still typ
   // The proxy short-circuits admin/staff BEFORE calling this module; here we
   // only confirm the module never throws for a staff-shaped user object.
   assert.doesNotThrow(() => docOwnedBy(baseCert(), { username: 'x', role: 'staff' }));
+});
+
+// ── 15. Certificate lifecycle pinning (QR verification audit finding) ────
+// A resident may still file a certificate_request, but must never be able to
+// forge an issued certificate (status 'Issued' / isIssued: true) — the public
+// legacy ?id= verify endpoint would report such a document as authentic.
+
+const STAFF = { username: 'mgcortero', residentId: 'RES-0009', role: 'staff' };
+
+const pendingCertRequest = (overrides = {}) => ({
+  _id: 'cert_life',
+  type: 'certificate_request',
+  username: 'juan2026',
+  residentId: 'RES-0001',
+  status: 'Pending',
+  step: 'Submitted',
+  purpose: 'Employment',
+  ...overrides,
+});
+
+test('RESIDENT_PROTECTED_CERTIFICATE_FIELDS covers every certificate lifecycle field', () => {
+  for (const field of [
+    'status', 'step', 'isIssued', 'issuedAt', 'issuedBy',
+    'approvedBy', 'approvedAt', 'releasedAt', 'releasedBy',
+    'rejectionReason', 'revokedAt', 'revokedBy', 'verificationToken',
+  ]) {
+    assert.equal(
+      RESIDENT_PROTECTED_CERTIFICATE_FIELDS.has(field),
+      true,
+      `${field} must be pinned against resident writes`
+    );
+  }
+  assert.equal(RESIDENT_CERTIFICATE_DOC_TYPES.has('certificate_request'), true);
+});
+
+test('resident cannot change status from Pending to Issued on an existing certificate_request', async () => {
+  const nano = makeNanoDb({ cert_life: pendingCertRequest() });
+  const verdict = await assessResidentWrite(
+    nano,
+    pendingCertRequest({ status: 'Issued', step: 5 }),
+    RESIDENT
+  );
+  assert.equal(verdict.allowed, false);
+  assert.equal(verdict.reason, 'certificate lifecycle field not writable by residents');
+});
+
+test('resident cannot set isIssued: true on their own certificate_request', async () => {
+  const nano = makeNanoDb({ cert_life: pendingCertRequest() });
+  const verdict = await assessResidentWrite(
+    nano,
+    pendingCertRequest({ isIssued: true }),
+    RESIDENT
+  );
+  assert.equal(verdict.allowed, false);
+  assert.equal(verdict.reason, 'certificate lifecycle field not writable by residents');
+});
+
+test('resident cannot set step to anything other than Submitted on create', async () => {
+  for (const step of ['Approved', 5, 'Under Review']) {
+    const nano = makeNanoDb({});
+    const verdict = await assessResidentWrite(
+      nano,
+      pendingCertRequest({ _id: `cert_step_${String(step).replace(/\s+/g, '_')}`, step }),
+      RESIDENT
+    );
+    assert.equal(verdict.allowed, false, `create with step ${JSON.stringify(step)} must be denied`);
+    assert.equal(verdict.reason, 'certificate must start in Pending/Submitted state');
+  }
+});
+
+test('resident cannot create a certificate_request already marked Issued or isIssued', async () => {
+  const shapes = [{ status: 'Issued' }, { isIssued: true }, { status: 'Released' }];
+  for (let i = 0; i < shapes.length; i += 1) {
+    const overrides = shapes[i];
+    const nano = makeNanoDb({});
+    const verdict = await assessResidentWrite(
+      nano,
+      pendingCertRequest({ _id: `cert_new_${i}`, ...overrides }),
+      RESIDENT
+    );
+    assert.equal(verdict.allowed, false, `create with ${JSON.stringify(overrides)} must be denied`);
+    assert.equal(verdict.reason, 'certificate must start in Pending/Submitted state');
+  }
+});
+
+test('resident CAN create a new certificate_request with status Pending, step Submitted', async () => {
+  const nano = makeNanoDb({});
+  const verdict = await assessResidentWrite(nano, pendingCertRequest({ _id: 'cert_ok_new' }), RESIDENT);
+  assert.equal(verdict.allowed, true);
+  assert.equal(verdict.reason, null);
+});
+
+test('resident CAN create a request exactly as the resident client files it (status Submitted, step 1)', async () => {
+  // frontend/src/pages/ResidentUI.jsx files { status: 'Submitted', step: 1 }.
+  const nano = makeNanoDb({});
+  const verdict = await assessResidentWrite(
+    nano,
+    pendingCertRequest({ _id: 'cert_client_shape', status: 'Submitted', step: 1 }),
+    RESIDENT
+  );
+  assert.equal(verdict.allowed, true);
+});
+
+test('resident CAN update their own certificate_request with the SAME status/step values (no change)', async () => {
+  const nano = makeNanoDb({ cert_life: pendingCertRequest({ status: 'Submitted', step: 1 }) });
+  const verdict = await assessResidentWrite(
+    nano,
+    pendingCertRequest({ _id: 'cert_life', status: 'Submitted', step: 1, _rev: '3-abc' }),
+    RESIDENT
+  );
+  assert.equal(verdict.allowed, true);
+});
+
+test('resident CAN change non-protected fields (purpose, remarks) on their own certificate_request', async () => {
+  const nano = makeNanoDb({ cert_life: pendingCertRequest() });
+  const verdict = await assessResidentWrite(
+    nano,
+    pendingCertRequest({ purpose: 'Business permit application', remarks: 'followed up' }),
+    RESIDENT
+  );
+  assert.equal(verdict.allowed, true);
+});
+
+test('resident cannot forge issuance provenance or a verification token on an existing certificate_request', async () => {
+  for (const field of ['issuedAt', 'issuedBy', 'approvedBy', 'releasedAt', 'revokedAt', 'verificationToken']) {
+    const nano = makeNanoDb({ cert_life: pendingCertRequest() });
+    const verdict = await assessResidentWrite(
+      nano,
+      pendingCertRequest({ [field]: field === 'verificationToken' ? 'A'.repeat(43) : '2026-10-01' }),
+      RESIDENT
+    );
+    assert.equal(verdict.allowed, false, `${field} must be pinned`);
+    assert.equal(verdict.reason, 'certificate lifecycle field not writable by residents');
+  }
+});
+
+test('staff CAN change certificate status to Issued (server staff path)', async () => {
+  // admin/staff never reach this module in the running server
+  // (authorizeSyncAccess passes privileged roles straight through), and even
+  // when called directly the lifecycle pinning is resident-only.
+  const nano = makeNanoDb({
+    cert_staff: { type: 'certificate_request', username: 'mgcortero', status: 'Pending', step: 1 },
+  });
+  const verdict = await assessResidentWrite(
+    nano,
+    { _id: 'cert_staff', type: 'certificate_request', username: 'mgcortero', status: 'Issued', step: 5, isIssued: true },
+    STAFF
+  );
+  assert.equal(verdict.allowed, true);
+  assert.equal(verdict.reason, null);
 });

@@ -114,6 +114,24 @@ export const buildVerifyUrl = (docId, config = {}) => {
   return `${origin}/verify?id=${encodeURIComponent(docId)}`;
 };
 
+/**
+ * Build the public verification URL for a SECURE VERIFICATION TOKEN.
+ *
+ * A token-verified QR carries an unpredictable, server-minted secret instead
+ * of the document id, so the link cannot be guessed or enumerated. The token
+ * is opaque to this function — it is simply carried through to the public
+ * verification page.
+ *
+ * @param {string} token the 43-character base64url verification token
+ * @param {object} [config] the QR configuration
+ * @returns {string}
+ */
+export const buildVerifyUrlForToken = (token, config = {}) => {
+  if (!token) return '';
+  const origin = resolveVerifyOrigin(config).replace(/\/+$/, '');
+  return `${origin}/verify?token=${encodeURIComponent(token)}`;
+};
+
 export const loadBusinessQrConfig = async (db) => {
   if (!db || typeof db.get !== 'function') {
     return normalizeQrConfig();

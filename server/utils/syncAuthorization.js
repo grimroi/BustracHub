@@ -18,7 +18,8 @@
 //   - For updates, the CURRENT stored document must also belong to the
 //     resident (prevents overwriting another resident's record by id).
 //   - Certain lifecycle/auth fields are pinned against the stored document
-//     (blotter status, event approval provenance).
+//     (blotter status, event approval provenance, certificate issuance
+//     status/step/isIssued — see RESIDENT_PROTECTED_CERTIFICATE_FIELDS).
 // ──────────────────────────────────────────────────────────────
 
 // Document types a resident may legitimately create/update. Anything else
@@ -78,6 +79,48 @@ const RESIDENT_PROTECTED_EVENT_FIELDS = [
   'attendedAt',
   'attendedBy',
 ];
+
+// Certificate lifecycle fields. A resident may still CREATE their own
+// certificate_request (the request itself is theirs — RESIDENT_WRITE_TYPES
+// keeps it), but the issuance lifecycle is a barangay decision: only an
+// admin/staff session may advance a request to 'Issued', flag it issued, or
+// stamp approval/release/revocation provenance or a verification token.
+// Without this pin a resident could write `status: 'Issued'` / `isIssued: true`
+// and the public legacy ?id= verify endpoint would report the forged document
+// as "Authentic & Valid" (QR verification audit finding).
+const RESIDENT_PROTECTED_CERTIFICATE_FIELDS = new Set([
+  'status',
+  'step',
+  'isIssued',
+  'issuedAt',
+  'issuedBy',
+  'approvedBy',
+  'approvedAt',
+  'releasedAt',
+  'releasedBy',
+  'rejectionReason',
+  'revokedAt',
+  'revokedBy',
+  'verificationToken',
+]);
+
+// Document types the certificate lifecycle pinning applies to. The first is
+// resident-writable; the clearance types are included for defence in depth
+// (they are already outside RESIDENT_WRITE_TYPES, so a resident write of
+// those types is denied on type alone).
+const RESIDENT_CERTIFICATE_DOC_TYPES = new Set([
+  'certificate_request',
+  'barangay_clearance',
+  'business_clearance',
+]);
+
+// A resident may only CREATE a certificate in its initial, unissued state.
+// The resident client files a request as { status: 'Submitted', step: 1 }
+// (frontend/src/pages/ResidentUI.jsx); { status: 'Pending', step: 'Submitted' }
+// is the other accepted initial shape. Anything else on create — 'Approved',
+// 'Issued', 'Released', step >= 2, isIssued — is an issuance forgery.
+const RESIDENT_INITIAL_CERTIFICATE_STATUS = new Set(['Pending', 'Submitted']);
+const RESIDENT_INITIAL_CERTIFICATE_STEP = new Set(['1', 'Submitted']);
 
 const roleOf = (user) => String(user && user.role || '').toLowerCase();
 
@@ -150,12 +193,22 @@ const docOwnedBy = (doc, user) => {
 // For updates to an existing document, also confirm the CURRENT document
 // belongs to the resident (prevents overwriting another resident's record
 // whose id happens to be known) and that protected fields are unchanged.
-const verifyExistingDocOwnership = async (nanoDb, doc, user) => {
+// `deny` (optional) receives the precise `reason` for a certificate-lifecycle
+// denial so the caller can report it instead of the generic fallback.
+const verifyExistingDocOwnership = async (nanoDb, doc, user, deny = null) => {
   if (!doc || !doc._id) return true;
   if (!nanoDb || typeof nanoDb.get !== 'function') return false;
 
   const isResident = roleOf(user) === 'resident';
   const docType = docTypeOf(doc);
+
+  const denyCertificate = (reason, detail) => {
+    console.warn(
+      `[SYNC DENY] Resident @${user?.username} ${detail} on ${doc._id}`
+    );
+    if (deny && typeof deny === 'object') deny.reason = reason;
+    return false;
+  };
 
   // Account/identity documents are never writable by a resident. Denied for
   // creation, update and deletion alike (the docOwnedBy check in the caller
@@ -219,8 +272,42 @@ const verifyExistingDocOwnership = async (nanoDb, doc, user) => {
     }
   }
 
+  // NEW certificate documents: a resident may file the request, but it must
+  // start in the initial Pending/Submitted state — never already approved,
+  // issued or flagged as issued.
+  if (isResident && !existing && RESIDENT_CERTIFICATE_DOC_TYPES.has(docType)) {
+    const status = doc.status === undefined || doc.status === null ? undefined : String(doc.status);
+    const step = doc.step === undefined || doc.step === null ? undefined : String(doc.step);
+    const forgedIssuedFlag = doc.isIssued === true || String(doc.isIssued).toLowerCase() === 'true';
+    const outsideInitialState =
+      (status !== undefined && !RESIDENT_INITIAL_CERTIFICATE_STATUS.has(status)) ||
+      (step !== undefined && !RESIDENT_INITIAL_CERTIFICATE_STEP.has(step)) ||
+      forgedIssuedFlag;
+    if (outsideInitialState) {
+      return denyCertificate(
+        'certificate must start in Pending/Submitted state',
+        `tried to create ${docType} outside the initial Pending/Submitted state (status=${JSON.stringify(doc.status)} step=${JSON.stringify(doc.step)} isIssued=${JSON.stringify(doc.isIssued)})`
+      );
+    }
+  }
+
   if (!existing) return true; // new document (ownership already checked)
   if (!docOwnedBy(existing, user)) return false; // stored doc owned by someone else
+
+  // Residents may file/edit their own certificate request, but must not
+  // self-advance the issuance lifecycle (status/step → Issued, isIssued,
+  // approval/release/revocation provenance, verification token). Absent on
+  // both sides means "no change" and is allowed.
+  if (isResident && RESIDENT_CERTIFICATE_DOC_TYPES.has(docTypeOf(existing))) {
+    for (const field of RESIDENT_PROTECTED_CERTIFICATE_FIELDS) {
+      if (JSON.stringify(doc[field]) !== JSON.stringify(existing[field])) {
+        return denyCertificate(
+          'certificate lifecycle field not writable by residents',
+          `tried to change protected certificate field "${field}"`
+        );
+      }
+    }
+  }
 
   // Residents may file/edit their own blotter, but must not self-advance the
   // case lifecycle (e.g. mark it 'Settled / Resolved' or fake a summons).
@@ -276,14 +363,18 @@ const assessResidentWrite = async (nanoDb, doc, user) => {
     return { allowed: false, reason: residentDenyReason(doc, user) };
   }
   let existingOwned;
+  const deny = { reason: null };
   try {
-    existingOwned = await verifyExistingDocOwnership(nanoDb, doc, user);
+    existingOwned = await verifyExistingDocOwnership(nanoDb, doc, user, deny);
   } catch {
     // Never fail open: an ownership-check error denies the write.
     return { allowed: false, reason: 'ownership check failed' };
   }
   if (!existingOwned) {
-    return { allowed: false, reason: 'existing document not owned or protected field changed' };
+    return {
+      allowed: false,
+      reason: deny.reason || 'existing document not owned or protected field changed',
+    };
   }
   return { allowed: true, reason: null };
 };
@@ -310,6 +401,10 @@ module.exports = {
   RESIDENT_PROTECTED_BLOTTER_FIELDS,
   RESIDENT_EVENT_ALLOWED_STATUS,
   RESIDENT_PROTECTED_EVENT_FIELDS,
+  RESIDENT_PROTECTED_CERTIFICATE_FIELDS,
+  RESIDENT_CERTIFICATE_DOC_TYPES,
+  RESIDENT_INITIAL_CERTIFICATE_STATUS,
+  RESIDENT_INITIAL_CERTIFICATE_STEP,
   docOwnedBy,
   verifyExistingDocOwnership,
   residentDenyReason,

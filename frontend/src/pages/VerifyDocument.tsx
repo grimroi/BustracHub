@@ -6,10 +6,14 @@ import {
   isVerifiableDocId,
   isVerifiableDoc,
   buildVerificationView,
+  isValidVerificationToken,
+  buildTokenVerificationView,
+  VERIFICATION_RESULT,
 } from '../utils/verifyDocument';
 import { resolveApiBaseUrl } from '../utils/apiBase';
 
 type VerificationView = ReturnType<typeof buildVerificationView>;
+type TokenVerificationView = ReturnType<typeof buildTokenVerificationView>;
 
 type VerifyResult =
   | { kind: 'ok'; view: VerificationView }
@@ -17,6 +21,11 @@ type VerifyResult =
   | { kind: 'invalid_id'; message: string }
   | { kind: 'server_error'; message: string }
   | { kind: 'network_error'; message: string };
+
+type TokenVerifyResult =
+  | { kind: 'ok'; view: TokenVerificationView }
+  | { kind: 'not_found'; message: string }
+  | { kind: 'unable'; message: string };
 
 const apiBase = resolveApiBaseUrl(import.meta.env.VITE_API_URL as string | undefined);
 
@@ -37,6 +46,12 @@ const requestVerification = async (id: string): Promise<VerifyResult> => {
   }
   if (response.status === 400) {
     return { kind: 'invalid_id', message: 'This verification link is invalid or malformed.' };
+  }
+  if (response.status === 429) {
+    return {
+      kind: 'server_error',
+      message: 'Too many verification requests. Please wait a moment and try again.',
+    };
   }
   if (response.status >= 500) {
     return {
@@ -62,19 +77,104 @@ const requestVerification = async (id: string): Promise<VerifyResult> => {
   return { kind: 'ok', view: payload.data as VerificationView };
 };
 
+// Verifies a SECURE VERIFICATION TOKEN.
+//
+// A token is only meaningful to the authoritative server, so this path NEVER
+// falls back to the local PouchDB: a locally-held record must never be able
+// to make an unsynchronised certificate look verified. If the server cannot
+// be reached the result is "Unable to Verify" — never "valid".
+const requestTokenVerification = async (token: string): Promise<TokenVerifyResult> => {
+  let response: Response;
+  try {
+    response = await fetch(`${apiBase}/api/certificates/verify-token/${encodeURIComponent(token)}`, {
+      headers: { Accept: 'application/json' },
+    });
+  } catch (err: any) {
+    return {
+      kind: 'unable',
+      message: 'Unable to Verify Online. The verification service could not be reached, so this document could not be confirmed.',
+    };
+  }
+
+  if (response.status === 404) {
+    return { kind: 'not_found', message: 'This document was not found in the barangay records.' };
+  }
+  if (response.status === 429) {
+    return {
+      kind: 'unable',
+      message: 'Too many verification requests. Please wait a moment and try again.',
+    };
+  }
+  if (response.status >= 500) {
+    return {
+      kind: 'unable',
+      message: 'Unable to Verify Online. The verification service is temporarily unavailable.',
+    };
+  }
+  if (!response.ok) {
+    return { kind: 'unable', message: 'Unable to Verify Online. Please try again later.' };
+  }
+
+  let payload: any = null;
+  try {
+    payload = await response.json();
+  } catch {
+    return { kind: 'unable', message: 'Unable to Verify Online. The service returned an unexpected response.' };
+  }
+
+  if (!payload?.success || !payload?.data) {
+    return { kind: 'not_found', message: 'This document was not found in the barangay records.' };
+  }
+
+  return { kind: 'ok', view: buildTokenVerificationView(payload.data) };
+};
+
 export default function VerifyDocument() {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
   const docId = (searchParams.get('id') || '').trim();
+  const token = (searchParams.get('token') || '').trim();
 
   const [view, setView] = useState<VerificationView | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
+  const [unavailable, setUnavailable] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
 
     const verifyDoc = async () => {
+      // ── SECURE TOKEN PATH ────────────────────────────────────────────────
+      // A token can only be resolved by the authoritative server. There is no
+      // local fallback: an unsynchronised certificate must never be reported
+      // as verified.
+      if (token) {
+        if (!isValidVerificationToken(token)) {
+          setError('This verification link is invalid or malformed.');
+          setLoading(false);
+          return;
+        }
+
+        const tokenResult = await requestTokenVerification(token);
+        if (cancelled) return;
+
+        if (tokenResult.kind === 'ok') {
+          setView(tokenResult.view as unknown as VerificationView);
+          setLoading(false);
+          return;
+        }
+        if (tokenResult.kind === 'not_found') {
+          setError(tokenResult.message);
+          setLoading(false);
+          return;
+        }
+        // The server could not be reached — say so, never "valid".
+        setUnavailable(true);
+        setError(tokenResult.message);
+        setLoading(false);
+        return;
+      }
+
       if (!docId || !isVerifiableDocId(docId)) {
         setError('Invalid verification link. The document ID is missing or malformed.');
         setLoading(false);
@@ -137,7 +237,7 @@ export default function VerifyDocument() {
     return () => {
       cancelled = true;
     };
-  }, [docId]);
+  }, [docId, token]);
 
   if (loading) {
     return (
@@ -149,8 +249,45 @@ export default function VerifyDocument() {
   }
 
   if (error || !view) {
+    // "Unable to Verify" is deliberately distinct from "Verification Failed":
+    // an offline reader must never be shown a red "invalid" verdict for a
+    // document that may in fact be perfectly valid.
+    if (unavailable) {
+      return (
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#fffbeb', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center' }}>
+          <div style={{ width: '64px', height: '64px', background: '#fef3c7', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
+            <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#d97706" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10" />
+              <line x1="12" y1="8" x2="12" y2="12" />
+              <line x1="12" y1="16" x2="12.01" y2="16" />
+            </svg>
+          </div>
+          <h2 style={{ color: '#92400e', margin: '0 0 8px 0', fontSize: '22px' }}>Unable to Verify</h2>
+          <p style={{ color: '#b45309', maxWidth: '420px', fontSize: '14px', lineHeight: 1.5 }}>{error}</p>
+          <p style={{ color: '#92400e', maxWidth: '420px', fontSize: '12.5px', lineHeight: 1.5, background: '#fef3c7', padding: '12px 14px', borderRadius: '8px' }}>
+            An offline result is never a confirmed result. Please connect to the internet and scan the
+            QR code again, or ask the Barangay to confirm the document.
+          </p>
+          <div style={{ display: 'flex', gap: '12px', marginTop: '20px', width: '100%', maxWidth: '420px' }}>
+            <button
+              onClick={() => window.location.reload()}
+              style={{ flex: 1, padding: '12px', background: '#d97706', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '15px' }}
+            >
+              Try Again
+            </button>
+            <button
+              onClick={() => navigate('/')}
+              style={{ flex: 1, padding: '12px', background: '#64748b', color: 'white', border: 'none', borderRadius: '8px', cursor: 'pointer', fontWeight: 700, fontSize: '15px' }}
+            >
+              Back to Home
+            </button>
+          </div>
+        </div>
+      );
+    }
+
     return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#fef2f2', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', minHeight: '100vh', background: '#fef2f2', fontFamily: 'sans-serif', padding: '20px', textAlign: 'center' }}>
         <div style={{ width: '64px', height: '64px', background: '#fee2e2', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: '16px' }}>
           <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2">
             <circle cx="12" cy="12" r="10" />
@@ -331,7 +468,7 @@ export default function VerifyDocument() {
         <div style={{ marginTop: '16px', fontSize: '11px', color: '#94a3b8' }}>
           Suspicious of a fake document?{' '}
           <a
-            href={`mailto:barangay.bustrac@gmail.com?subject=${encodeURIComponent(`Suspicious Document Report - ${docId}`)}&body=${encodeURIComponent(`Hello, I would like to report a potentially fake or altered document.\r\n\r\nDocument ID: ${docId}\r\nDate Scanned: ${scanTime}\r\n\r\nPlease verify this document's authenticity.`)}`}
+            href={`mailto:barangay.bustrac@gmail.com?subject=${encodeURIComponent(`Suspicious Document Report - ${token ? 'secure QR' : docId}`)}&body=${encodeURIComponent(`Hello, I would like to report a potentially fake or altered document.\r\n\r\nDocument Reference: ${token ? 'secure QR verification (token withheld)' : docId}\r\nDate Scanned: ${scanTime}\r\n\r\nPlease verify this document's authenticity.`)}`}
             style={{ color: '#3b82f6', textDecoration: 'underline', fontWeight: 600 }}
           >
             Report it here

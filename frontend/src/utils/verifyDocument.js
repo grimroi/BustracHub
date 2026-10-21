@@ -279,3 +279,91 @@ export const buildVerificationView = (doc, now) => {
     dateIssued: formatSafeDate(doc?.dateIssued || doc?.issuedAt || doc?.issuedDate || doc?.createdAt),
   };
 };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SECURE VERIFICATION TOKENS
+//
+// A certificate issued after this feature carries a server-minted, 256-bit
+// random token instead of its document id. The QR encodes the token; the
+// server looks it up by its SHA-256 hash. The token is therefore
+// unpredictable — it cannot be guessed or enumerated the way a document id
+// could — while remaining completely stateless for the reader.
+//
+// The token is a FORMAT check only. It proves nothing about authenticity; the
+// server's answer is the only authority.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The exact shape of a server-minted token: 43 base64url characters. */
+export const VERIFICATION_TOKEN_PATTERN = /^[A-Za-z0-9_-]{43}$/;
+
+/**
+ * True when the value has the exact shape of a verification token.
+ * This proves NOTHING about authenticity — only the server can.
+ */
+export const isValidVerificationToken = (token) =>
+  typeof token === 'string' && VERIFICATION_TOKEN_PATTERN.test(token);
+
+/** The result states the public page can display. */
+export const VERIFICATION_RESULT = {
+  VALID: 'valid',
+  REVOKED: 'revoked',
+  EXPIRED: 'expired',
+  NOT_FOUND: 'not_found',
+  UNABLE: 'unable',
+  NOT_YET_VALID: 'not_yet_valid',
+  UNVERIFIED: 'unverified',
+};
+
+/** Human-readable headline for each result state. */
+export const VERIFICATION_RESULT_HEADLINE = {
+  [VERIFICATION_RESULT.VALID]: 'Document Verified',
+  [VERIFICATION_RESULT.REVOKED]: 'Document Revoked / Invalid',
+  [VERIFICATION_RESULT.EXPIRED]: 'Document Expired',
+  [VERIFICATION_RESULT.NOT_FOUND]: 'Document Not Found',
+  [VERIFICATION_RESULT.UNABLE]: 'Unable to Verify',
+  [VERIFICATION_RESULT.NOT_YET_VALID]: 'Document Not Yet Valid',
+  [VERIFICATION_RESULT.UNVERIFIED]: 'Document Unverified',
+};
+
+/**
+ * Map the server's verification payload onto a display result.
+ *
+ * The returned object has the SAME shape as `buildVerificationView` (plus a
+ * `result` discriminator), so the public page can render a token verification
+ * and a document-id verification through exactly the same code path.
+ *
+ * @param {object} payload the `data` object returned by the server
+ * @returns {{result:string, status:string, valid:boolean, statusLabel:string, documentType:string, referenceNo:string, issuedTo:string, dateIssued:string}}
+ */
+export const buildTokenVerificationView = (payload) => {
+  const data = payload && typeof payload === 'object' ? payload : {};
+  const status = String(data.status || '').toLowerCase();
+  const serverLabel = String(data.statusLabel || '').trim();
+
+  let result = VERIFICATION_RESULT.UNVERIFIED;
+  if (status === 'valid') result = VERIFICATION_RESULT.VALID;
+  else if (status === 'expired') result = VERIFICATION_RESULT.EXPIRED;
+  else if (status === 'invalid') result = VERIFICATION_RESULT.REVOKED;
+  else if (status === 'pending') result = VERIFICATION_RESULT.NOT_YET_VALID;
+
+  // The `status` values match the document-id verification vocabulary so the
+  // public page renders both paths identically.
+  const statusKey = {
+    [VERIFICATION_RESULT.VALID]: 'valid',
+    [VERIFICATION_RESULT.EXPIRED]: 'expired',
+    [VERIFICATION_RESULT.REVOKED]: 'invalid',
+    [VERIFICATION_RESULT.NOT_YET_VALID]: 'pending',
+    [VERIFICATION_RESULT.UNVERIFIED]: 'unverified',
+  }[result];
+
+  return {
+    result,
+    status: statusKey,
+    valid: result === VERIFICATION_RESULT.VALID,
+    statusLabel: serverLabel || VERIFICATION_RESULT_HEADLINE[result] || 'Unknown',
+    documentType: data.documentType || 'Barangay Certificate',
+    referenceNo: data.referenceNo || '',
+    issuedTo: data.issuedTo || '',
+    dateIssued: data.dateIssued || '',
+  };
+};

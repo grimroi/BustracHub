@@ -320,6 +320,11 @@ const requireRole = (...allowedRoles) => (req, res, next) => {
 const { URL } = require('url');
 
 const ALLOWED_DB = DB_NAME;
+
+// Documents the SERVER owns. Clients may read them, but the sync proxy
+// refuses to let a device create or modify one — otherwise a device could
+// mint its own "valid" certificate verification record.
+const SERVER_OWNED_DOC_PREFIX = 'certverify_';
 const WRITE_METHODS = new Set(['POST', 'PUT', 'DELETE', 'PATCH']);
 
 // ──────────────────────────────────────────────────────────────
@@ -736,6 +741,47 @@ const proxyCouch = (req, res) => {
         error: 'bad_request',
         reason: 'Request body could not be read.',
       });
+    }
+  }
+
+  // 4b. Server-owned document guard.
+  //
+  // The certificate-verification registry is written ONLY by the server. If a
+  // device could write one, it could mint its own "valid" certificate and
+  // defeat the whole point of the verification token. The server writes these
+  // documents straight to CouchDB (never through this proxy), so denying
+  // client writes here costs nothing.
+  if (hasBody || String(req.method || '').toUpperCase() === 'DELETE') {
+    const head0 = String(segments[0] || '');
+    const isServerOwnedTarget = head0.startsWith(SERVER_OWNED_DOC_PREFIX);
+    const isBulkWrite = head0.toLowerCase() === '_bulk_docs';
+
+    if (isServerOwnedTarget) {
+      return res.status(403).json({
+        error: 'forbidden',
+        reason: 'This document is maintained by the server.',
+      });
+    }
+
+    if (isBulkWrite) {
+      try {
+        const parsed = JSON.parse((req.rawBody || '').toString() || '{}');
+        const docs = Array.isArray(parsed.docs) ? parsed.docs : [];
+        const offender = docs.find(
+          (doc) =>
+            String(doc?._id || '').startsWith(SERVER_OWNED_DOC_PREFIX) ||
+            doc?.type === 'certificate_verification' ||
+            doc?.docType === 'certificate_verification'
+        );
+        if (offender) {
+          return res.status(403).json({
+            error: 'forbidden',
+            reason: 'This document is maintained by the server.',
+          });
+        }
+      } catch {
+        // A malformed body is left for CouchDB to reject.
+      }
     }
   }
 

@@ -2,8 +2,8 @@ import React from 'react';
 import { QRCodeSVG } from 'qrcode.react'; 
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
-import { normalizeQrConfig, buildVerifyUrl } from '../../../utils/qrConfig';
-import { isVerifiableDocId } from '../../../utils/verifyDocument';
+import { normalizeQrConfig, buildVerifyUrl, buildVerifyUrlForToken } from '../../../utils/qrConfig';
+import { isVerifiableDocId, isValidVerificationToken } from '../../../utils/verifyDocument';
 import { validateCertificateData } from '../../../utils/certHelpers';
 
 export interface ClearanceData {
@@ -42,6 +42,11 @@ export interface ClearanceData {
   ctcPlaceIssued?: string;
   validity?: string;
   datePrinted?: string;
+  /**
+   * The server-minted verification token for this certificate. When present
+   * the printed QR encodes the secure token URL instead of the document id.
+   */
+  verificationToken?: string;
   issuanceMeta?: {
     orNumber?: string;
     amountPaid?: number | string;
@@ -86,7 +91,17 @@ export const BarangayClearance: React.FC<ClearanceProps> = ({ data, publicDomain
     ...(qrConfig || {}),
     baseUrl: (qrConfig && qrConfig.baseUrl) || publicDomain || '',
   });
-  const verifyUrl = qr.enabled && isVerifiableDocId(data._id) ? buildVerifyUrl(data._id, qr) : '';
+  // A certificate that carries a server-minted verification TOKEN uses the
+  // secure token URL — the token is unpredictable, so the link cannot be
+  // guessed or enumerated. One without a token (issued offline, before the
+  // server has seen it) falls back to the legacy document-id link.
+  const hasVerificationToken = isValidVerificationToken(data.verificationToken);
+  const verifyUrl =
+    qr.enabled && hasVerificationToken
+      ? buildVerifyUrlForToken(data.verificationToken, qr)
+      : qr.enabled && isVerifiableDocId(data._id)
+        ? buildVerifyUrl(data._id, qr)
+        : '';
   // ── Helper: safe uppercase ──
   const u = (s?: string) => (s || '').toUpperCase();
 

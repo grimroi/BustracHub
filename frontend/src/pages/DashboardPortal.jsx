@@ -83,8 +83,8 @@ import {
   getDeviceId,
   getDeviceLabel,
   fetchRegisteredDevices,
-  fetchCouchHealth,
 } from '../services/deviceRegistry';
+import { ensureVerificationToken } from '../services/certificateVerification';
 import {
   computeConflictDiff,
   conflictModuleLabel,
@@ -4120,6 +4120,18 @@ const peekNextClearanceNo = async () => {
       await db.put(payload);
     }
 
+    // Mint the secure QR verification token. This MUST happen after the
+    // certificate is written, and only for a certificate that is genuinely
+    // issued. When the device is offline the token cannot be minted: the
+    // certificate is then issued WITHOUT a verification QR and the public
+    // page will report it as not found until the server has actually seen it.
+    if (!isEditing && (clearanceForm.status || 'Issued') === 'Issued') {
+      const verification = await ensureVerificationToken({ _id: docId, verificationToken: payload.verificationToken }, { db });
+      if (verification.status === 'pending') {
+        console.warn('[certificate-verification] Token pending:', verification.error);
+      }
+    }
+
     if (typeof createAuditLog === 'function') {
       await createAuditLog({
         action: isEditing ? 'UPDATE' : 'CREATE',
@@ -6697,6 +6709,21 @@ const issueAndPrint = async (cert) => {
       };
 
       await db.put(updatedCert);
+
+      // Mint the secure QR verification token AFTER the certificate has been
+      // written and marked as issued. If the device is offline the token
+      // cannot be minted; the certificate is then issued without a
+      // verification QR and the public page reports it as not found until
+      // the server has actually received it.
+      const verification = await ensureVerificationToken(
+        { _id: updatedCert._id, verificationToken: updatedCert.verificationToken },
+        { db }
+      );
+      if (verification.status === 'issued' || verification.status === 'reused') {
+        updatedCert.verificationToken = verification.token;
+      } else {
+        console.warn('[certificate-verification] Token pending:', verification.error);
+      }
 
       if (typeof setIssuedCertificates === 'function') {
         setIssuedCertificates(prev =>

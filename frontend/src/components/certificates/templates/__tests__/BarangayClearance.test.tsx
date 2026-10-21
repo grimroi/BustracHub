@@ -99,3 +99,59 @@ describe('BarangayClearance QR', () => {
     expect(screen.getByText('[BARCODE PLACEHOLDER]')).toBeTruthy();
   });
 });
+
+describe('BarangayClearance QR — secure verification token', () => {
+  const TOKEN = 'aB3-_xYz9'.repeat(5).slice(0, 43);
+
+  test('encodes the SECURE token URL when the certificate carries a token', () => {
+    const qrConfig = { enabled: true, baseUrl: 'https://bustrac.example.gov.ph' };
+    render(
+      <BarangayClearance
+        data={{ ...baseRecord, verificationToken: TOKEN }}
+        qrConfig={qrConfig}
+      />
+    );
+
+    expect(qrValue()).toBe(
+      `https://bustrac.example.gov.ph/verify?token=${encodeURIComponent(TOKEN)}`
+    );
+  });
+
+  test('the token URL does NOT contain the document id', () => {
+    render(
+      <BarangayClearance
+        data={{ ...baseRecord, verificationToken: TOKEN }}
+        qrConfig={{ enabled: true, baseUrl: 'https://bustrac.example.gov.ph' }}
+      />
+    );
+
+    expect(qrValue()).not.toContain('id=');
+    expect(qrValue()).not.toContain(BRGY_ID);
+  });
+
+  test('a malformed token falls back to the legacy id link rather than encoding it', () => {
+    render(
+      <BarangayClearance
+        data={{ ...baseRecord, verificationToken: 'not-a-real-token' }}
+        qrConfig={{ enabled: true, baseUrl: 'http://192.168.1.2:5174' }}
+      />
+    );
+
+    expect(qrValue()).toBe('http://192.168.1.2:5174/verify?id=' + BRGY_ID);
+  });
+
+  test('the token QR still encodes no personal information', () => {
+    render(
+      <BarangayClearance
+        data={{ ...baseRecord, verificationToken: TOKEN }}
+        qrConfig={{ enabled: true, baseUrl: 'https://bustrac.example.gov.ph' }}
+      />
+    );
+
+    expect(qrValue()).not.toContain('PANIZAL');
+    expect(qrValue()).not.toContain('JOAN');
+    expect(qrValue()).not.toContain('Zone 5');
+    expect(qrValue()).not.toContain('Employment');
+    expect(qrValue()).not.toContain('BC-2026-0001');
+  });
+});

@@ -3,6 +3,7 @@ import { QRCodeSVG } from 'qrcode.react';
 import nabuaLogo from '../../../assets/nabua-logo.jpg';
 import bustracLogo from '../../../assets/bustrac-logo.png';
 import { validateCertificateData } from '../../../utils/certHelpers';
+import { buildVerifyUrlForToken } from '../../../utils/qrConfig';
 
 export interface IndigencyData {
   _id?: string;
@@ -64,7 +65,6 @@ interface IndigencyProps {
 
 export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data, publicDomain }) => {
   if (!data) return null;
-
   const validation = validateCertificateData(data);
   if (!validation.valid) {
     return (
@@ -82,6 +82,15 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data, publicDomain
 
   // 1. Safe Extraction ng Nested Issuance Metadata
   const meta = data.issuanceMeta || {};
+
+  // 1b. Verification QR.
+  // A certificate that carries a server-minted verification TOKEN uses the
+  // secure token URL. One without a token (issued offline, before the server
+  // has seen it) falls back to the legacy document-id link, which the public
+  // page resolves against the server in exactly the same way.
+  const verifyUrl = (data as any).verificationToken
+    ? buildVerifyUrlForToken((data as any).verificationToken, { baseUrl: publicDomain || '' })
+    : `https://${publicDomain || 'localhost:5173'}/verify?id=${encodeURIComponent(data._id || '')}`;
 
   // 2. Dynamic Full Name & Resident Details
   const fullName = (
@@ -249,22 +258,22 @@ export const IndigencyTemplate: React.FC<IndigencyProps> = ({ data, publicDomain
             <strong>{amountPaid.startsWith('Php') || amountPaid.startsWith('₱') ? amountPaid : `Php ${amountPaid}`}</strong>
           </div>
         </div>
-           {/* QR Code Verification */}
+       {/* QR Code Verification */}
    {data._id && (
      <div style={{ position: 'absolute', bottom: '40px', right: '40px', textAlign: 'center', zIndex: 20 }}>
-       <QRCodeSVG 
-         value={`https://${publicDomain || 'localhost:5173'}/verify?id=${encodeURIComponent(data._id)}`} 
-         size={90} 
-         level="H" 
-         bgColor="#ffffff" 
-         fgColor="#000000" 
+       <QRCodeSVG
+         value={verifyUrl}
+         size={90}
+         level="H"
+         bgColor="#ffffff"
+         fgColor="#000000"
          includeMargin={true}
        />
-       <div style={{ fontSize: '9px', marginTop: '6px', fontWeight: 'bold', color: '#000' }}>
-         Scan to Verify Authenticity
-       </div>
-     </div>
-   )}
+        <div style={{ fontSize: '9px', marginTop: '6px', fontWeight: 'bold', color: '#000' }}>
+          Scan to Verify Authenticity
+        </div>
+      </div>
+    )}
       </div>
     </div>
   );
